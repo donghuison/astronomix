@@ -66,7 +66,7 @@ gamma = 5/3
 
 # spatial domain
 box_size = 1.0
-num_cells = 600
+num_cells = 512
 
 # activate stellar wind
 stellar_wind = False
@@ -264,7 +264,7 @@ def save_frame(
 
         fig.savefig(
             f"{directory}/frame{time}.png",
-            dpi=150,
+            dpi=300,
             bbox_inches="tight",
             pad_inches=0
         )
@@ -291,7 +291,7 @@ save_wind_frame = lambda time, state, registered_variables: save_frame(time, sta
 ### Parameter adaptation
 """
 
-t_final = 12.0 * 1e4 * u.yr
+t_final = 6.0 * 1e4 * u.yr
 t_end = t_final.to(code_units.code_time).value
 
 # set the final time
@@ -302,6 +302,9 @@ params = params._replace(
 """### Running the simulation"""
 
 final_state = time_integration(initial_state, config, params, registered_variables, save_turb_frame, sharding = named_sharding if multi_gpu else None)
+
+# save final state to disk
+jnp.save("data/astronomix_turbulence_final_state.npy", final_state)
 
 """### Plotting"""
 
@@ -335,7 +338,7 @@ print(t_end)
 config = config._replace(
     wind_config = WindConfig(
         stellar_wind = True,
-        num_injection_cells = 8,
+        num_injection_cells = 12,
     ),
 )
 params = params._replace(
