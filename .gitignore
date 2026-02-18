@@ -15,6 +15,7 @@ tests/cooling_corrector/data
 tests/mhd_tests/data
 tests/lancaster/data
 tests/finite_difference/data
+tests/field_level_inference/frames
 
 tests/cooling_corrector/models
 

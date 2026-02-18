@@ -91,7 +91,7 @@ t_end = t_final.to(code_units.code_time).value
 
 # wind setup
 stellar_wind = True
-num_injection_cells = 8
+num_injection_cells = 14
 M_star = 40 * u.M_sun
 wind_final_velocity = 2000 * u.km / u.s
 wind_mass_loss_rate = 2.965e-3 / (1e6 * u.yr) * M_star
@@ -333,7 +333,7 @@ pressure_weaver = (pressure_weaver / c.k_B).to(u.cm**-3 * u.K)
 
 # ==== Plotting ====
 
-fig, axs = plt.subplots(1, 3, figsize=(12, 8))
+fig, axs = plt.subplots(1, 3, figsize=(12, 4))
 
 axs[0].set_yscale("log")
 axs[0].scatter(r_3D.to(u.parsec), density_3D, label="3D simulation", s = 1)
