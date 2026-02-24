@@ -380,6 +380,25 @@ solve for the magnetic update step instead of the implicit midpoint method.
 |:---------------------------------------------------------------------------------:|
 | The less dissipative HLL Riemann solver combined with the implicit midpoint magnetic update produces numerical oscillations.                                                    |
 
+#### Boundary conditions in the fv_mhd scheme
+
+In the finite volume scheme, boundary conditions are applied based on 
+ghost cells. Periodic boundary conditions as well as "open boundaries"
+and reflective boundaries are supported. Note that 'open boundaries' 
+here refers to van Neumann zero gradient boundary conditions, i.e.
+the ghost cells are filled with the values of the outermost cells in
+the physical domain. In settings where not all of the characteristics are 
+outgoing at the boundary, this can lead to artefacts caused by the boundary.
+An example of such artefacts is illustrated below.
+
+| ![periodic blast](tests/boundary_conditions/figures/blast_fv_periodic.png)        |
+|:---------------------------------------------------------------------------------:|
+| Periodic boundary conditions.                                                     |
+
+| ![neumann blast](tests/boundary_conditions/figures/blast_fv_neumann.png)          |
+|:---------------------------------------------------------------------------------:|
+| Van Neumann zero gradient boundary conditions.                                    |
+
 ### Coupling self-gravity to the hydrodynamics equations
 
 #### A simple source-term scheme - energy is not conserved

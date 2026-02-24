@@ -156,7 +156,7 @@ def run_blast_simulation(num_cells, B0):
     return initial_state, config, registered_variables, params, helper_data
 
 
-num_cells = 300
+num_cells = 64
 B0 = 10
 
 initial_state, config, registered_variables, params, helper_data = run_blast_simulation(
@@ -187,9 +187,9 @@ divergence = jnp.mean(
 print(divergence)
 
 # Calculate fluxes based on the state of the current stage
-dF_x = _weno_flux_x(conserved_state, params.minimum_density, params.minimum_pressure, params.gamma, registered_variables)
-dF_y = _weno_flux_y(conserved_state, params.minimum_density, params.minimum_pressure, params.gamma, registered_variables)
-dF_z = _weno_flux_z(conserved_state, params.minimum_density, params.minimum_pressure, params.gamma, registered_variables)
+dF_x = _weno_flux_x(conserved_state, params.minimum_density, params.minimum_pressure, params.gamma, config, registered_variables)
+dF_y = _weno_flux_y(conserved_state, params.minimum_density, params.minimum_pressure, params.gamma, config, registered_variables)
+dF_z = _weno_flux_z(conserved_state, params.minimum_density, params.minimum_pressure, params.gamma, config, registered_variables)
 
 # Calculate RHS for interface magnetic fields using Constrained Transport
 rhs_bx, rhs_by, rhs_bz = constrained_transport_rhs(

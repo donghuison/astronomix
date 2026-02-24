@@ -105,6 +105,7 @@ from jax import checkpoint
 
 from astronomix._finite_difference._fluid_equations._eigen import _eigen_L_row, _eigen_R_col, _eigen_lambdas
 from astronomix._finite_difference._fluid_equations._fluxes import _mhd_flux_x
+from astronomix._stencil_operations._stencil_operations import _shift
 from astronomix.option_classes.simulation_config import SimulationConfig
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 
@@ -128,7 +129,7 @@ def _weno_flux_x(
     
     # with this we can already compute the first part of the flux
     F_interface = 1/12 * (
-        -jnp.roll(F, 1, axis=1) + 7 * F + 7 * jnp.roll(F, -1, axis=1) - jnp.roll(F, -2, axis=1)
+        -_shift(F, 1, axis=1) + 7 * F + 7 * _shift(F, -1, axis=1) - _shift(F, -2, axis=1)
     )
 
     def mode_flux(mode, F_current):
@@ -137,12 +138,12 @@ def _weno_flux_x(
         lambdas_center = _eigen_lambdas(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
         L_row = _eigen_L_row(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
 
-        F0 = jnp.roll(F,  2, axis=1)   # shape (N_vars, Nx, Ny, Nz) — i-2 at target i
-        F1 = jnp.roll(F,  1, axis=1)   # i-1
+        F0 = _shift(F,  2, axis=1)   # shape (N_vars, Nx, Ny, Nz) — i-2 at target i
+        F1 = _shift(F,  1, axis=1)   # i-1
         F2 = F                         # i
-        F3 = jnp.roll(F, -1, axis=1)   # i+1
-        F4 = jnp.roll(F, -2, axis=1)   # i+2
-        F5 = jnp.roll(F, -3, axis=1)   # i+3
+        F3 = _shift(F, -1, axis=1)   # i+1
+        F4 = _shift(F, -2, axis=1)   # i+2
+        F5 = _shift(F, -3, axis=1)   # i+3
 
         s0 = jnp.einsum('nxyz,nxyz->xyz', L_row, F0)
         s1 = jnp.einsum('nxyz,nxyz->xyz', L_row, F1)
@@ -151,12 +152,12 @@ def _weno_flux_x(
         s4 = jnp.einsum('nxyz,nxyz->xyz', L_row, F4)
         s5 = jnp.einsum('nxyz,nxyz->xyz', L_row, F5)
 
-        q0 = jnp.einsum('nxyz,nxyz->xyz', L_row, jnp.roll(conserved_state, 2, axis=1))
-        q1 = jnp.einsum('nxyz,nxyz->xyz', L_row, jnp.roll(conserved_state, 1, axis=1))
+        q0 = jnp.einsum('nxyz,nxyz->xyz', L_row, _shift(conserved_state, 2, axis=1))
+        q1 = jnp.einsum('nxyz,nxyz->xyz', L_row, _shift(conserved_state, 1, axis=1))
         q2 = jnp.einsum('nxyz,nxyz->xyz', L_row, conserved_state)
-        q3 = jnp.einsum('nxyz,nxyz->xyz', L_row, jnp.roll(conserved_state, -1, axis=1))
-        q4 = jnp.einsum('nxyz,nxyz->xyz', L_row, jnp.roll(conserved_state, -2, axis=1))
-        q5 = jnp.einsum('nxyz,nxyz->xyz', L_row, jnp.roll(conserved_state, -3, axis=1))
+        q3 = jnp.einsum('nxyz,nxyz->xyz', L_row, _shift(conserved_state, -1, axis=1))
+        q4 = jnp.einsum('nxyz,nxyz->xyz', L_row, _shift(conserved_state, -2, axis=1))
+        q5 = jnp.einsum('nxyz,nxyz->xyz', L_row, _shift(conserved_state, -3, axis=1))
 
         # dFsk identical to original: d0 = s1 - s0, d1 = s2 - s1, ...
         d0 = s1 - s0
@@ -172,12 +173,12 @@ def _weno_flux_x(
         dq4 = q5 - q4
 
         # compute amx over the same stencil (take abs then max over the six entries)
-        lam0 = jnp.roll(lambdas_center,  2, axis=0)
-        lam1 = jnp.roll(lambdas_center,  1, axis=0)
+        lam0 = _shift(lambdas_center,  2, axis=0)
+        lam1 = _shift(lambdas_center,  1, axis=0)
         lam2 = lambdas_center
-        lam3 = jnp.roll(lambdas_center, -1, axis=0)
-        lam4 = jnp.roll(lambdas_center, -2, axis=0)
-        lam5 = jnp.roll(lambdas_center, -3, axis=0)
+        lam3 = _shift(lambdas_center, -1, axis=0)
+        lam4 = _shift(lambdas_center, -2, axis=0)
+        lam5 = _shift(lambdas_center, -3, axis=0)
         lam_stack = jnp.stack([lam0, lam1, lam2, lam3, lam4, lam5], axis=0)
         amx = jnp.max(jnp.abs(lam_stack), axis=0)
 
@@ -346,31 +347,31 @@ def _weno_flux_z(
 #     F = _mhd_flux_x(q, gamma, registered_variables)
 
 #     F_stencil = jnp.stack([
-#         jnp.roll(F, 2, axis=1),   # i-2
-#         jnp.roll(F, 1, axis=1),   # i-1
+#         _shift(F, 2, axis=1),   # i-2
+#         _shift(F, 1, axis=1),   # i-1
 #         F,                        # i
-#         jnp.roll(F, -1, axis=1),  # i+1
-#         jnp.roll(F, -2, axis=1),  # i+2
-#         jnp.roll(F, -3, axis=1),  # i+3
+#         _shift(F, -1, axis=1),  # i+1
+#         _shift(F, -2, axis=1),  # i+2
+#         _shift(F, -3, axis=1),  # i+3
 #     ], axis=0)
     
 #     q_stencil = jnp.stack([
-#         jnp.roll(q, 2, axis=1),
-#         jnp.roll(q, 1, axis=1),
+#         _shift(q, 2, axis=1),
+#         _shift(q, 1, axis=1),
 #         q,
-#         jnp.roll(q, -1, axis=1),
-#         jnp.roll(q, -2, axis=1),
-#         jnp.roll(q, -3, axis=1),
+#         _shift(q, -1, axis=1),
+#         _shift(q, -2, axis=1),
+#         _shift(q, -3, axis=1),
 #     ], axis=0)
     
 #     # Get maximum eigenvalue over stencil
 #     lambda_stencil = jnp.stack([
-#         jnp.roll(lambdas_center, 2, axis=1),
-#         jnp.roll(lambdas_center, 1, axis=1),
+#         _shift(lambdas_center, 2, axis=1),
+#         _shift(lambdas_center, 1, axis=1),
 #         lambdas_center,
-#         jnp.roll(lambdas_center, -1, axis=1),
-#         jnp.roll(lambdas_center, -2, axis=1),
-#         jnp.roll(lambdas_center, -3, axis=1),
+#         _shift(lambdas_center, -1, axis=1),
+#         _shift(lambdas_center, -2, axis=1),
+#         _shift(lambdas_center, -3, axis=1),
 #     ], axis=0)
     
 #     amx = jnp.max(jnp.abs(lambda_stencil), axis=0)  # Shape: (7, Nx, Ny, Nz)
@@ -442,7 +443,7 @@ def _weno_flux_z(
 #     # Base 4th-order flux
 #     # first = (-Fsk[1, ...] + 7.0*Fsk[2, ...] + 7.0*Fsk[3, ...] - Fsk[4, ...]) / 12.0
 #     first = 1/12 * (
-#         -jnp.roll(F, 1, axis=1) + 7 * F + 7 * jnp.roll(F, -1, axis=1) - jnp.roll(F, -2, axis=1)
+#         -_shift(F, 1, axis=1) + 7 * F + 7 * _shift(F, -1, axis=1) - _shift(F, -2, axis=1)
 #     )
 
 #     dF = first + dF

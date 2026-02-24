@@ -22,7 +22,7 @@ from astronomix._finite_volume._magnetic_update._vector_maths import divergence3
 from astronomix._geometry.boundaries import _boundary_handler
 from astronomix._physics_modules._turbulent_forcing._turbulent_forcing import _apply_forcing
 from astronomix.data_classes.simulation_state_struct import StateStruct
-from astronomix.option_classes.simulation_config import BACKWARDS, FINITE_DIFFERENCE, FINITE_VOLUME, FORWARDS, GHOST_CELLS, STATE_TYPE
+from astronomix.option_classes.simulation_config import BACKWARDS, FINITE_DIFFERENCE, FINITE_VOLUME, FORWARDS, GHOST_CELLS, PERIODIC_ROLL, STATE_TYPE
 
 # astronomix containers
 from astronomix.option_classes.simulation_config import SimulationConfig
@@ -105,10 +105,13 @@ def time_integration(
     # time if requested, compiling the function for memory analysis if
     # requested, etc.
 
+    # depending on the boundary handling, we might need to pad the state
+    #  - for periodic boundaries implicitly enforced by only rolling arrays
+    #    this is not necessary
     helper_data_pad = get_helper_data(
         config,
         sharding,
-        padded = config.boundary_handling == GHOST_CELLS,
+        padded = config.boundary_handling != PERIODIC_ROLL,
         production = True
     )
     
@@ -273,9 +276,10 @@ def _time_integration(
     # to account for the periodic boundary conditions
     original_shape = primitive_state.shape
 
-    if config.boundary_handling == GHOST_CELLS:
+    if config.boundary_handling != PERIODIC_ROLL:
         primitive_state = _pad(primitive_state, config)
 
+    if config.boundary_handling == GHOST_CELLS:
         # important for active boundaries influencing
         # the time step criterion for now only gas state
         if config.mhd:
@@ -406,7 +410,7 @@ def _time_integration(
                     snapshot_data.current_checkpoint
                 ].set(time)
 
-                if config.boundary_handling == GHOST_CELLS:
+                if config.boundary_handling != PERIODIC_ROLL:
                     unpad_primitive_state = _unpad(primitive_state, config)
                 else:
                     unpad_primitive_state = primitive_state
@@ -816,7 +820,7 @@ def _time_integration(
 
         if config.return_snapshots:
             if config.snapshot_settings.return_final_state:
-                if config.boundary_handling == GHOST_CELLS:
+                if config.boundary_handling != PERIODIC_ROLL:
                     unpad_primitive_state = _unpad(primitive_state, config)
                 else:
                     unpad_primitive_state = primitive_state
@@ -826,7 +830,7 @@ def _time_integration(
                 )
             return snapshot_data
         else:
-            if config.boundary_handling == GHOST_CELLS:
+            if config.boundary_handling != PERIODIC_ROLL:
                 primitive_state = _unpad(primitive_state, config)
             if config.state_struct:
                 return StateStruct(primitive_state=primitive_state)
@@ -836,7 +840,7 @@ def _time_integration(
         _, _, primitive_state = carry
 
         # unpad the primitive state if we padded it
-        if config.boundary_handling == GHOST_CELLS:
+        if config.boundary_handling != PERIODIC_ROLL:
             primitive_state = _unpad(primitive_state, config)
 
         if config.state_struct:

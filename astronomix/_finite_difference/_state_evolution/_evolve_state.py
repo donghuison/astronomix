@@ -11,6 +11,7 @@ from typing import Union
 
 # general astronomix imports
 from astronomix._finite_difference._fluid_equations._equations import conserved_state_from_primitive_mhd, primitive_state_from_conserved_mhd
+from astronomix._finite_difference._magnetic_update._constrained_transport import update_cell_center_fields
 from astronomix._finite_difference._time_integrators._ssprk import _ssprk4_with_ct
 from astronomix.data_classes.simulation_helper_data import HelperData
 from astronomix.variable_registry.registered_variables import RegisteredVariables

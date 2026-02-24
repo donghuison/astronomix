@@ -76,6 +76,7 @@ ZAXIS = 3
 # boundary handling modes
 GHOST_CELLS = 0
 PERIODIC_ROLL = 1
+# OPEN_SHIFT = 2
 
 # self-gravity versions
 SIMPLE_SOURCE_TERM = 0
@@ -425,7 +426,7 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
             )
             config = config._replace(time_integrator=RK4_SSP)
         
-        if config.boundary_handling != PERIODIC_ROLL:
+        if config.boundary_handling == GHOST_CELLS:
             print(
                 "Setting boundary handling to " \
                 "PERIODIC_ROLL for finite difference solver mode."

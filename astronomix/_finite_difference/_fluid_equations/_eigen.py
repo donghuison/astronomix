@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 from typing import Union
 
+from astronomix._stencil_operations._stencil_operations import _shift
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 
 
@@ -163,7 +164,7 @@ def _eigenvector_building_blocks(
 
     # periodic average to interfaces
     def avg_x(arr):
-        return 0.5 * (arr + jnp.roll(arr, shift=-1, axis=0))
+        return 0.5 * (arr + _shift(arr, shift=-1, axis=0))
 
     rho_interface = avg_x(rho)
     velocity_x_interface = avg_x(velocity_x)

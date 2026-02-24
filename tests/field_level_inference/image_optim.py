@@ -51,7 +51,7 @@ from matplotlib.colors import LogNorm
 
 """## Loading the target image"""
 
-resolution = 32
+resolution = 128
 
 def load_image(path, height, width, flat_profile = False):
     img = jnp.array(Image.open(path).convert("L"))
@@ -255,13 +255,13 @@ target = target / jnp.sum(target) * total_mass
 
 config = config._replace(
     differentiation_mode = BACKWARDS,
-    num_checkpoints = 60,
+    num_checkpoints = 10,
     turbulent_forcing_config = TurbulentForcingConfig(
         turbulent_forcing = False,
     ),
 )
 
-t_final = crossing_time / 16
+t_final = crossing_time / 2
 t_end = t_final.to(code_units.code_time).value
 
 params = params._replace(
@@ -269,11 +269,19 @@ params = params._replace(
 )
 
 """### Define the loss"""
+def loss(velocity):
 
-def loss(density):
-  initial_state = turb_state.at[registered_variables.density_index].set(density)
+  # set the current velocity
+  initial_state = turb_state.at[registered_variables.velocity_index.x].set(velocity[0])
+  initial_state = initial_state.at[registered_variables.velocity_index.y].set(velocity[1])
+  initial_state = initial_state.at[registered_variables.velocity_index.z].set(velocity[2])
+
+  # integrate in time
   final_state = time_integration(initial_state, config, params, registered_variables)
+
+  # get the final density
   density = final_state[registered_variables.density_index]
+
   # sum density along z
   projected_density = jnp.sum(density, axis = (2,))
   density_loss = jnp.mean(jnp.square(projected_density - target))
@@ -283,58 +291,51 @@ initial_loss = loss(turb_state[registered_variables.density_index])
 print(f"Initial loss: {initial_loss}")
 
 """### Optimization"""
-
-current_density = turb_state[registered_variables.density_index]
+current_velocity = jnp.array([
+  turb_state[registered_variables.velocity_index.x],
+  turb_state[registered_variables.velocity_index.y],
+  turb_state[registered_variables.velocity_index.z],
+])
 
 # optimizer setup
 learning_rate = 1e-2
-
 optimizer = optax.adam(learning_rate)
-# optimizer = optax.chain(
-#     optax.clip_by_global_norm(1.0),
-#     optax.adam(learning_rate)
-# )
-
-opt_state = optimizer.init(current_density)
+opt_state = optimizer.init(current_velocity)
 
 # gradient
 grad_loss = jax.grad(loss)
 
 best_loss = initial_loss
-best_density = current_density
+best_velocity = current_velocity
 
 # optimization
-num_steps = 200
+num_steps = 800
 for step in range(num_steps):
-    grads = grad_loss(current_density)
-
-    if jnp.isnan(grads).any():
-        print(f"Warning: NaN detected in gradients at step {step}. Skipping update.")
-        continue
-
+    grads = grad_loss(current_velocity)
     updates, opt_state = optimizer.update(grads, opt_state)
-    current_density = optax.apply_updates(current_density, updates)
+    current_velocity = optax.apply_updates(current_velocity, updates)
 
-    # for now only adapt the density
-    current_density = jnp.maximum(
-      current_density,
-      params.minimum_density
-    )
-
-    current_loss = loss(current_density)
+    current_loss = loss(current_velocity)
     print(f"Step {step}: loss = {current_loss}")
 
     if current_loss < best_loss:
         best_loss = current_loss
-        best_density = current_density
+        best_velocity = current_velocity
 
-best_state = turb_state.at[registered_variables.density_index].set(best_density)
+best_state = turb_state.at[registered_variables.velocity_index.x].set(best_velocity[0])
+best_state = best_state.at[registered_variables.velocity_index.y].set(best_velocity[1])
+best_state = best_state.at[registered_variables.velocity_index.z].set(best_velocity[2])
+
+# save the best state to disc
+jnp.save("best_state.npy", best_state)
+
 print("Optimization finished.")
-final_loss = loss(best_density)
+
+final_loss = loss(best_velocity)
 print(f"Final loss: {final_loss}")
 
-final_state = time_integration(best_state, config, params, registered_variables)
 
+final_state = time_integration(best_state, config, params, registered_variables)
 fig, ax = plt.subplots(2, 2, figsize=(10, 10))
 
 ax[0, 0].imshow(original_rgb)
@@ -350,16 +351,15 @@ ax[1, 0].set_title("Initial state (optimized)")
 ax[1, 0].axis("off")
 
 ax[1, 1].imshow(jnp.sum(final_state[registered_variables.density_index], axis = (2,)))
-ax[1, 1].set_title(f"Final state (loss = {loss(best_density):3e})")
+ax[1, 1].set_title(f"Final state (loss = {loss(best_velocity):3e})")
 ax[1, 1].axis("off")
 
 plt.savefig("overview.png", dpi = 600)
-
 """### Animation"""
 
 config = config._replace(
     activate_snapshot_callback = True,
-    num_snapshots = 100
+    num_snapshots = 800
 )
 
 # create folder for frames
