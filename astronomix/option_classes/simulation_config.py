@@ -48,6 +48,7 @@ AM_HLLC = 5
 # time integrators
 # currently only for finite volume
 RK2_SSP = 0
+MIDPOINT_OPTIM = 10 # experiment
 MUSCL = 1
 # currently only for finite difference
 RK4_SSP = 2
@@ -432,6 +433,9 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
                 "PERIODIC_ROLL for finite difference solver mode."
             )
             config = config._replace(boundary_handling=PERIODIC_ROLL)
+
+        if config.boundary_handling == PERIODIC_ROLL:
+            config = config._replace(num_ghost_cells=0)
 
     # set boundary conditions if not set
     if config.boundary_settings is None:

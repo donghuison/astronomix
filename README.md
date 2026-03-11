@@ -380,7 +380,7 @@ solve for the magnetic update step instead of the implicit midpoint method.
 |:---------------------------------------------------------------------------------:|
 | The less dissipative HLL Riemann solver combined with the implicit midpoint magnetic update produces numerical oscillations.                                                    |
 
-#### Boundary conditions in the fv_mhd scheme
+### Boundary conditions in the finite volume scheme
 
 In the finite volume scheme, boundary conditions are applied based on 
 ghost cells. Periodic boundary conditions as well as "open boundaries"

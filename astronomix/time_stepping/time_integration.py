@@ -398,6 +398,10 @@ def _time_integration(
         # have snapshot data, we also directly update it here at
         # the beginning of the time step.
 
+        # WARNING: Currently config.return_snapshots and 
+        # config.activate_snapshot_callback are mutually
+        # exclusive.
+
         if config.return_snapshots:
             # When SnapshotData is involved, we need to unpack the carry
             # correctly and update the SnapshotData if we are currently
@@ -580,7 +584,7 @@ def _time_integration(
 
             time, key, primitive_state, snapshot_data = carry
 
-            def update_snapshot_data(snapshot_data):
+            def update_snapshot_data(time, primitive_state, snapshot_data):
                 current_checkpoint = snapshot_data.current_checkpoint + 1
                 snapshot_data = snapshot_data._replace(
                     current_checkpoint=current_checkpoint
@@ -600,7 +604,7 @@ def _time_integration(
 
                 return snapshot_data
 
-            def dont_update_snapshot_data(snapshot_data):
+            def dont_update_snapshot_data(time, primitive_state, snapshot_data):
                 return snapshot_data
 
             snapshot_data = jax.lax.cond(
@@ -610,6 +614,8 @@ def _time_integration(
                 / config.num_snapshots,
                 update_snapshot_data,
                 dont_update_snapshot_data,
+                time,
+                primitive_state,
                 snapshot_data,
             )
 
@@ -672,7 +678,7 @@ def _time_integration(
             dt = params.t_end / config.num_timesteps
 
         # make sure we exactly hit the snapshot time points
-        if config.use_specific_snapshot_timepoints and config.return_snapshots:
+        if config.use_specific_snapshot_timepoints and (config.return_snapshots or config.activate_snapshot_callback):
             dt = jnp.minimum(
                 dt, params.snapshot_timepoints[snapshot_data.current_checkpoint] - time
             )
@@ -714,6 +720,19 @@ def _time_integration(
                 registered_variables,
             )
 
+        # better safe than sorry
+        if config.enforce_positivity:
+            primitive_state = primitive_state.at[registered_variables.density_index].set(
+                jnp.maximum(
+                    primitive_state[registered_variables.density_index], params.minimum_density
+                )
+            )
+            primitive_state = primitive_state.at[registered_variables.pressure_index].set(
+                jnp.maximum(
+                    primitive_state[registered_variables.pressure_index], params.minimum_pressure
+                )
+            )
+
         # EVOLVE THE STATE
         if config.solver_mode == FINITE_VOLUME:
             primitive_state = _evolve_state_fv(
@@ -743,7 +762,7 @@ def _time_integration(
         # ----------------- ↑ CENTRAL UPDATE ↑ ----------------
 
         # If we are in the last time step, we also want to update the snapshot data.
-        if config.use_specific_snapshot_timepoints and config.return_snapshots:
+        if config.return_snapshots or config.activate_snapshot_callback:
             snapshot_data = jax.lax.cond(
                 jnp.abs(time - params.t_end) < 1e-12,
                 update_snapshot_data,

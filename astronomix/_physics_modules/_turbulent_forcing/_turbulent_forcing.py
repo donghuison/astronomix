@@ -13,7 +13,7 @@ from astronomix.variable_registry.registered_variables import RegisteredVariable
 
 @partial(jax.jit, static_argnames=["config"])
 def _create_forcing_field(
-    key, 
+    key,
     config: SimulationConfig,
 ):
     
@@ -24,10 +24,10 @@ def _create_forcing_field(
     ysize = config.box_size
     zsize = config.box_size
 
-    nx = config.num_cells
-    ny = config.num_cells
-    nz = config.num_cells
-    
+    nx = config.num_cells + 2 * config.num_ghost_cells
+    ny = config.num_cells + 2 * config.num_ghost_cells
+    nz = config.num_cells + 2 * config.num_ghost_cells
+
     # wavenumbers using fftfreq
     kx = 2.0 * jnp.pi * jnp.fft.fftfreq(nx, d=xsize/nx)
     ky = 2.0 * jnp.pi * jnp.fft.fftfreq(ny, d=ysize/ny)

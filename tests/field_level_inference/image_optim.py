@@ -13,13 +13,16 @@ import os
 
 import imageio.v3 as iio
 import re
+import numpy as np
+
+import pyvista as pv
 
 # jax.config.update("jax_enable_x64", True)
 
 # setup
 from astronomix import SimulationConfig
 from astronomix.option_classes.simulation_config import (
-    FINITE_DIFFERENCE, PERIODIC_BOUNDARY, BoundarySettings, BoundarySettings1D, BACKWARDS
+    FINITE_DIFFERENCE, FINITE_VOLUME, PERIODIC_BOUNDARY, BoundarySettings, BoundarySettings1D, BACKWARDS
 )
 from astronomix import SimulationParams
 from astronomix import get_registered_variables
@@ -51,7 +54,8 @@ from matplotlib.colors import LogNorm
 
 """## Loading the target image"""
 
-resolution = 128
+resolution = 32
+only_animate = False
 
 def load_image(path, height, width, flat_profile = False):
     img = jnp.array(Image.open(path).convert("L"))
@@ -112,12 +116,13 @@ turbulence = True
 
 # otherwise B = 0.0
 mhd = True
+solver_mode = FINITE_DIFFERENCE
 
 # baseline simulation config
 config = SimulationConfig(
-    solver_mode = FINITE_DIFFERENCE,
-    mhd = True,
-    progress_bar = False,
+    solver_mode = solver_mode,
+    mhd = mhd,
+    progress_bar = True,
     enforce_positivity = True,
     donate_state = False, # save storage
     dimensionality = 3,
@@ -297,42 +302,51 @@ current_velocity = jnp.array([
   turb_state[registered_variables.velocity_index.z],
 ])
 
-# optimizer setup
-learning_rate = 1e-2
-optimizer = optax.adam(learning_rate)
-opt_state = optimizer.init(current_velocity)
+if not only_animate:
+    # optimizer setup
+    learning_rate = 1e-2
+    optimizer = optax.adam(learning_rate)
+    opt_state = optimizer.init(current_velocity)
 
-# gradient
-grad_loss = jax.grad(loss)
+    # gradient
+    grad_loss = jax.grad(loss)
 
-best_loss = initial_loss
-best_velocity = current_velocity
+    best_loss = initial_loss
+    best_velocity = current_velocity
 
-# optimization
-num_steps = 800
-for step in range(num_steps):
-    grads = grad_loss(current_velocity)
-    updates, opt_state = optimizer.update(grads, opt_state)
-    current_velocity = optax.apply_updates(current_velocity, updates)
+    # optimization
+    num_steps = 150
 
-    current_loss = loss(current_velocity)
-    print(f"Step {step}: loss = {current_loss}")
+    for step in range(num_steps):
+        grads = grad_loss(current_velocity)
+        updates, opt_state = optimizer.update(grads, opt_state)
+        current_velocity = optax.apply_updates(current_velocity, updates)
 
-    if current_loss < best_loss:
-        best_loss = current_loss
-        best_velocity = current_velocity
+        current_loss = loss(current_velocity)
+        print(f"Step {step}: loss = {current_loss}")
 
-best_state = turb_state.at[registered_variables.velocity_index.x].set(best_velocity[0])
-best_state = best_state.at[registered_variables.velocity_index.y].set(best_velocity[1])
-best_state = best_state.at[registered_variables.velocity_index.z].set(best_velocity[2])
+        if current_loss < best_loss:
+            best_loss = current_loss
+            best_velocity = current_velocity
 
-# save the best state to disc
-jnp.save("best_state.npy", best_state)
+    best_state = turb_state.at[registered_variables.velocity_index.x].set(best_velocity[0])
+    best_state = best_state.at[registered_variables.velocity_index.y].set(best_velocity[1])
+    best_state = best_state.at[registered_variables.velocity_index.z].set(best_velocity[2])
 
-print("Optimization finished.")
+    print("Optimization finished.")
+    final_loss = loss(best_velocity)
+    print(f"Final loss: {final_loss}")
 
-final_loss = loss(best_velocity)
-print(f"Final loss: {final_loss}")
+if only_animate:
+   best_state = jnp.load("best_state.npy")
+   best_velocity = jnp.array([
+      best_state[registered_variables.velocity_index.x],
+      best_state[registered_variables.velocity_index.y],
+      best_state[registered_variables.velocity_index.z],
+   ])
+else:
+    # save the best state to disc
+    jnp.save("best_state.npy", best_state)
 
 
 final_state = time_integration(best_state, config, params, registered_variables)
@@ -375,49 +389,75 @@ def save_frame(
   registered_variables
 ):
 
-  plot_3D = False
+    plot_3D = True
 
-  def plot_slices(density, time):
+    def plot_slices(density, time):
 
-    print(f"plotting slice at t = {time}")
+        print(f"plotting slice at t = {time}")
+
+        if plot_3D:
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 4))
+
+            # 3D volumetric rendering in pyvista, displayed in ax1.
+            density_3d = np.asarray(density)
+            grid = pv.ImageData()
+            grid.dimensions = np.array(density_3d.shape) + 1
+            grid.cell_data["density"] = density_3d.ravel(order="F")
+
+            plotter = pv.Plotter(off_screen=True, window_size=(700, 700))
+            plotter.add_volume(
+                    grid,
+                    scalars="density",
+                    cmap="viridis",
+                    clim=(0.01, 0.02),
+                    opacity="sigmoid",
+                    blending="composite",
+                    shade=True,
+            )
+            plotter.camera_position = "iso"
+            volume_img = plotter.screenshot(return_img=True)
+            plotter.close()
+
+            ax1.imshow(volume_img)
+            ax1.set_title("volumetric rendering")
+            ax1.set_xticks([])
+            ax1.set_yticks([])
+
+            # projection
+            ax2.set_aspect('equal', 'box')
+            ax2.set_xticks([])
+            ax2.set_yticks([])
+            ax2.imshow(np.sum(density_3d, axis = (2,)))
+            ax2.set_title("density projection")
+        else:
+            fig, ax2 = plt.subplots(1, 1, figsize=(4, 4))
+
+            # projection
+            ax2.set_aspect('equal', 'box')
+            ax2.set_xticks([])
+            ax2.set_yticks([])
+            ax2.imshow(density)
+            ax2.set_title("density projection")
+
+        fig.savefig(
+            f"frames/frame{time}.png",
+            dpi=150,
+            bbox_inches="tight",
+            pad_inches=0
+        )
+
+        plt.close(fig)
 
     if plot_3D:
-      fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 4))
-
-      # 3D plot (rather slow)
-      # img = render(jnp.expand_dims(density, axis=0))
-      # ax1.imshow(img)
-      ax1.set_xticks([])
-      ax1.set_yticks([])
+        jax.debug.callback(
+            plot_slices,
+            state[registered_variables.density_index], time,
+        )
     else:
-      fig, ax2 = plt.subplots(1, 1, figsize=(4, 4))
-
-      # projection
-      ax2.set_aspect('equal', 'box')
-      ax2.set_xticks([])
-      ax2.set_yticks([])
-      ax2.imshow(density)
-      ax2.set_title("density projection")
-
-    fig.savefig(
-      f"frames/frame{time}.png",
-      dpi=150,
-      bbox_inches="tight",
-      pad_inches=0
-    )
-
-    plt.close(fig)
-
-  if plot_3D:
-    jax.debug.callback(
-        plot_slices,
-        state[registered_variables.density_index], time,
-    )
-  else:
-    jax.debug.callback(
-        plot_slices,
-        jnp.sum(state[registered_variables.density_index], axis = (2,)), time,
-    )
+        jax.debug.callback(
+            plot_slices,
+            jnp.sum(state[registered_variables.density_index], axis = (2,)), time,
+        )
 
 final_state = time_integration(best_state, config, params, registered_variables, save_frame)
 
