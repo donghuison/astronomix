@@ -54,8 +54,8 @@ from matplotlib.colors import LogNorm
 
 """## Loading the target image"""
 
-resolution = 32
-only_animate = False
+resolution = 64
+only_animate = True
 
 def load_image(path, height, width, flat_profile = False):
     img = jnp.array(Image.open(path).convert("L"))
@@ -338,12 +338,19 @@ if not only_animate:
     print(f"Final loss: {final_loss}")
 
 if only_animate:
-   best_state = jnp.load("best_state.npy")
-   best_velocity = jnp.array([
-      best_state[registered_variables.velocity_index.x],
-      best_state[registered_variables.velocity_index.y],
-      best_state[registered_variables.velocity_index.z],
-   ])
+    best_state = jnp.load("best_state.npy")
+    best_velocity = jnp.array([
+        best_state[registered_variables.velocity_index.x],
+        best_state[registered_variables.velocity_index.y],
+        best_state[registered_variables.velocity_index.z],
+    ])
+    rms_velocity = jnp.sqrt(jnp.mean(best_velocity[0]**2 + best_velocity[1]**2 + best_velocity[2]**2))
+    cr_ratio = t_end / (box_size / rms_velocity)
+    print(f"Crossing time ratio (final time / crossing time): {cr_ratio}")
+    rms_velocity = (rms_velocity * code_units.code_velocity).to(u.km/u.s)
+    crossing_time = box_size * code_length / rms_velocity
+
+    print(f"Turbulent crossing time (optimized): {(crossing_time).to(u.yr)}")
 else:
     # save the best state to disc
     jnp.save("best_state.npy", best_state)

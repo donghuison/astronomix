@@ -506,8 +506,9 @@ More on this will be presented in future work.
 ## Limitations
 
 The finite difference MHD scheme was recently implemented and currently only supports periodic
-boundary conditions. Currently, self-gravity, cosmic rays and cooling are also not supported with
-the finite difference scheme.
+boundary conditions. Currently, cosmic rays not supported with
+the finite difference scheme. The finite difference scheme is very
+unstable for zero-magnetic fields, just use small (nonzero) magnetic fields.
 
 ## Citing astronomix
 

@@ -220,7 +220,14 @@ class SimulationConfig(NamedTuple):
     #: Self gravity switch, currently only
     #: for periodic boundaries.
     self_gravity: bool = False
+
+    #: Coupling of the self-gravity to the
+    #: hydrodynamics.
     self_gravity_version: int = DONOR_ACCOUNTING
+
+    #: Manual open boundary conditions in the
+    #: Poisson solver.
+    poisson_manual_open_boundaries: bool = False
 
     #: The size of the simulation box.
     box_size: float = 1.0

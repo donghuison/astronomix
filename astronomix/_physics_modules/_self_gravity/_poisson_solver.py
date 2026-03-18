@@ -76,9 +76,12 @@ def _compute_gravitational_potential(
         ):
             non_periodic_boundaries = True
 
+    if config.poisson_manual_open_boundaries:
+        non_periodic_boundaries = True
+
     # if periodic boundaries
     if not non_periodic_boundaries:
-        # jeans swindle (?)
+        # jeans swindle
         gas_density = gas_density - jnp.mean(gas_density)
 
     if not non_periodic_boundaries:

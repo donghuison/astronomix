@@ -18,7 +18,7 @@ from astronomix._physics_modules._neural_net_force._neural_net_force import (
     _neural_net_force,
 )
 from astronomix._physics_modules._self_gravity._poisson_solver import _compute_gravitational_potential
-from astronomix._stencil_operations._stencil_operations import _stencil_add
+from astronomix._stencil_operations._stencil_operations import _shift, _stencil_add
 from astronomix.data_classes.simulation_helper_data import HelperData
 from astronomix._geometry.boundaries import _boundary_handler
 from astronomix.variable_registry.registered_variables import RegisteredVariables
@@ -162,6 +162,15 @@ def _physics_sources(
 
     S = jnp.zeros_like(conserved_state)
 
+    primitive_state = primitive_state_from_conserved_mhd(
+        conserved_state,
+        params.minimum_density,
+        params.minimum_pressure,
+        gamma,
+        config,
+        registered_variables
+    )
+
     if config.wind_config.stellar_wind:
         S += (
             _wind_ei3D_source(
@@ -176,14 +185,6 @@ def _physics_sources(
         )
 
     if config.cooling_config.cooling:
-        primitive_state = primitive_state_from_conserved_mhd(
-            conserved_state,
-            params.minimum_density,
-            params.minimum_pressure,
-            gamma,
-            config,
-            registered_variables
-        )
         primitive_state = update_pressure_by_cooling(
             primitive_state,
             registered_variables,
@@ -205,17 +206,31 @@ def _physics_sources(
                 config,
                 params.gravitational_constant
             )
-            for axis in range(1, config.num_dimensions + 1):
+            for axis in range(1, config.dimensionality + 1):
                 rho = primitive_state[registered_variables.density_index]
                 v_axis = primitive_state[axis]
 
-                # TODO: use higher-order finite difference
-                # a_i = - (phi_{i+1} - phi_{i-1}) / (2 * dx)
+                # flux = fluxes[axis - 1]
+                # rho_v_avg = 0.5 * (
+                #     flux[registered_variables.density_index] + _shift(flux[registered_variables.density_index], 1, axis = axis-1)
+                # )
+
+                # # TODO: use higher-order finite difference
+                # # a_i = - (phi_{i+1} - phi_{i-1}) / (2 * dx)
+                # acceleration = -_stencil_add(
+                #     gravitational_potential, indices=(1, -1), factors=(1.0, -1.0), axis=axis - 1
+                # ) / (2 * config.grid_spacing)
+                # # it is axis - 1 because the axis is 1-indexed as usually the zeroth axis are the different
+                # # fields in the state vector not the spatial dimensions, but here we only have the spatial dimensions
+
+                # 6th-order finite difference for gravitational acceleration
+                # a_i = - (phi_{i+3} - 9*phi_{i+2} + 45*phi_{i+1} - 45*phi_{i-1} + 9*phi_{i-2} - phi_{i-3}) / (60 * dx)
                 acceleration = -_stencil_add(
-                    gravitational_potential, indices=(1, -1), factors=(1.0, -1.0), axis=axis - 1
-                ) / (2 * config.grid_spacing)
-                # it is axis - 1 because the axis is 1-indexed as usually the zeroth axis are the different
-                # fields in the state vector not the spatial dimensions, but here we only have the spatial dimensions
+                    gravitational_potential, 
+                    indices=(3, 2, 1, -1, -2, -3), 
+                    factors=(1.0, -9.0, 45.0, -45.0, 9.0, -1.0), 
+                    axis=axis - 1
+                ) / (60.0 * config.grid_spacing)
 
                 S_axis = jnp.zeros_like(primitive_state)
                 S_axis = S_axis.at[axis].set(rho * acceleration)
@@ -223,7 +238,7 @@ def _physics_sources(
                     rho * v_axis * acceleration
                 )
 
-                S += S_axis
+                S += S_axis * dt
         else:
             raise NotImplementedError(
                 "Only SIMPLE_SOURCE_TERM self-gravity is implemented for the finite difference scheme."

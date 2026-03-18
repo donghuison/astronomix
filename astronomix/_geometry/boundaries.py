@@ -1,3 +1,8 @@
+"""
+THE FOR LOOPS IN THIS FILE ARE THE REASON FOR LONG COMPILATION TIMES!
+TODO: FIX THIS.
+"""
+
 from typing import NamedTuple
 import jax.numpy as jnp
 from functools import partial
