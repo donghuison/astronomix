@@ -17,7 +17,7 @@ from jax.experimental import checkify
 # astronomix constants
 from astronomix._finite_difference._maths._differencing import _interface_field_divergence
 from astronomix._finite_difference._state_evolution._evolve_state import _evolve_state_fd
-from astronomix._finite_difference._timestep_estimation._timestep_estimator import _cfl_time_step_fd
+from astronomix._finite_difference._timestep_estimation._timestep_estimator import _cfl_time_step_fd, _cfl_time_step_fd_hydro
 from astronomix._finite_volume._magnetic_update._vector_maths import divergence3D
 from astronomix._geometry.boundaries import _boundary_handler
 from astronomix._physics_modules._turbulent_forcing._turbulent_forcing import _apply_forcing
@@ -662,18 +662,32 @@ def _time_integration(
                         )
                     )
             elif config.solver_mode == FINITE_DIFFERENCE:
-                dt = jax.lax.stop_gradient(
-                    _cfl_time_step_fd(
-                        primitive_state,
-                        config.grid_spacing,
-                        params.dt_max,
-                        params.gamma,
-                        config,
-                        params,
-                        registered_variables,
-                        params.C_cfl,
+                if config.mhd:
+                    dt = jax.lax.stop_gradient(
+                        _cfl_time_step_fd(
+                            primitive_state,
+                            config.grid_spacing,
+                            params.dt_max,
+                            params.gamma,
+                            config,
+                            params,
+                            registered_variables,
+                            params.C_cfl,
+                        )
                     )
-                )
+                else:
+                    dt = jax.lax.stop_gradient(
+                        _cfl_time_step_fd_hydro(
+                            primitive_state,
+                            config.grid_spacing,
+                            params.dt_max,
+                            params.gamma,
+                            config,
+                            params,
+                            registered_variables,
+                            params.C_cfl,
+                        )
+                    )
         else:
             dt = params.t_end / config.num_timesteps
 

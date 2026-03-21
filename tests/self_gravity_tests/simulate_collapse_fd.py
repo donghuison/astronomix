@@ -77,7 +77,7 @@ baseline_config_FD = SimulationConfig(
     enforce_positivity=False,
     self_gravity_version = self_gravity_version,
     poisson_manual_open_boundaries=True,
-    mhd = True,
+    mhd = False, # True,
     dimensionality = 3,
     box_size = box_size,
     differentiation_mode = FORWARDS,
@@ -293,9 +293,13 @@ def energy_error_convergence(num_cells_list = [16, 32, 64, 128], only_plot = Tru
 
 def resolution_study_collapse():
 
-    num_cells_list = [64, 64, 128, 128]
-    solver_modes = [FINITE_VOLUME, FINITE_DIFFERENCE, FINITE_VOLUME, FINITE_DIFFERENCE]
-    line_styles = ['-', '--', '-.', ':']
+    # num_cells_list = [64, 64, 128, 128]
+    # solver_modes = [FINITE_VOLUME, FINITE_DIFFERENCE, FINITE_VOLUME, FINITE_DIFFERENCE]
+    # line_styles = ['-', '--', '-.', ':']
+
+    num_cells_list = [64,]
+    solver_modes = [FINITE_DIFFERENCE,]
+    line_styles = ['-',]
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 5))
 
@@ -451,12 +455,12 @@ def radial_profile_study():
         plt.savefig(f"collapse_radial_profile_{num_cells}.png")
 
 
-# resolution_study_collapse()
+resolution_study_collapse()
 # radial_profile_study()
 
-energy_error_convergence(
-    num_cells_list = [16, 32, 64, 96, 128, 160]
-)
+# energy_error_convergence(
+#     num_cells_list = [16, 32, 64, 96, 128, 160]
+# )
 
 
 # -------------------------------------------------------------

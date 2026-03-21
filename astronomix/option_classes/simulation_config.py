@@ -399,12 +399,13 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
 
     # finite difference specific checks
     if config.solver_mode == FINITE_DIFFERENCE:
-        if not config.mhd:
-            raise ValueError(
-                "Finite difference solver mode is currently " \
-                "only supported for MHD simulations. This will be easy to extend, " \
-                "feel free to contribute."
-            )
+        
+        # if not config.mhd:
+        #     raise ValueError(
+        #         "Finite difference solver mode is currently " \
+        #         "only supported for MHD simulations. This will be easy to extend, " \
+        #         "feel free to contribute."
+        #     )
 
         if config.dimensionality != 3:
             raise ValueError(

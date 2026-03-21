@@ -7,6 +7,7 @@ from jaxtyping import Array, Float, jaxtyped
 from beartype import beartype as typechecker
 
 from astronomix._finite_difference._fluid_equations._equations import conserved_state_from_primitive_mhd, primitive_state_from_conserved_mhd
+from astronomix._fluid_equations._equations import conserved_state_from_primitive, primitive_state_from_conserved
 from astronomix._physics_modules._cnn_mhd_corrector._cnn_mhd_corrector import (
     _cnn_mhd_corrector,
 )
@@ -162,14 +163,19 @@ def _physics_sources(
 
     S = jnp.zeros_like(conserved_state)
 
-    primitive_state = primitive_state_from_conserved_mhd(
-        conserved_state,
-        params.minimum_density,
-        params.minimum_pressure,
-        gamma,
-        config,
-        registered_variables
-    )
+    if config.mhd:
+        primitive_state = primitive_state_from_conserved_mhd(
+            conserved_state,
+            params.minimum_density,
+            params.minimum_pressure,
+            gamma,
+            config,
+            registered_variables
+        )
+    else:
+        primitive_state = primitive_state_from_conserved(
+            conserved_state, gamma, config, registered_variables
+        )
 
     if config.wind_config.stellar_wind:
         S += (
@@ -192,9 +198,15 @@ def _physics_sources(
             params,
             dt,
         )
-        S += (conserved_state_from_primitive_mhd(
-            primitive_state, gamma, registered_variables
-        ) - conserved_state)
+        if config.mhd:
+            final_conserved_state = conserved_state_from_primitive_mhd(
+                primitive_state, gamma, registered_variables
+            )
+        else:
+            final_conserved_state = conserved_state_from_primitive(
+                primitive_state, gamma, config, registered_variables
+            )
+        S += (final_conserved_state - conserved_state)
 
     # simplest self-gravity
     # TODO: maybe only one Poisson solve per RK step?
