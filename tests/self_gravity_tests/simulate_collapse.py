@@ -52,7 +52,9 @@ from astronomix.option_classes.simulation_config import (
     UNSPLIT,
 )
 
-self_gravity_version = SIMPLE_SOURCE_TERM
+self_gravity_version = RIEMANN_SPLIT_UNSTABLE
+# Riemann split versions reduce scatter in entropy
+# the unstable version slightly better than the stable one
 
 # simulation settings
 gamma = 5/3
@@ -71,7 +73,7 @@ baseline_config = SimulationConfig(
     split = UNSPLIT,
     differentiation_mode = FORWARDS,
     limiter = MINMOD,
-    time_integrator = MIDPOINT_OPTIM,
+    time_integrator = RK2_SSP, # MIDPOINT_OPTIM,
     riemann_solver = HLLC,
     boundary_settings = BoundarySettings(
         BoundarySettings1D(
@@ -192,11 +194,11 @@ def resolution_study_collapse():
     ax.legend(fontsize="x-small", ncol=len(num_cells_list))
     ax.set_title("Resolution Study for Evrard's Collapse")
 
-    plt.savefig(f"collapse_resolution_study_{'simple' if self_gravity_version == SIMPLE_SOURCE_TERM else 'conservative'}_source_term.svg")
+    plt.savefig(f"figures/collapse_resolution_study_{'simple' if self_gravity_version == SIMPLE_SOURCE_TERM else 'conservative'}_source_term.svg")
 
 def radial_profile_study():
 
-    num_cells_list = [64,]
+    num_cells_list = [128,]
 
     for num_cells in num_cells_list:
 
@@ -236,11 +238,11 @@ def radial_profile_study():
 
         plt.tight_layout()
 
-        plt.savefig(f"collapse_radial_profile_{num_cells}.png")
+        plt.savefig(f"figures/collapse_radial_profile_{num_cells}.png")
 
 
-resolution_study_collapse()
-# radial_profile_study()
+# resolution_study_collapse()
+radial_profile_study()
 
 
 # -------------------------------------------------------------

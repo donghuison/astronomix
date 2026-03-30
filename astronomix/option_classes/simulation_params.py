@@ -38,7 +38,7 @@ class SimulationParams(NamedTuple):
     minimum_pressure: float = 1e-14
 
     #: The maximum time step.
-    dt_max: float = 0.001
+    dt_max: float = jnp.inf
 
     #: The final time of the simulation.
     t_end: float = 0.2

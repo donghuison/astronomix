@@ -94,6 +94,8 @@ def _ssprk4_with_ct(
         # Add physics source terms
         rhs_q += _physics_sources(
             current_q,
+            (dF_x[registered_variables.density_index], dF_y[registered_variables.density_index], dF_z[registered_variables.density_index]),
+            rhs_q[registered_variables.density_index], # drho
             dt_tilde,
             gamma,
             config,
@@ -147,6 +149,7 @@ def _ssprk4_with_ct(
         if config.enforce_positivity:
             q_curr = _enforce_positivity(
                 q_curr,
+                config,
                 gamma,
                 params.minimum_density,
                 params.minimum_pressure,
@@ -202,6 +205,7 @@ def _ssprk4_with_ct(
     if config.enforce_positivity:
         q_final = _enforce_positivity(
             q_final,
+            config,
             gamma,
             params.minimum_density,
             params.minimum_pressure,
@@ -260,6 +264,8 @@ def _ssprk4_hydro(
         # Add physics source terms
         rhs_q += _physics_sources(
             current_q,
+            (dF_x[registered_variables.density_index], dF_y[registered_variables.density_index], dF_z[registered_variables.density_index]),
+            rhs_q[registered_variables.density_index], # drho
             dt_tilde,
             gamma,
             config,
@@ -310,6 +316,7 @@ def _ssprk4_hydro(
         if config.enforce_positivity:
             q_curr = _enforce_positivity(
                 q_curr,
+                config,
                 gamma,
                 params.minimum_density,
                 params.minimum_pressure,
@@ -341,6 +348,7 @@ def _ssprk4_hydro(
     if config.enforce_positivity:
         q_final = _enforce_positivity(
             q_final,
+            config,
             gamma,
             params.minimum_density,
             params.minimum_pressure,

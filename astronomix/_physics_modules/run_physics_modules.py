@@ -8,6 +8,7 @@ from beartype import beartype as typechecker
 
 from astronomix._finite_difference._fluid_equations._equations import conserved_state_from_primitive_mhd, primitive_state_from_conserved_mhd
 from astronomix._fluid_equations._equations import conserved_state_from_primitive, primitive_state_from_conserved
+from astronomix._fluid_equations._fluxes import _euler_flux
 from astronomix._physics_modules._cnn_mhd_corrector._cnn_mhd_corrector import (
     _cnn_mhd_corrector,
 )
@@ -24,6 +25,9 @@ from astronomix.data_classes.simulation_helper_data import HelperData
 from astronomix._geometry.boundaries import _boundary_handler
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 from astronomix.option_classes.simulation_config import (
+    DONOR_ACCOUNTING,
+    FD_FLUX_GRAVITY,
+    WENO_FLUX_GRAVITY,
     SIMPLE_SOURCE_TERM,
     SPHERICAL,
     STATE_TYPE,
@@ -140,6 +144,8 @@ def _run_physics_modules(
 @partial(jax.jit, static_argnames=["config", "registered_variables"])
 def _physics_sources(
     conserved_state: STATE_TYPE,
+    density_fluxes,
+    drho,
     dt: Float[Array, ""],
     gamma: Union[float, Float[Array, ""]],
     config: SimulationConfig,
@@ -211,13 +217,16 @@ def _physics_sources(
     # simplest self-gravity
     # TODO: maybe only one Poisson solve per RK step?
     if config.self_gravity:
+
+        gravitational_potential = _compute_gravitational_potential(
+            conserved_state[registered_variables.density_index],
+            config.grid_spacing,
+            config,
+            params.gravitational_constant
+        )
+
         if config.self_gravity_version == SIMPLE_SOURCE_TERM:
-            gravitational_potential = _compute_gravitational_potential(
-                conserved_state[registered_variables.density_index],
-                config.grid_spacing,
-                config,
-                params.gravitational_constant
-            )
+
             for axis in range(1, config.dimensionality + 1):
                 rho = primitive_state[registered_variables.density_index]
                 v_axis = primitive_state[axis]
@@ -251,6 +260,197 @@ def _physics_sources(
                 )
 
                 S += S_axis * dt
+        elif config.self_gravity_version == FD_FLUX_GRAVITY:
+
+            for axis in range(1, config.dimensionality + 1):
+                rho = primitive_state[registered_variables.density_index]
+                phi_cell = gravitational_potential
+
+                # ── Momentum source: 6th-order centered gradient ──────────────────────
+                acceleration = -_stencil_add(
+                    gravitational_potential,
+                    indices=(3,  2,   1,   -1,  -2,  -3),
+                    factors=(1., -9., 45., -45., 9., -1.),
+                    axis=axis - 1
+                ) / (60.0 * config.grid_spacing)
+
+                S_axis = jnp.zeros_like(primitive_state)
+                S_axis = S_axis.at[axis].set(rho * acceleration)
+
+                # ── Energy source: flux-compatible, no drho term needed ───────────────
+                # phi at right face i+1/2  (6th-order symmetric interpolation)
+                phi_face = _stencil_add(
+                    gravitational_potential,
+                    indices=(-2,  -1,    0,    1,   2,   3),
+                    factors=( 3., -25., 150., 150., -25., 3.),
+                    axis=axis - 1
+                ) / 256.0
+
+                F_right = density_fluxes[axis - 1]                       # F at i+1/2
+                F_left  = _shift(density_fluxes[axis - 1], 1, axis=axis-1)  # F at i-1/2
+                phi_face_left = _shift(phi_face, 1, axis=axis - 1)       # phi at i-1/2
+
+                # W_i = -[F_right*(phi_right - phi_i) + F_left*(phi_i - phi_left)] / dx
+                # Equivalent to: -div(F*phi) + phi*div(F) = -rho*v*grad(phi)
+                energy_source = -(
+                    F_right * (phi_face      - phi_cell)
+                + F_left  * (phi_cell - phi_face_left)
+                ) / config.grid_spacing
+
+                S_axis = S_axis.at[registered_variables.energy_index].set(energy_source)
+
+                S += S_axis * dt
+
+            # for axis in range(1, config.dimensionality + 1):
+
+            #     rho = primitive_state[registered_variables.density_index]
+            #     v_axis = primitive_state[axis]
+
+            #     # 6th-order interpolation of the 
+            #     # potential to the cell faces
+            #     phi_face = _stencil_add(
+            #         gravitational_potential, 
+            #         indices=(-2, -1, 0, 1, 2, 3), 
+            #         factors=(3.0, -25.0, 150.0, 150.0, -25.0, 3.0), 
+            #         axis=axis - 1
+            #     ) / 256.0
+
+            #     # 6th-order finite difference for gravitational acceleration
+            #     # a_i = - (phi_{i+3} - 9*phi_{i+2} + 45*phi_{i+1} - 45*phi_{i-1} + 9*phi_{i-2} - phi_{i-3}) / (60 * dx)
+            #     acceleration = -_stencil_add(
+            #         gravitational_potential, 
+            #         indices=(3, 2, 1, -1, -2, -3), 
+            #         factors=(1.0, -9.0, 45.0, -45.0, 9.0, -1.0), 
+            #         axis=axis - 1
+            #     ) / (60.0 * config.grid_spacing)
+
+            #     S_axis = jnp.zeros_like(primitive_state)
+
+            #     # momentum source
+            #     S_axis = S_axis.at[axis].set(rho * acceleration)
+
+            #     # energy source
+            #     S_axis = S_axis.at[registered_variables.pressure_index].set(
+            #         -1.0 / config.grid_spacing * (density_fluxes[axis - 1] * phi_face - _shift(density_fluxes[axis - 1] * phi_face, 1, axis=axis - 1))
+            #     )
+
+            #     S += S_axis * dt
+
+            # S = S.at[registered_variables.energy_index].add(
+            #     -drho * gravitational_potential
+            # )
+        elif config.self_gravity_version == DONOR_ACCOUNTING:
+
+            for axis in range(1, config.dimensionality + 1):
+
+                S_axis = jnp.zeros_like(primitive_state)
+
+                # momentum source
+
+                # TODO: use higher-order
+                acceleration = -_stencil_add(
+                    gravitational_potential, indices=(1, -1), factors=(1.0, -1.0), axis=axis - 1
+                ) / (2 * config. grid_spacing)
+
+                S_axis = S_axis.at[axis].set(
+                    primitive_state[registered_variables.density_index] * acceleration
+                )
+
+                # energy source
+
+                # different from the FV scheme at index i in the FD scheme
+                # we have the flux from cell i to cell i+1
+                fluxes_i_to_ip1 = jnp.maximum(density_fluxes[axis - 1], 0)
+                fluxes_i_to_im1 = jnp.minimum(jnp.roll(density_fluxes[axis - 1], shift=1, axis=axis - 1), 0)
+
+                # TODO: replace with higher-order finite difference for the potential gradient
+                acc_backward = (
+                    -_stencil_add(
+                        gravitational_potential,
+                        indices=(0, -1),
+                        factors=(1.0, -1.0),
+                        axis=axis - 1,
+                    )
+                    / config.grid_spacing
+                )
+                acc_forward = (
+                    -_stencil_add(
+                        gravitational_potential,
+                        indices=(1, 0),
+                        factors=(1.0, -1.0),
+                        axis=axis - 1,
+                    )
+                    / config.grid_spacing
+                )
+
+                fluxes_acc = fluxes_i_to_im1 * acc_backward + fluxes_i_to_ip1 * acc_forward
+
+                S_axis = S_axis.at[registered_variables.energy_index].set(
+                    fluxes_acc
+                )
+
+                S += S_axis * dt
+        elif config.self_gravity_version == WENO_FLUX_GRAVITY:
+            for axis in range(1, config.dimensionality + 1):
+                ax = axis - 1
+
+                rho = primitive_state[registered_variables.density_index]
+                v_axis = primitive_state[axis]
+                dx = config.grid_spacing
+
+                # 6th-order potential at faces (already have this)
+                phi_face = _stencil_add(
+                    gravitational_potential,
+                    indices=(-2, -1, 0, 1, 2, 3),
+                    factors=(3.0, -25.0, 150.0, 150.0, -25.0, 3.0),
+                    axis=ax
+                ) / 256.0
+
+                # 6th-order gravitational acceleration at centers (already have this)
+                acceleration = -_stencil_add(
+                    gravitational_potential,
+                    indices=(3, 2, 1, -1, -2, -3),
+                    factors=(1.0, -9.0, 45.0, -45.0, 9.0, -1.0),
+                    axis=ax
+                ) / (60.0 * dx)
+
+                S_axis = jnp.zeros_like(primitive_state)
+                S_axis = S_axis.at[axis].set(rho * acceleration)
+
+                # --- corrected product form for energy ---
+
+                f = rho * v_axis                      # (rho v) at cell centers
+                dPhi = -acceleration                   # Phi' at cell centers (6th order, free)
+
+                d2Phi = (                              # Phi'' at cell centers (2nd order, sufficient)
+                    _shift(gravitational_potential, -1, axis=ax)
+                    - 2.0 * gravitational_potential
+                    + _shift(gravitational_potential, 1, axis=ax)
+                ) / dx**2
+
+                df = (                                 # f' at cell centers (2nd order, sufficient)
+                    _shift(f, -1, axis=ax) - _shift(f, 1, axis=ax)
+                ) / (2.0 * dx)
+
+                # correction at cell centers
+                corr_cc = d2Phi * f + 2.0 * dPhi * df
+
+                # average to faces
+                corr_face = 0.5 * (corr_cc + _shift(corr_cc, -1, axis=ax))
+
+                # corrected product flux
+                q_hat = density_fluxes[axis - 1] * phi_face - (dx**2 / 24.0) * corr_face
+
+                # energy source: -div(q_hat)
+                S_energy = -1.0 / dx * (q_hat - _shift(q_hat, 1, axis=ax))
+
+                S_axis = S_axis.at[registered_variables.pressure_index].set(S_energy)
+                S += S_axis * dt
+
+            # Phi * drho term (unchanged)
+            S = S.at[registered_variables.energy_index].add(
+                -drho * gravitational_potential
+            )
         else:
             raise NotImplementedError(
                 "Only SIMPLE_SOURCE_TERM self-gravity is implemented for the finite difference scheme."

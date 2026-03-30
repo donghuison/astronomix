@@ -1,10 +1,17 @@
 # ==== GPU selection ====
 from autocvd import autocvd
 autocvd(num_gpus = 1)
+# ruff: noqa: E402
 # =======================
+
+from typing import NamedTuple
 
 # numerics
 import jax
+
+# # enable 64-bit precision for better error measurement
+# jax.config.update("jax_enable_x64", True)
+
 import jax.numpy as jnp
 
 # plotting
@@ -17,9 +24,11 @@ from astronomix import SimulationConfig
 from astronomix import SimulationParams
 from astronomix.option_classes.simulation_config import (
     DONOR_ACCOUNTING,
+    FD_FLUX_GRAVITY,
     FINITE_DIFFERENCE,
     FINITE_VOLUME,
     HLLC_LM,
+    WENO_FLUX_GRAVITY,
     MIDPOINT_OPTIM,
     RIEMANN_SPLIT,
     RIEMANN_SPLIT_UNSTABLE,
@@ -58,7 +67,12 @@ from astronomix.option_classes.simulation_config import (
     UNSPLIT,
 )
 
-self_gravity_version = SIMPLE_SOURCE_TERM
+self_gravity_version_fv = SIMPLE_SOURCE_TERM
+self_gravity_version_fd = FD_FLUX_GRAVITY
+# in the simple source term version, the energy
+# error is first order in space and time
+# so reducing the timestep does not help as
+# it accumulates over time.
 
 # simulation settings
 gamma = 5/3
@@ -69,13 +83,13 @@ box_size = 4.0
 # animate
 animate = False
 
-baseline_config_FD = SimulationConfig(
+baseline_config_fd = SimulationConfig(
     solver_mode = FINITE_DIFFERENCE,
     runtime_debugging = False,
     progress_bar = True,
     self_gravity = True,
     enforce_positivity=False,
-    self_gravity_version = self_gravity_version,
+    self_gravity_version = self_gravity_version_fd,
     poisson_manual_open_boundaries=True,
     mhd = False, # True,
     dimensionality = 3,
@@ -109,7 +123,7 @@ baseline_config_fv = SimulationConfig(
     runtime_debugging = False,
     progress_bar = True,
     self_gravity = True,
-    self_gravity_version = self_gravity_version,
+    self_gravity_version = self_gravity_version_fv,
     poisson_manual_open_boundaries=True,
     first_order_fallback = False,
     dimensionality = 3,
@@ -146,10 +160,11 @@ baseline_config_fv = SimulationConfig(
 # =================== ↓ Evrard's Collapse ↓ ===================
 # -------------------------------------------------------------
 
-def simulate_collapse(num_cells, t_end = 1.5, return_snapshots = True, solver_mode = FINITE_DIFFERENCE):
+# usually t_end = 1.5
+def simulate_collapse(num_cells, t_end = 1.2, return_snapshots = True, solver_mode = FINITE_DIFFERENCE, self_gravity_version = None):
 
     if solver_mode == FINITE_DIFFERENCE:
-        baseline_config = baseline_config_FD
+        baseline_config = baseline_config_fd
     elif solver_mode == FINITE_VOLUME:
         baseline_config = baseline_config_fv
     else:
@@ -161,6 +176,26 @@ def simulate_collapse(num_cells, t_end = 1.5, return_snapshots = True, solver_mo
         num_cells = num_cells,
         return_snapshots = return_snapshots,
     )
+
+    params = SimulationParams(
+        t_end = t_end,
+        # normally 1.5
+        C_cfl = 0.4 if solver_mode == FINITE_DIFFERENCE else 0.4,
+        dt_max = jnp.inf,
+        minimum_density = 1e-5,
+        minimum_pressure = 3e-6,
+        # minimum_density = 1e-6,
+        # minimum_pressure = 1e-6,
+    )
+
+    if self_gravity_version is not None:
+        config = config._replace(self_gravity_version = self_gravity_version)
+
+    if self_gravity_version == SIMPLE_SOURCE_TERM:
+        # not necessary in the simple source term version
+        config = config._replace(
+            enforce_positivity = False,
+        )
 
     helper_data = get_helper_data(config)
 
@@ -189,6 +224,9 @@ def simulate_collapse(num_cells, t_end = 1.5, return_snapshots = True, solver_mo
     # initial thermal energy per unit mass = 0.05
     e = 0.05
     p = (gamma - 1) * rho * e
+    print("min and max initial pressure:", jnp.min(p), jnp.max(p))
+
+    p = jnp.where(p < params.minimum_pressure, params.minimum_pressure, p)
 
     B0 = 1e-4
 
@@ -213,13 +251,6 @@ def simulate_collapse(num_cells, t_end = 1.5, return_snapshots = True, solver_mo
         interface_magnetic_field_x = bxb,
         interface_magnetic_field_y = byb,
         interface_magnetic_field_z = bzb,
-    )
-
-    params = SimulationParams(
-        t_end = t_end,
-        C_cfl = 0.4,
-        minimum_density = 1e-5,
-        minimum_pressure = 1e-5,
     )
 
     config = finalize_config(config, initial_state.shape)
@@ -293,38 +324,62 @@ def energy_error_convergence(num_cells_list = [16, 32, 64, 128], only_plot = Tru
 
 def resolution_study_collapse():
 
-    # num_cells_list = [64, 64, 128, 128]
-    # solver_modes = [FINITE_VOLUME, FINITE_DIFFERENCE, FINITE_VOLUME, FINITE_DIFFERENCE]
-    # line_styles = ['-', '--', '-.', ':']
+    class TestSetup(NamedTuple):
+        solver_mode: int
+        self_gravity_version: int
+        resolution: int
+        line_style: str = '-'
+        linewidth: float = 2.0
 
-    num_cells_list = [64,]
-    solver_modes = [FINITE_DIFFERENCE,]
-    line_styles = ['-',]
+        def __str__(self):
+            # FD for finite difference, FV for finite volume
+            # simple source for SIMPLE_SOURCE_TERM
+            # flux-based source for FD_FLUX_GRAVITY
+            # corrected flux-based source for WENO_FLUX_GRAVITY
+            # total string e.g.: FD, simple source
+            solver_str = 'FD' if self.solver_mode == FINITE_DIFFERENCE else 'FV'
+            gravity_str = 'simple source' if self.self_gravity_version == SIMPLE_SOURCE_TERM else 'flux-based source' if self.self_gravity_version == FD_FLUX_GRAVITY else 'corrected flux-based source'
+            resolution_str = f"N={self.resolution}"
+            return f"{solver_str}, {gravity_str}, {resolution_str}"
 
-    fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+    test_setups = [
+        TestSetup(solver_mode = FINITE_DIFFERENCE, self_gravity_version = SIMPLE_SOURCE_TERM, resolution = 128, line_style = ':'),
+        TestSetup(solver_mode = FINITE_DIFFERENCE, self_gravity_version = FD_FLUX_GRAVITY, resolution = 128, line_style = '-.'),
+        TestSetup(solver_mode = FINITE_DIFFERENCE, self_gravity_version = WENO_FLUX_GRAVITY, resolution = 128, line_style = '--'),
+    ]
 
-    for num_cells, line_style, solver_mode in zip(num_cells_list, line_styles, solver_modes):
-        print(f"Running simulation for {num_cells} cells...")
+    fig, (ax_energy_terms, ax_total_energy) = plt.subplots(2, 1, figsize=(10, 10))
 
-        solver_string = " (FD)" if solver_mode == FINITE_DIFFERENCE else " (FV)"
+    for test_setup in test_setups:
 
-        snapshots, _, _, _, registered_variables = simulate_collapse(num_cells, solver_mode = solver_mode)
+        print(f"Running simulation for {test_setup.resolution} cells...")
+
+        snapshots, _, _, _, registered_variables = simulate_collapse(test_setup.resolution, solver_mode = test_setup.solver_mode, self_gravity_version = test_setup.self_gravity_version)
         total_energy = snapshots.total_energy
         internal_energy = snapshots.internal_energy
         kinetic_energy = snapshots.kinetic_energy
         gravitational_energy = snapshots.gravitational_energy
         time = snapshots.time_points
-        ax.plot(time, total_energy, label="Total Energy, N = " + str(num_cells) + solver_string, color = 'black', linestyle = line_style)
-        ax.plot(time, internal_energy, label="Internal Energy, N = " + str(num_cells) + solver_string, color = 'green', linestyle = line_style)
-        ax.plot(time, kinetic_energy, label="Kinetic Energy, N = " + str(num_cells) + solver_string, color = 'red', linestyle = line_style)
-        ax.plot(time, gravitational_energy, label="Gravitational Energy, N = " + str(num_cells) + solver_string, color = 'blue', linestyle = line_style)
-        ax.set_xlabel("Time")
-        ax.set_ylabel("Energy")
+
+        ax_energy_terms.plot(time, total_energy, label="Total, " + str(test_setup), color = 'black', linestyle = test_setup.line_style)
+        ax_energy_terms.plot(time, internal_energy, label="Internal, " + str(test_setup), color = 'green', linestyle = test_setup.line_style)
+        ax_energy_terms.plot(time, kinetic_energy, label="Kinetic, " + str(test_setup), color = 'red', linestyle = test_setup.line_style)
+        ax_energy_terms.plot(time, gravitational_energy, label="Gravitational, " + str(test_setup), color = 'blue', linestyle = test_setup.line_style)
+
+        ax_energy_terms.set_xlabel("Time")
+        ax_energy_terms.set_ylabel("Energy")
+
+        rel_energy_error = jnp.abs(total_energy - total_energy[0]) / jnp.abs(total_energy[0])
+        ax_total_energy.plot(time, rel_energy_error, label="Relative Energy Error, " + str(test_setup), linestyle = test_setup.line_style)
+
+        ax_total_energy.set_yscale("log")
+        ax_total_energy.set_xlabel("Time")
+        ax_total_energy.set_ylabel("Relative Energy Error")
 
         if animate:
             fig_anim, ax_anim = plt.subplots(1, 3, figsize=(15, 5))
             states = snapshots.states
-            mid_plane = num_cells // 2
+            mid_plane = test_setup.resolution // 2
 
             density_series = states[:, registered_variables.density_index, :, :, mid_plane]
             pressure_series = states[:, registered_variables.pressure_index, :, :, mid_plane]
@@ -395,30 +450,34 @@ def resolution_study_collapse():
                 blit=False,
             )
             anim.save(
-                f"collapse_slice_evolution_{num_cells}_{'simple' if self_gravity_version == SIMPLE_SOURCE_TERM else 'conservative'}.gif",
+                f"collapse_slice_evolution_{test_setup.resolution}.gif",
                 fps=10,
             )
 
             plt.close(fig_anim)
 
-    ax.set_ylim(-2.5, 2.5)
+    ax_energy_terms.set_ylim(-2.5, 2.5)
     # ax.set_ylim(-0.7, -0.4)
     # ax.set_xlim(0.8, 1.0)
 
-    ax.legend(fontsize="x-small", ncol=len(num_cells_list))
-    ax.set_title("Resolution Study for Evrard's Collapse")
+    ax_energy_terms.legend(fontsize="xx-small", ncol = len(test_setups))
+    ax_energy_terms.set_title("Resolution Study for Evrard's Collapse")
+
+    ax_total_energy.legend(fontsize="x-small",)
+    ax_total_energy.set_title("Relative Energy Error for Evrard's Collapse")
 
     plt.savefig(f"figures/collapse_resolution_study.svg")
 
 def radial_profile_study():
 
-    num_cells_list = [64,]
+    num_cells_list = [128,]
+    solver_modes = [FINITE_DIFFERENCE,]
 
-    for num_cells in num_cells_list:
+    for num_cells, solver_mode in zip(num_cells_list, solver_modes):
 
         print(f"Running radial profile simulation for {num_cells} cells...")
 
-        final_state, _, params, helper_data, registered_variables = simulate_collapse(num_cells, t_end = 0.8, return_snapshots = False)
+        final_state, _, params, helper_data, registered_variables = simulate_collapse(num_cells, t_end = 0.8, return_snapshots = False, solver_mode = solver_mode)
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(12, 4))
 
         ax1.scatter(helper_data.r.flatten(), final_state[registered_variables.density_index].flatten(), label="Final Density", s = 1)
@@ -452,7 +511,7 @@ def radial_profile_study():
 
         plt.tight_layout()
 
-        plt.savefig(f"collapse_radial_profile_{num_cells}.png")
+        plt.savefig(f"figures/collapse_radial_profile_{num_cells}.png")
 
 
 resolution_study_collapse()

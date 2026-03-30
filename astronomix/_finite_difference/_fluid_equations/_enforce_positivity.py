@@ -16,13 +16,15 @@ from typing import Union
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 from astronomix.option_classes.simulation_config import (
     STATE_TYPE,
+    SimulationConfig,
 )
 
 @partial(
-    jax.jit, static_argnames=["registered_variables"]
+    jax.jit, static_argnames=["registered_variables", "config"]
 )
 def _enforce_positivity(
     conserved_state: STATE_TYPE,
+    config: SimulationConfig,
     gamma: Union[float, Float[Array, ""]],
     minimum_density: Union[float, Float[Array, ""]],
     minimum_pressure: Union[float, Float[Array, ""]],
@@ -39,19 +41,29 @@ def _enforce_positivity(
     v_y = conserved_state[registered_variables.momentum_index.y] / rho
     v_z = conserved_state[registered_variables.momentum_index.z] / rho
     energy = conserved_state[registered_variables.energy_index]
-    B_x = conserved_state[registered_variables.magnetic_index.x]
-    B_y = conserved_state[registered_variables.magnetic_index.y]
-    B_z = conserved_state[registered_variables.magnetic_index.z]
 
-    b2 = B_x**2 + B_y**2 + B_z**2
+    if config.mhd:
+        B_x = conserved_state[registered_variables.magnetic_index.x]
+        B_y = conserved_state[registered_variables.magnetic_index.y]
+        B_z = conserved_state[registered_variables.magnetic_index.z]
+
+        b2 = B_x**2 + B_y**2 + B_z**2
+    
     v2 = v_x**2 + v_y**2 + v_z**2
 
     # calculate pressure
-    pressure = (gamma - 1.0) * (energy - 0.5 * rho * v2 - 0.5 * b2)
+    if config.mhd:
+        pressure = (gamma - 1.0) * (energy - 0.5 * rho * v2 - 0.5 * b2)
+    else:
+        pressure = (gamma - 1.0) * (energy - 0.5 * rho * v2)
+    
     pressure = jnp.maximum(pressure, minimum_pressure)
 
     # redefine energy with new pressure
-    energy = pressure / (gamma - 1.0) + 0.5 * rho * v2 + 0.5 * b2
+    if config.mhd:
+        energy = pressure / (gamma - 1.0) + 0.5 * rho * v2 + 0.5 * b2
+    else:
+        energy = pressure / (gamma - 1.0) + 0.5 * rho * v2
 
     # reconstruct conserved state
     conserved_state = conserved_state.at[registered_variables.density_index].set(rho)

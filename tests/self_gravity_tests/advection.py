@@ -1,33 +1,5 @@
 """
-Jeans Linear Waves are a self-gravity setup with 
-analytical solution.
-
-\rho = \rho_B + \rho_B \eps sin(kx - wt)
-v = \eps w k / k^2 sin(kx - wt)
-P = c_s^2 \rho_B / \gamma + c_s^2 \rho_B \eps sin(kx - wt)
-
-with
-
-w = sqrt(c_s^2 k^2 - 4 \pi G \rho_B)
-
-Here with \rho_B = 1, c_s^2 = 1, \gamma = 5/3,
-4 \pi G = 1, k = 2 \pi (2,4,4)^T, \eps = 1e-6.
-
-For the box length one must ensure proper periodicity 
-of the wave. The wavelength is given by
-
-\lambda = 2 \pi / k
-
-and for each dimension a multiple of the 
-wavelength must fit in the box.
-
-For the above, e.g. L = 1.0 in all dimensions.
-
-The period is T = 2 \pi / w, when we run for full
-periods, we should see the initial conditions exactly reproduced.
-
-We will run for N_periods = 3.
-
+Advection of self-gravitating slabs in equilibrium.
 """
 
 # ==== GPU selection ====
@@ -67,24 +39,36 @@ from astronomix.option_classes.simulation_config import (
     FINITE_DIFFERENCE, SIMPLE_SOURCE_TERM
 )
 
-def jeans_analytical(
-    x, t, rho_B, eps, c_s_squared, k_vec, gamma, G
+def initial_slab(
+    x, rho_0, p_0, eps, v_vec, k_vec, G
 ):
+    
+    # kx scalar product
+    kx = k_vec[0] * x[0] + k_vec[1] * x[1] + k_vec[2] * x[2]
     k_squared = jnp.sum(k_vec ** 2)
-    w_squared = c_s_squared * k_squared - 4 * jnp.pi * G * rho_B
-    w = jnp.sqrt(w_squared)
 
-    phase = k_vec[0] * x[0] + k_vec[1] * x[1] + k_vec[2] * x[2] - w * t
+    # angular frequency
+    w = k_vec[0] * v_vec[0] + k_vec[1] * v_vec[1] + k_vec[2] * v_vec[2]
 
-    rho = rho_B + rho_B * eps * jnp.sin(phase)
-    vx = eps * w * k_vec[0] / k_squared * jnp.sin(phase)
-    vy = eps * w * k_vec[1] / k_squared * jnp.sin(phase)
-    vz = eps * w * k_vec[2] / k_squared * jnp.sin(phase)
-    P = c_s_squared * rho_B / gamma + c_s_squared * rho_B * eps * jnp.sin(phase)
+    # density field
+    rho = rho_0 * (1 + eps * jnp.cos(kx) + eps ** 2 / 3 * jnp.cos(2 * kx))
+
+    # velocity field
+    vx = v_vec[0] * jnp.ones_like(x[0])
+    vy = v_vec[1] * jnp.ones_like(x[1])
+    vz = v_vec[2] * jnp.ones_like(x[2])
+
+    # pressure field
+    P = p_0 + 4 * jnp.pi * G * eps * rho_0 ** 2 / k_squared * (
+        (1 - eps ** 2 / 12) * jnp.cos(kx) + 
+        eps / 3 * jnp.cos(2 * kx) +
+        eps ** 2 / 12 * jnp.cos(3 * kx) +
+        eps ** 3 / 144 * jnp.cos(4 * kx)
+    )
 
     return rho, (vx, vy, vz), P, w
 
-def jeans_simulation(
+def slab_simulation(
     num_cells,
     num_periods = 1,
     solver_mode = FINITE_DIFFERENCE,
@@ -95,8 +79,17 @@ def jeans_simulation(
     Return the L1 density error.
     """
 
-    box_size = jnp.pi # in each dimension
     G = 1 / (4 * jnp.pi)
+    rho_0 = 1.0
+    p_0 = 6.0
+    eps = 0.3
+    # v_vec = jnp.array([0.8, 0.6, 0.0])
+    # k_vec = jnp.array([1/3, 2/3, 2/3])
+
+    v_vec = jnp.array([0.6, 0.6, 0.6])
+    k_vec = jnp.array([2/3, 2/3, 2/3])
+
+    box_size = float(2 * jnp.pi * jnp.max(1/k_vec))
 
     # setup simulation config
     config = SimulationConfig(
@@ -107,7 +100,7 @@ def jeans_simulation(
         self_gravity_version=self_gravity_version,
         boundary_handling=PERIODIC_ROLL,
         num_ghost_cells=0,
-        mhd=(solver_mode == FINITE_DIFFERENCE),
+        mhd=False,
         dimensionality=3,
         box_size=box_size,
         num_cells=num_cells,
@@ -135,17 +128,12 @@ def jeans_simulation(
     # to shape (3, num_cells, num_cells, num_cells)
     x = jnp.transpose(x, (3, 0, 1, 2))
 
-    rho_B = 1.0
-    c_s_squared = 1.0
-    gamma = 5/3
-    k_vec = jnp.array([2, 4, 4])
-    eps = 1e-6
-
-    initial_rho, initial_v, initial_P, w = jeans_analytical(
-        x, t=0.0, rho_B=rho_B, eps=eps, c_s_squared=c_s_squared, k_vec=k_vec, gamma=gamma, G=G
+    initial_rho, initial_v, initial_P, w = initial_slab(
+        x, rho_0=rho_0, p_0=p_0, eps=eps, v_vec=v_vec, k_vec=k_vec, G=G
     )
 
     period = 2 * jnp.pi / w
+    # period = 30 * jnp.pi
     t_end = num_periods * period
 
     # setup simulation params
@@ -175,6 +163,11 @@ def jeans_simulation(
     )
 
     if animate:
+        # THERE IS SOME PROBLEM WITH USING THIS
+        # FOR THE ERROR ANALYSIS!
+        # THE LAST FRAME WHEN TIMEPOINTS FOR THE FRAMES
+        # ARE NOT SPECIFIED MUST NOT NECESSARILY BE THE FINAL
+        # TIMEPOINT!
         final_state = result.states[-1]
     else:
         final_state = result
@@ -194,37 +187,25 @@ def jeans_simulation(
     fig_comp.colorbar(im2, ax=axs_comp[2])
 
     fig_comp.tight_layout()
-    fig_comp.savefig(f"figures/jeans_waves_comparison_{num_cells}cells_{'FD' if solver_mode == FINITE_DIFFERENCE else 'FV'}.svg")
+    fig_comp.savefig(f"figures/slab_comparison_{num_cells}cells_{'FD' if solver_mode == FINITE_DIFFERENCE else 'FV'}.svg")
 
     # if animate do a func animation of the density slice evolution
     if animate:
-        fig_anim, axs_anim = plt.subplots(1, 2, figsize=(10, 5))
+        fig_anim, axs_anim = plt.subplots(1, 1, figsize=(10, 5))
 
-        im = axs_anim[0].imshow(initial_state[registered_variables.density_index, :, :, num_cells // 2], origin='lower', extent=(0, box_size, 0, box_size))
-        axs_anim[0].set_title('Density Slice Evolution (Simulated)')
-        fig_anim.colorbar(im, ax=axs_anim[0])
-
-        analytical_solution = jeans_analytical(
-            x, t=result.time_points[0], rho_B=rho_B, eps=eps, c_s_squared=c_s_squared, k_vec=k_vec, gamma=gamma, G=G
-        )
-        im_analytical = axs_anim[1].imshow(analytical_solution[0][:, :, num_cells // 2], origin='lower', extent=(0, box_size, 0, box_size))
-        axs_anim[1].set_title('Density Slice Evolution (Analytical)')
-        fig_anim.colorbar(im_analytical, ax=axs_anim[1])
+        im = axs_anim.imshow(initial_state[registered_variables.density_index, :, :, num_cells // 2], origin='lower', extent=(0, box_size, 0, box_size))
+        axs_anim.set_title('Density Slice Evolution (Simulated)')
+        fig_anim.colorbar(im, ax=axs_anim)
 
         def update(frame):
             im.set_data(result.states[frame][registered_variables.density_index, :, :, num_cells // 2])
-            analytical_solution = jeans_analytical(
-                x, t=result.time_points[frame], rho_B=rho_B, eps=eps, c_s_squared=c_s_squared, k_vec=k_vec, gamma=gamma, G=G
-            )
-            im_analytical.set_data(analytical_solution[0][:, :, num_cells // 2])
-            return im, im_analytical
+            return im,
 
         anim = FuncAnimation(fig_anim, update, frames=len(result.states), blit=True)
-        anim.save(f"figures/jeans_waves_evolution_{num_cells}cells_{'FD' if solver_mode == FINITE_DIFFERENCE else 'FV'}.gif")
+        anim.save(f"figures/slab_evolution_{num_cells}cells_{'FD' if solver_mode == FINITE_DIFFERENCE else 'FV'}.gif")
 
     # calculate L1 error
     return jnp.mean(jnp.abs(final_state[registered_variables.density_index] - initial_rho))
-
 
 resolutions = [16, 32, 64, 96,]
 
@@ -254,7 +235,7 @@ errors = {str(test_setup): [] for test_setup in test_setups}
 
 for num_cells in resolutions:
     for test_setup in test_setups:
-        error = jeans_simulation(num_cells, solver_mode=test_setup.solver_mode, self_gravity_version=test_setup.self_gravity_version)
+        error = slab_simulation(num_cells, solver_mode=test_setup.solver_mode, self_gravity_version=test_setup.self_gravity_version)
         errors[str(test_setup)].append(error)
         print(f"Resolution: {num_cells}, Test Setup: {test_setup}, L1 Density Error: {error}")
 
@@ -270,7 +251,7 @@ for test_setup in test_setups:
 ax_errors.set_xscale('log')
 ax_errors.set_yscale('log')
 
-anchor = (20, 1e-9)
+anchor = (20, 1e-5)
 
 add_power_law_indicators(
     ax=ax_errors,
@@ -283,7 +264,7 @@ add_power_law_indicators(
 
 ax_errors.set_xlabel('number of cells per dimension')
 ax_errors.set_ylabel('L1 density error')
-ax_errors.set_title('Jeans Waves L1 Density Error vs Resolution')
+ax_errors.set_title('Slab L1 Density Error vs Resolution')
 ax_errors.legend()
 fig_errors.tight_layout()
-fig_errors.savefig(f"figures/jeans_waves_error_convergence.svg")
+fig_errors.savefig(f"figures/slab_error_convergence.svg")
