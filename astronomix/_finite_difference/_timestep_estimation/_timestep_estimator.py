@@ -89,6 +89,18 @@ def _cfl_time_step_fd(
     lambda_z = jnp.max(jnp.abs(lambda_z))
 
     dt_cfl = C_CFL * grid_spacing / (lambda_x + lambda_y + lambda_z)
+
+    # viscous time step constraint
+    if config.diffusion:
+        rho_min = jnp.maximum(
+            jnp.min(primitive_state[registered_variables.density_index]),
+            params.minimum_density,
+        )
+        nu_max = params.viscosity / rho_min
+        dt_visc = C_CFL * grid_spacing**2 / (2.0 * config.dimensionality * nu_max)
+        dt_cfl = jnp.minimum(dt_cfl, dt_visc)
+
+
     dt_cfl = jnp.minimum(dt_cfl, dt_max)
 
     return dt_cfl
@@ -152,5 +164,15 @@ def _cfl_time_step_fd_hydro(
 
     dt_cfl = C_CFL * grid_spacing / (lambda_x + lambda_y + lambda_z)
     dt_cfl = jnp.minimum(dt_cfl, dt_max)
+
+    # viscous time step constraint
+    if config.diffusion:
+        rho_min = jnp.maximum(
+            jnp.min(primitive_state[registered_variables.density_index]),
+            params.minimum_density,
+        )
+        nu_max = params.viscosity / rho_min
+        dt_visc = C_CFL * grid_spacing**2 / (2.0 * config.dimensionality * nu_max)
+        dt_cfl = jnp.minimum(dt_cfl, dt_visc)
 
     return dt_cfl

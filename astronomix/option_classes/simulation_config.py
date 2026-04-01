@@ -231,6 +231,10 @@ class SimulationConfig(NamedTuple):
     #: Poisson solver.
     poisson_manual_open_boundaries: bool = False
 
+    #: Explicit diffusion term 
+    #: (currently only for finite difference mode)
+    diffusion: bool = False
+
     #: The size of the simulation box.
     box_size: float = 1.0
 

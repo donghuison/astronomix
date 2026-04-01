@@ -81,7 +81,7 @@ gamma = 5/3
 box_size = 4.0
 
 # animate
-animate = False
+animate = True
 
 baseline_config_fd = SimulationConfig(
     solver_mode = FINITE_DIFFERENCE,

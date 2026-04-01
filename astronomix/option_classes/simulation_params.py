@@ -22,6 +22,10 @@ class SimulationParams(NamedTuple):
     #: Gravitational constant.
     gravitational_constant: float = 1.0
 
+    #: Dynamic viscosity for simulations
+    #: with explicit diffusion.
+    viscosity: float = 0.0
+
     #: The adiabatic index of the gas.
     gamma: float = 5/3
 

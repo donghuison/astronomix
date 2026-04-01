@@ -298,6 +298,13 @@ def _time_integration(
     # final state at the end), we have to set up the arrays
     # to store this data.
 
+    # The maximum timestep is also limited by the number of
+    # snapshots we want to take.
+    if config.return_snapshots:
+        params = params._replace(
+            dt_max=jnp.minimum(params.dt_max, params.t_end / config.num_snapshots)
+        )
+
     if config.return_snapshots:
         time_points = jnp.zeros(config.num_snapshots)
 
