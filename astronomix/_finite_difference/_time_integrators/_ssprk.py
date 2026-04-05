@@ -63,7 +63,7 @@ def _ssprk4_with_ct(
         """
 
         current_q = update_cell_center_fields(
-            current_q, bx, by, bz, registered_variables
+            current_q, bx, by, bz, config, registered_variables
         )
 
         dt_tilde = k2_coeff * dt
@@ -76,25 +76,53 @@ def _ssprk4_with_ct(
 
         # Calculate fluxes based on the state of the current stage
         dF_x = _weno_flux_x(current_q, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables)
-        dF_y = _weno_flux_y(current_q, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables)
-        dF_z = _weno_flux_z(current_q, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables)
+
+        if config.dimensionality == 1:
+            dF_y = 0.0
+            dF_z = 0.0
+
+        if config.dimensionality == 2:
+            dF_y = _weno_flux_y(current_q, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables)
+            dF_z = 0.0
+
+        if config.dimensionality == 3:
+            dF_y = _weno_flux_y(current_q, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables)
+            dF_z = _weno_flux_z(current_q, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables)
 
         # Calculate RHS for interface magnetic fields using Constrained Transport
         rhs_bx, rhs_by, rhs_bz = constrained_transport_rhs(
-            current_q, dF_x, dF_y, dF_z, dtdx, dtdy, dtdz, registered_variables
+            current_q, dF_x, dF_y, dF_z, dtdx, dtdy, dtdz, config, registered_variables
         )
 
         # Calculate RHS for conserved fluid variables
-        rhs_q = -dtdx * (
-            (dF_x - _shift(dF_x, 1, axis=1))
-            + (dF_y - _shift(dF_y, 1, axis=2))
-            + (dF_z - _shift(dF_z, 1, axis=3))
-        )
+        if config.dimensionality == 1:
+            rhs_q = -dtdx * (
+                (dF_x - _shift(dF_x, 1, axis=1))
+            )
+        elif config.dimensionality == 2:
+            rhs_q = -dtdx * (
+                (dF_x - _shift(dF_x, 1, axis=1))
+                + (dF_y - _shift(dF_y, 1, axis=2))
+            )
+        elif config.dimensionality == 3:
+            rhs_q = -dtdx * (
+                (dF_x - _shift(dF_x, 1, axis=1))
+                + (dF_y - _shift(dF_y, 1, axis=2))
+                + (dF_z - _shift(dF_z, 1, axis=3))
+            )
+
+        if config.dimensionality == 1:
+            density_fluxes = (dF_x[registered_variables.density_index],)
+        elif config.dimensionality == 2:
+            density_fluxes = (dF_x[registered_variables.density_index], dF_y[registered_variables.density_index])
+        elif config.dimensionality == 3:
+            density_fluxes = (dF_x[registered_variables.density_index], dF_y[registered_variables.density_index], dF_z[registered_variables.density_index])
+
 
         # Add physics source terms
         rhs_q += _physics_sources(
             current_q,
-            (dF_x[registered_variables.density_index], dF_y[registered_variables.density_index], dF_z[registered_variables.density_index]),
+            density_fluxes,
             rhs_q[registered_variables.density_index], # drho
             dt_tilde,
             gamma,
@@ -199,7 +227,7 @@ def _ssprk4_with_ct(
     # Update the cell-centered magnetic fields in the conserved state array
     # from the final interface magnetic fields.
     q_final = update_cell_center_fields(
-        q_final, bx_final, by_final, bz_final, registered_variables
+        q_final, bx_final, by_final, bz_final, config, registered_variables
     )
 
     if config.enforce_positivity:

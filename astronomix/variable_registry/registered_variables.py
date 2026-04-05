@@ -112,7 +112,7 @@ class RegisteredVariables(NamedTuple):
 
     # here you can add more variables
 
-
+# TODO: update
 def get_registered_variables(config: SimulationConfig) -> RegisteredVariables:
     """Get the registered variables for the simulation.
 
@@ -179,17 +179,29 @@ def get_registered_variables(config: SimulationConfig) -> RegisteredVariables:
             )
 
     if config.mhd and config.solver_mode == FINITE_DIFFERENCE:
-        # interface magnetic field indices
-        registered_variables = registered_variables._replace(
-            interface_magnetic_field_index=StaticIntVector(
-                registered_variables.num_vars,
-                registered_variables.num_vars + 1,
-                registered_variables.num_vars + 2,
-            )
+        # we always assume all velocity fields present, even in 1D and 2D, for the magnetic update
+
+        # TEMPORARY: set the registered variables manually
+        registered_variables = RegisteredVariables(
+            density_index=0,
+            velocity_index=StaticIntVector(1, 2, 3),
+            pressure_index=4,
+            magnetic_index=StaticIntVector(5, 6, 7),
+            interface_magnetic_field_index=StaticIntVector(8, 9, 10),
+            num_vars=11,
         )
-        registered_variables = registered_variables._replace(
-            num_vars=registered_variables.num_vars + 3
-        )
+
+        # # interface magnetic field indices
+        # registered_variables = registered_variables._replace(
+        #     interface_magnetic_field_index=StaticIntVector(
+        #         registered_variables.num_vars,
+        #         registered_variables.num_vars + 1,
+        #         registered_variables.num_vars + 2,
+        #     )
+        # )
+        # registered_variables = registered_variables._replace(
+        #     num_vars=registered_variables.num_vars + 3
+        # )
 
     if config.wind_config.trace_wind_density:
         registered_variables = registered_variables._replace(

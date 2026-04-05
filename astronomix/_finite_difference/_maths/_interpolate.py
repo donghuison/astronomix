@@ -63,3 +63,13 @@ def point_values_to_averages(q, axisA, axisB):
         _shift(q, 1, axis=axisB) - 2 * q + _shift(q, -1, axis=axisB)
     ) / 24.0
     return q + smooth_x + smooth_y
+
+@partial(jax.jit, static_argnames=["axisA"])
+def point_values_to_averages_single_axis(q, axisA):
+    """
+    Single axis version of point_values_to_averages.
+    """
+    smooth = (
+        _shift(q, 1, axis=axisA) - 2 * q + _shift(q, -1, axis=axisA)
+    ) / 24.0
+    return q + smooth

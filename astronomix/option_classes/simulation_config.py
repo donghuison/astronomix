@@ -413,12 +413,12 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
         #         "feel free to contribute."
         #     )
 
-        if config.dimensionality != 3 and config.mhd:
-            raise ValueError(
-                "Finite difference solver mode in MHD mode is currently " \
-                "only supported for 3D simulations. This will be easy to extend, " \
-                "feel free to contribute."
-            )
+        # if config.dimensionality != 3 and config.mhd:
+        #     raise ValueError(
+        #         "Finite difference solver mode in MHD mode is currently " \
+        #         "only supported for 3D simulations. This will be easy to extend, " \
+        #         "feel free to contribute."
+        #     )
         
         if config.dimensionality == 3 and config.boundary_settings != BoundarySettings(
             BoundarySettings1D(

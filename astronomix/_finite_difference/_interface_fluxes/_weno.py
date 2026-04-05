@@ -289,7 +289,6 @@ def _weno_flux_x(
         return F_current + dF
     
     if config.mhd:
-        # for mhd only 3D is currently supported
         num_modes = 7
     else:
         num_modes = config.dimensionality + 2

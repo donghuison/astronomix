@@ -88,6 +88,14 @@ def construct_primitive_state(
             )
 
         if config.solver_mode == FINITE_DIFFERENCE:
+
+            # we always assume all velocity fields present
+            if velocity_y is not None:
+                state = state.at[registered_variables.velocity_index.y].set(velocity_y)
+            if velocity_z is not None:
+                state = state.at[registered_variables.velocity_index.z].set(velocity_z)
+            # otherwise zero by default
+
             if interface_magnetic_field_x is not None:
                 state = state.at[
                     registered_variables.interface_magnetic_field_index.x

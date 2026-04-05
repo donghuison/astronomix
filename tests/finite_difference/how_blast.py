@@ -156,7 +156,7 @@ def run_blast_simulation(num_cells, B0):
     return initial_state, config, registered_variables, params, helper_data
 
 
-num_cells = 64
+num_cells = 96
 B0 = 10
 
 initial_state, config, registered_variables, params, helper_data = run_blast_simulation(
@@ -200,6 +200,7 @@ rhs_bx, rhs_by, rhs_bz = constrained_transport_rhs(
     1.0,
     1.0,
     1.0,
+    config,
     registered_variables,
 )
 
