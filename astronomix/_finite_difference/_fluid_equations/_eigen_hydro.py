@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from typing import Union
 
 from astronomix._stencil_operations._stencil_operations import _shift
+from astronomix.option_classes.simulation_config import SimulationConfig
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 
 
@@ -22,19 +23,29 @@ def diff_safe_sqrt(x):
     return jnp.sqrt(x_safe)
 
 
-@partial(jax.jit, static_argnames=["registered_variables"])
+@partial(jax.jit, static_argnames=["registered_variables", "config"])
 def _eigenvalue_building_blocks(
     conserved_state,
     gamma,
     rhomin,
     pgmin,
+    config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ):
     # unpack the conserved variables
     density = conserved_state[registered_variables.density_index]
     momentum_x = conserved_state[registered_variables.momentum_index.x]
-    momentum_y = conserved_state[registered_variables.momentum_index.y]
-    momentum_z = conserved_state[registered_variables.momentum_index.z]
+
+    if config.dimensionality == 1:
+        momentum_y = 0.0
+        momentum_z = 0.0
+    elif config.dimensionality == 2:
+        momentum_y = conserved_state[registered_variables.momentum_index.y]
+        momentum_z = 0.0
+    elif config.dimensionality == 3:
+        momentum_y = conserved_state[registered_variables.momentum_index.y]
+        momentum_z = conserved_state[registered_variables.momentum_index.z]
+
     energy = conserved_state[registered_variables.energy_index]
 
     # compute primitives
@@ -73,19 +84,30 @@ def _eigenvalue_building_blocks(
         sound_speed,
     )
 
-@partial(jax.jit, static_argnames=["registered_variables"])
+@partial(jax.jit, static_argnames=["registered_variables", "config"])
 def _eigenvector_building_blocks(
     conserved_state,
     gamma,
     rhomin,
     pgmin,
+    config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ):
     # unpack conserved variables
     rho = conserved_state[registered_variables.density_index]  
+
     momentum_x = conserved_state[registered_variables.momentum_index.x]
-    momentum_y = conserved_state[registered_variables.momentum_index.y]
-    momentum_z = conserved_state[registered_variables.momentum_index.z]
+
+    if config.dimensionality == 1:
+        momentum_y = 0.0
+        momentum_z = 0.0
+    elif config.dimensionality == 2:
+        momentum_y = conserved_state[registered_variables.momentum_index.y]
+        momentum_z = 0.0
+    elif config.dimensionality == 3:
+        momentum_y = conserved_state[registered_variables.momentum_index.y]
+        momentum_z = conserved_state[registered_variables.momentum_index.z]
+        
     energy = conserved_state[registered_variables.energy_index]
 
     # compute primitives
@@ -121,8 +143,17 @@ def _eigenvector_building_blocks(
 
     rho_interface = avg_x(rho)
     velocity_x_interface = avg_x(velocity_x)
-    velocity_y_interface = avg_x(velocity_y)
-    velocity_z_interface = avg_x(velocity_z)
+
+    if config.dimensionality == 1:
+        velocity_y_interface = 0.0
+        velocity_z_interface = 0.0
+    elif config.dimensionality == 2:
+        velocity_y_interface = avg_x(velocity_y)
+        velocity_z_interface = 0.0
+    elif config.dimensionality == 3:
+        velocity_y_interface = avg_x(velocity_y)
+        velocity_z_interface = avg_x(velocity_z)
+        
     specific_enthalpy_interface = avg_x(specific_enthalpy)
 
     # interface derived quantities
@@ -158,12 +189,13 @@ def _eigenvector_building_blocks(
     )
 
 
-@partial(jax.jit, static_argnames=["registered_variables"])
+@partial(jax.jit, static_argnames=["registered_variables", "config"])
 def _eigen_R_col_hydro(
     conserved_state,
     rhomin: Union[float, jnp.ndarray],
     pgmin: Union[float, jnp.ndarray],
     gamma: Union[float, jnp.ndarray],
+    config: SimulationConfig,
     registered_variables: RegisteredVariables,
     col: int,
 ):
@@ -183,14 +215,23 @@ def _eigen_R_col_hydro(
         gamma,
         rhomin,
         pgmin,
+        config,
         registered_variables,
     )
 
     # shorter names for registry indices
     density_index = registered_variables.density_index
+
+
     momentum_index_x = registered_variables.momentum_index.x
-    momentum_index_y = registered_variables.momentum_index.y
-    momentum_index_z = registered_variables.momentum_index.z
+
+    if config.dimensionality >= 2:
+        momentum_index_y = registered_variables.momentum_index.y
+
+    if config.dimensionality == 3:
+        momentum_index_z = registered_variables.momentum_index.z
+
+    
     energy_index = registered_variables.energy_index
 
     def col_0():
@@ -198,8 +239,12 @@ def _eigen_R_col_hydro(
         R = jnp.zeros_like(conserved_state)
         R = R.at[density_index].set(1.0)
         R = R.at[momentum_index_x].set(velocity_x_interface - sound_speed_interface)
-        R = R.at[momentum_index_y].set(velocity_y_interface)
-        R = R.at[momentum_index_z].set(velocity_z_interface)
+
+        if config.dimensionality >= 2:
+            R = R.at[momentum_index_y].set(velocity_y_interface)
+        if config.dimensionality == 3:
+            R = R.at[momentum_index_z].set(velocity_z_interface)
+        
         R = R.at[energy_index].set(specific_enthalpy_interface - velocity_x_interface * sound_speed_interface)
         return R
 
@@ -207,9 +252,15 @@ def _eigen_R_col_hydro(
         # Column 2 (Entropy / u)
         R = jnp.zeros_like(conserved_state)
         R = R.at[density_index].set(1.0)
+
         R = R.at[momentum_index_x].set(velocity_x_interface)
-        R = R.at[momentum_index_y].set(velocity_y_interface)
-        R = R.at[momentum_index_z].set(velocity_z_interface)
+
+        if config.dimensionality >= 2:
+            R = R.at[momentum_index_y].set(velocity_y_interface)
+
+        if config.dimensionality == 3:
+            R = R.at[momentum_index_z].set(velocity_z_interface)
+
         R = R.at[energy_index].set(0.5 * velocity_sq_interface)
         return R
 
@@ -218,8 +269,10 @@ def _eigen_R_col_hydro(
         R = jnp.zeros_like(conserved_state)
         R = R.at[density_index].set(0.0)
         R = R.at[momentum_index_x].set(0.0)
-        R = R.at[momentum_index_y].set(1.0)
-        R = R.at[momentum_index_z].set(0.0)
+        if config.dimensionality >= 2:
+            R = R.at[momentum_index_y].set(1.0)
+        if config.dimensionality == 3:
+            R = R.at[momentum_index_z].set(0.0)
         R = R.at[energy_index].set(velocity_y_interface)
         return R
 
@@ -228,8 +281,10 @@ def _eigen_R_col_hydro(
         R = jnp.zeros_like(conserved_state)
         R = R.at[density_index].set(0.0)
         R = R.at[momentum_index_x].set(0.0)
-        R = R.at[momentum_index_y].set(0.0)
-        R = R.at[momentum_index_z].set(1.0)
+        if config.dimensionality >= 2:
+            R = R.at[momentum_index_y].set(0.0)
+        if config.dimensionality == 3:
+            R = R.at[momentum_index_z].set(1.0)
         R = R.at[energy_index].set(velocity_z_interface)
         return R
 
@@ -238,22 +293,30 @@ def _eigen_R_col_hydro(
         R = jnp.zeros_like(conserved_state)
         R = R.at[density_index].set(1.0)
         R = R.at[momentum_index_x].set(velocity_x_interface + sound_speed_interface)
-        R = R.at[momentum_index_y].set(velocity_y_interface)
-        R = R.at[momentum_index_z].set(velocity_z_interface)
+        if config.dimensionality >= 2:
+            R = R.at[momentum_index_y].set(velocity_y_interface)
+        if config.dimensionality == 3:
+            R = R.at[momentum_index_z].set(velocity_z_interface)
         R = R.at[energy_index].set(specific_enthalpy_interface + velocity_x_interface * sound_speed_interface)
         return R
 
-    R = jax.lax.switch(col, [col_0, col_1, col_2, col_3, col_4])
+    if config.dimensionality == 1:
+        R = jax.lax.switch(col, [col_0, col_1, col_4])
+    if config.dimensionality == 2:
+        R = jax.lax.switch(col, [col_0, col_1, col_2, col_4])
+    if config.dimensionality == 3:
+        R = jax.lax.switch(col, [col_0, col_1, col_2, col_3, col_4])
 
     return R
 
 
-@partial(jax.jit, static_argnames=["registered_variables"])
+@partial(jax.jit, static_argnames=["registered_variables", "config"])
 def _eigen_L_row_hydro(
     conserved_state,
     rhomin: Union[float, jnp.ndarray],
     pgmin: Union[float, jnp.ndarray],
     gamma: Union[float, jnp.ndarray],
+    config: SimulationConfig,
     registered_variables: RegisteredVariables,
     row: int,
 ):
@@ -273,14 +336,18 @@ def _eigen_L_row_hydro(
         gamma,
         rhomin,
         pgmin,
+        config,
         registered_variables,
     )
 
     # shorter names for registry indices
     density_index = registered_variables.density_index
+
     momentum_index_x = registered_variables.momentum_index.x
-    momentum_index_y = registered_variables.momentum_index.y
-    momentum_index_z = registered_variables.momentum_index.z
+    if config.dimensionality >= 2:
+        momentum_index_y = registered_variables.momentum_index.y
+    if config.dimensionality == 3:
+        momentum_index_z = registered_variables.momentum_index.z
     energy_index = registered_variables.energy_index
 
     def row_0():
@@ -288,8 +355,10 @@ def _eigen_L_row_hydro(
         L = jnp.zeros_like(conserved_state)
         L = L.at[density_index].set(0.5 * gamma_minus_one * velocity_sq_interface + velocity_x_interface * sound_speed_interface)
         L = L.at[momentum_index_x].set(-(gamma_minus_one * velocity_x_interface + sound_speed_interface))
-        L = L.at[momentum_index_y].set(-gamma_minus_one * velocity_y_interface)
-        L = L.at[momentum_index_z].set(-gamma_minus_one * velocity_z_interface)
+        if config.dimensionality >= 2:
+            L = L.at[momentum_index_y].set(-gamma_minus_one * velocity_y_interface)
+        if config.dimensionality == 3:
+            L = L.at[momentum_index_z].set(-gamma_minus_one * velocity_z_interface)
         L = L.at[energy_index].set(gamma_minus_one)
         L = 0.5 * sound_speed_sq_inverse * L
         return L
@@ -299,8 +368,10 @@ def _eigen_L_row_hydro(
         L = jnp.zeros_like(conserved_state)
         L = L.at[density_index].set(sound_speed_sq_interface - 0.5 * gamma_minus_one * velocity_sq_interface)
         L = L.at[momentum_index_x].set(gamma_minus_one * velocity_x_interface)
-        L = L.at[momentum_index_y].set(gamma_minus_one * velocity_y_interface)
-        L = L.at[momentum_index_z].set(gamma_minus_one * velocity_z_interface)
+        if config.dimensionality >= 2:
+            L = L.at[momentum_index_y].set(gamma_minus_one * velocity_y_interface)
+        if config.dimensionality == 3:
+            L = L.at[momentum_index_z].set(gamma_minus_one * velocity_z_interface)
         L = L.at[energy_index].set(-gamma_minus_one)
         L = sound_speed_sq_inverse * L
         return L
@@ -310,8 +381,10 @@ def _eigen_L_row_hydro(
         L = jnp.zeros_like(conserved_state)
         L = L.at[density_index].set(-velocity_y_interface)
         L = L.at[momentum_index_x].set(0.0)
-        L = L.at[momentum_index_y].set(1.0)
-        L = L.at[momentum_index_z].set(0.0)
+        if config.dimensionality >= 2:
+            L = L.at[momentum_index_y].set(1.0)
+        if config.dimensionality == 3:
+            L = L.at[momentum_index_z].set(0.0)
         L = L.at[energy_index].set(0.0)
         return L
 
@@ -320,8 +393,10 @@ def _eigen_L_row_hydro(
         L = jnp.zeros_like(conserved_state)
         L = L.at[density_index].set(-velocity_z_interface)
         L = L.at[momentum_index_x].set(0.0)
-        L = L.at[momentum_index_y].set(0.0)
-        L = L.at[momentum_index_z].set(1.0)
+        if config.dimensionality >= 2:
+            L = L.at[momentum_index_y].set(0.0)
+        if config.dimensionality == 3:
+            L = L.at[momentum_index_z].set(1.0)
         L = L.at[energy_index].set(0.0)
         return L
 
@@ -330,23 +405,31 @@ def _eigen_L_row_hydro(
         L = jnp.zeros_like(conserved_state)
         L = L.at[density_index].set(0.5 * gamma_minus_one * velocity_sq_interface - velocity_x_interface * sound_speed_interface)
         L = L.at[momentum_index_x].set(-(gamma_minus_one * velocity_x_interface - sound_speed_interface))
-        L = L.at[momentum_index_y].set(-gamma_minus_one * velocity_y_interface)
-        L = L.at[momentum_index_z].set(-gamma_minus_one * velocity_z_interface)
+        if config.dimensionality >= 2:
+            L = L.at[momentum_index_y].set(-gamma_minus_one * velocity_y_interface)
+        if config.dimensionality == 3:
+            L = L.at[momentum_index_z].set(-gamma_minus_one * velocity_z_interface)
         L = L.at[energy_index].set(gamma_minus_one)
         L = 0.5 * sound_speed_sq_inverse * L
         return L
 
-    L = jax.lax.switch(row, [row_0, row_1, row_2, row_3, row_4])
+    if config.dimensionality == 1:
+        L = jax.lax.switch(row, [row_0, row_1, row_4])
+    if config.dimensionality == 2:
+        L = jax.lax.switch(row, [row_0, row_1, row_2, row_4])
+    if config.dimensionality == 3:
+        L = jax.lax.switch(row, [row_0, row_1, row_2, row_3, row_4])
 
     return L
 
 
-@partial(jax.jit, static_argnames=["registered_variables"])
+@partial(jax.jit, static_argnames=["registered_variables", "config"])
 def _eigen_all_lambdas_hydro(
     conserved_state,
     rhomin: Union[float, jnp.ndarray],
     pgmin: Union[float, jnp.ndarray],
     gamma: Union[float, jnp.ndarray],
+    config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ):
     (
@@ -357,19 +440,42 @@ def _eigen_all_lambdas_hydro(
         gamma,
         rhomin,
         pgmin,
+        config,
         registered_variables,
     )
 
-    return jnp.stack(
-        [
-            velocity_x - sound_speed,
-            velocity_x,
-            velocity_x,
-            velocity_x,
-            velocity_x + sound_speed,
-        ],
-        axis=0,
-    )
+    if config.dimensionality == 1:
+        return jnp.stack(
+            [
+                velocity_x - sound_speed,
+                velocity_x,
+                velocity_x + sound_speed,
+            ],
+            axis=0,
+        )
+    
+    if config.dimensionality == 2:
+        return jnp.stack(
+            [
+                velocity_x - sound_speed,
+                velocity_x,
+                velocity_x,
+                velocity_x + sound_speed,
+            ],
+            axis=0,
+        )
+    
+    if config.dimensionality == 3:
+        return jnp.stack(
+            [
+                velocity_x - sound_speed,
+                velocity_x,
+                velocity_x,
+                velocity_x,
+                velocity_x + sound_speed,
+            ],
+            axis=0,
+        )
 
 
 def _eigen_lambdas_hydro(
@@ -377,6 +483,7 @@ def _eigen_lambdas_hydro(
     rhomin: Union[float, jnp.ndarray],
     pgmin: Union[float, jnp.ndarray],
     gamma: Union[float, jnp.ndarray],
+    config: SimulationConfig,
     registered_variables: RegisteredVariables,
     mode: int,
 ):
@@ -388,6 +495,7 @@ def _eigen_lambdas_hydro(
         gamma,
         rhomin,
         pgmin,
+        config,
         registered_variables,
     )
 
@@ -406,6 +514,11 @@ def _eigen_lambdas_hydro(
     def mode_4():
         return velocity_x + sound_speed
 
-    return jax.lax.switch(
-        mode, [mode_0, mode_1, mode_2, mode_3, mode_4]
-    )
+    if config.dimensionality == 1:
+        return jax.lax.switch(mode, [mode_0, mode_1, mode_4])
+    if config.dimensionality == 2:
+        return jax.lax.switch(mode, [mode_0, mode_1, mode_2, mode_4])
+    if config.dimensionality == 3:
+        return jax.lax.switch(
+            mode, [mode_0, mode_1, mode_2, mode_3, mode_4]
+        )

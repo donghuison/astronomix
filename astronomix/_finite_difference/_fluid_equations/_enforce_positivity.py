@@ -38,8 +38,14 @@ def _enforce_positivity(
     rho = jnp.maximum(rho, minimum_density)
 
     v_x = conserved_state[registered_variables.momentum_index.x] / rho
-    v_y = conserved_state[registered_variables.momentum_index.y] / rho
-    v_z = conserved_state[registered_variables.momentum_index.z] / rho
+
+    if config.dimensionality == 2:
+        v_y = conserved_state[registered_variables.momentum_index.y] / rho
+        v_z = 0.0
+    elif config.dimensionality == 3:
+        v_y = conserved_state[registered_variables.momentum_index.y] / rho
+        v_z = conserved_state[registered_variables.momentum_index.z] / rho
+
     energy = conserved_state[registered_variables.energy_index]
 
     if config.mhd:

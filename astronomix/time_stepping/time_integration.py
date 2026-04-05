@@ -660,12 +660,9 @@ def _time_integration(
                     dt = jax.lax.stop_gradient(
                         _cfl_time_step(
                             primitive_state,
-                            config.grid_spacing,
-                            params.dt_max,
-                            params.gamma,
                             config,
+                            params,
                             registered_variables,
-                            params.C_cfl,
                         )
                     )
             elif config.solver_mode == FINITE_DIFFERENCE:

@@ -92,10 +92,13 @@ def _cfl_time_step_fd(
 
     # viscous time step constraint
     if config.diffusion:
-        rho_min = jnp.maximum(
-            jnp.min(primitive_state[registered_variables.density_index]),
-            params.minimum_density,
-        )
+        if config.enforce_positivity:
+            rho_min = jnp.maximum(
+                jnp.min(primitive_state[registered_variables.density_index]),
+                params.minimum_density,
+            )
+        else:
+            rho_min = jnp.min(primitive_state[registered_variables.density_index])
         nu_max = params.viscosity / rho_min
         dt_visc = C_CFL * grid_spacing**2 / (2.0 * config.dimensionality * nu_max)
         dt_cfl = jnp.minimum(dt_cfl, dt_visc)
@@ -125,52 +128,67 @@ def _cfl_time_step_fd_hydro(
     )
 
     lambda_x = _eigen_all_lambdas_hydro(
-        conserved_state, params.minimum_density, params.minimum_pressure, gamma, registered_variables
+        conserved_state, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables
     )
 
     lambda_x = jnp.max(jnp.abs(lambda_x))
 
-    qy = jnp.transpose(conserved_state, (0, 2, 1, 3))
-    momentum_x = qy[registered_variables.momentum_index.x]
-    momentum_y = qy[registered_variables.momentum_index.y]
-    qy = qy.at[registered_variables.momentum_index.x].set(momentum_y)
-    qy = qy.at[registered_variables.momentum_index.y].set(momentum_x)
+    if config.dimensionality >= 2:
 
-    # lambda_y, _, _ = _eigen_x(
-    #     qy, gamma, registered_variables
-    # )
+        if config.dimensionality == 2:
+            qy = jnp.transpose(conserved_state, (0, 2, 1))
+        else:
+            qy = jnp.transpose(conserved_state, (0, 2, 1, 3))
+        momentum_x = qy[registered_variables.momentum_index.x]
+        momentum_y = qy[registered_variables.momentum_index.y]
+        qy = qy.at[registered_variables.momentum_index.x].set(momentum_y)
+        qy = qy.at[registered_variables.momentum_index.y].set(momentum_x)
 
-    lambda_y = _eigen_all_lambdas_hydro(
-        qy, params.minimum_density, params.minimum_pressure, gamma, registered_variables
-    )
+        # lambda_y, _, _ = _eigen_x(
+        #     qy, gamma, registered_variables
+        # )
 
-    lambda_y = jnp.max(jnp.abs(lambda_y))
+        lambda_y = _eigen_all_lambdas_hydro(
+            qy, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables
+        )
 
-    qz = jnp.transpose(conserved_state, (0, 3, 2, 1))
-    momentum_x = qz[registered_variables.momentum_index.x]
-    momentum_z = qz[registered_variables.momentum_index.z]
-    qz = qz.at[registered_variables.momentum_index.x].set(momentum_z)
-    qz = qz.at[registered_variables.momentum_index.z].set(momentum_x)
+        lambda_y = jnp.max(jnp.abs(lambda_y))
+    else:
+        lambda_y = 0.0
 
-    # lambda_z, _, _ = _eigen_x(
-    #     qz, gamma, registered_variables
-    # )
+    if config.dimensionality == 3:
+        qz = jnp.transpose(conserved_state, (0, 3, 2, 1))
+        momentum_x = qz[registered_variables.momentum_index.x]
+        momentum_z = qz[registered_variables.momentum_index.z]
+        qz = qz.at[registered_variables.momentum_index.x].set(momentum_z)
+        qz = qz.at[registered_variables.momentum_index.z].set(momentum_x)
 
-    lambda_z = _eigen_all_lambdas_hydro(
-        qz, params.minimum_density, params.minimum_pressure, gamma, registered_variables
-    )
+        # lambda_z, _, _ = _eigen_x(
+        #     qz, gamma, registered_variables
+        # )
 
-    lambda_z = jnp.max(jnp.abs(lambda_z))
+        lambda_z = _eigen_all_lambdas_hydro(
+            qz, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables
+        )
+
+        lambda_z = jnp.max(jnp.abs(lambda_z))
+    else:
+        lambda_z = 0.0
 
     dt_cfl = C_CFL * grid_spacing / (lambda_x + lambda_y + lambda_z)
     dt_cfl = jnp.minimum(dt_cfl, dt_max)
 
     # viscous time step constraint
     if config.diffusion:
-        rho_min = jnp.maximum(
-            jnp.min(primitive_state[registered_variables.density_index]),
-            params.minimum_density,
-        )
+        
+        if config.enforce_positivity:
+            rho_min = jnp.maximum(
+                jnp.min(primitive_state[registered_variables.density_index]),
+                params.minimum_density,
+            )
+        else:
+            rho_min = jnp.min(primitive_state[registered_variables.density_index])
+        
         nu_max = params.viscosity / rho_min
         dt_visc = C_CFL * grid_spacing**2 / (2.0 * config.dimensionality * nu_max)
         dt_cfl = jnp.minimum(dt_cfl, dt_visc)

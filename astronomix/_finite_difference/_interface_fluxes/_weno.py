@@ -150,8 +150,8 @@ def _weno_flux_x(
             lambdas_center = _eigen_lambdas(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
             L_row = _eigen_L_row(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
         else:
-            lambdas_center = _eigen_lambdas_hydro(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
-            L_row = _eigen_L_row_hydro(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
+            lambdas_center = _eigen_lambdas_hydro(conserved_state, rhomin, pgmin, gamma, config, registered_variables, mode)
+            L_row = _eigen_L_row_hydro(conserved_state, rhomin, pgmin, gamma, config, registered_variables, mode)
 
         F0 = _shift(F,  2, axis=1)   # shape (N_vars, Nx, Ny, Nz) — i-2 at target i
         F1 = _shift(F,  1, axis=1)   # i-1
@@ -160,19 +160,48 @@ def _weno_flux_x(
         F4 = _shift(F, -2, axis=1)   # i+2
         F5 = _shift(F, -3, axis=1)   # i+3
 
-        s0 = jnp.einsum('nxyz,nxyz->xyz', L_row, F0)
-        s1 = jnp.einsum('nxyz,nxyz->xyz', L_row, F1)
-        s2 = jnp.einsum('nxyz,nxyz->xyz', L_row, F2)
-        s3 = jnp.einsum('nxyz,nxyz->xyz', L_row, F3)
-        s4 = jnp.einsum('nxyz,nxyz->xyz', L_row, F4)
-        s5 = jnp.einsum('nxyz,nxyz->xyz', L_row, F5)
+        if config.dimensionality == 3:
+            s0 = jnp.einsum('nxyz,nxyz->xyz', L_row, F0)
+            s1 = jnp.einsum('nxyz,nxyz->xyz', L_row, F1)
+            s2 = jnp.einsum('nxyz,nxyz->xyz', L_row, F2)
+            s3 = jnp.einsum('nxyz,nxyz->xyz', L_row, F3)
+            s4 = jnp.einsum('nxyz,nxyz->xyz', L_row, F4)
+            s5 = jnp.einsum('nxyz,nxyz->xyz', L_row, F5)
 
-        q0 = jnp.einsum('nxyz,nxyz->xyz', L_row, _shift(conserved_state, 2, axis=1))
-        q1 = jnp.einsum('nxyz,nxyz->xyz', L_row, _shift(conserved_state, 1, axis=1))
-        q2 = jnp.einsum('nxyz,nxyz->xyz', L_row, conserved_state)
-        q3 = jnp.einsum('nxyz,nxyz->xyz', L_row, _shift(conserved_state, -1, axis=1))
-        q4 = jnp.einsum('nxyz,nxyz->xyz', L_row, _shift(conserved_state, -2, axis=1))
-        q5 = jnp.einsum('nxyz,nxyz->xyz', L_row, _shift(conserved_state, -3, axis=1))
+            q0 = jnp.einsum('nxyz,nxyz->xyz', L_row, _shift(conserved_state, 2, axis=1))
+            q1 = jnp.einsum('nxyz,nxyz->xyz', L_row, _shift(conserved_state, 1, axis=1))
+            q2 = jnp.einsum('nxyz,nxyz->xyz', L_row, conserved_state)
+            q3 = jnp.einsum('nxyz,nxyz->xyz', L_row, _shift(conserved_state, -1, axis=1))
+            q4 = jnp.einsum('nxyz,nxyz->xyz', L_row, _shift(conserved_state, -2, axis=1))
+            q5 = jnp.einsum('nxyz,nxyz->xyz', L_row, _shift(conserved_state, -3, axis=1))
+        elif config.dimensionality == 2:
+            s0 = jnp.einsum('nxy,nxy->xy', L_row, F0)
+            s1 = jnp.einsum('nxy,nxy->xy', L_row, F1)
+            s2 = jnp.einsum('nxy,nxy->xy', L_row, F2)
+            s3 = jnp.einsum('nxy,nxy->xy', L_row, F3)
+            s4 = jnp.einsum('nxy,nxy->xy', L_row, F4)
+            s5 = jnp.einsum('nxy,nxy->xy', L_row, F5)
+
+            q0 = jnp.einsum('nxy,nxy->xy', L_row, _shift(conserved_state, 2, axis=1))
+            q1 = jnp.einsum('nxy,nxy->xy', L_row, _shift(conserved_state, 1, axis=1))
+            q2 = jnp.einsum('nxy,nxy->xy', L_row, conserved_state)
+            q3 = jnp.einsum('nxy,nxy->xy', L_row, _shift(conserved_state, -1, axis=1))
+            q4 = jnp.einsum('nxy,nxy->xy', L_row, _shift(conserved_state, -2, axis=1))
+            q5 = jnp.einsum('nxy,nxy->xy', L_row, _shift(conserved_state, -3, axis=1))
+        else:
+            s0 = jnp.einsum('nx,nx->x', L_row, F0)
+            s1 = jnp.einsum('nx,nx->x', L_row, F1)
+            s2 = jnp.einsum('nx,nx->x', L_row, F2)
+            s3 = jnp.einsum('nx,nx->x', L_row, F3)
+            s4 = jnp.einsum('nx,nx->x', L_row, F4)
+            s5 = jnp.einsum('nx,nx->x', L_row, F5)
+
+            q0 = jnp.einsum('nx,nx->x', L_row, _shift(conserved_state, 2, axis=1))
+            q1 = jnp.einsum('nx,nx->x', L_row, _shift(conserved_state, 1, axis=1))
+            q2 = jnp.einsum('nx,nx->x', L_row, conserved_state)
+            q3 = jnp.einsum('nx,nx->x', L_row, _shift(conserved_state, -1, axis=1))
+            q4 = jnp.einsum('nx,nx->x', L_row, _shift(conserved_state, -2, axis=1))
+            q5 = jnp.einsum('nx,nx->x', L_row, _shift(conserved_state, -3, axis=1))
 
         # dFsk identical to original: d0 = s1 - s0, d1 = s2 - s1, ...
         d0 = s1 - s0
@@ -249,14 +278,21 @@ def _weno_flux_x(
         if config.mhd:
             R_col = _eigen_R_col(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
         else:
-            R_col = _eigen_R_col_hydro(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
-        dF = jnp.einsum('nxyz,xyz->nxyz', R_col, Fs)
+            R_col = _eigen_R_col_hydro(conserved_state, rhomin, pgmin, gamma, config, registered_variables, mode)
+
+        if config.dimensionality == 3:
+            dF = jnp.einsum('nxyz,xyz->nxyz', R_col, Fs)
+        elif config.dimensionality == 2:
+            dF = jnp.einsum('nxy,xy->nxy', R_col, Fs)
+        else:
+            dF = jnp.einsum('nx,x->nx', R_col, Fs)
         return F_current + dF
     
     if config.mhd:
+        # for mhd only 3D is currently supported
         num_modes = 7
     else:
-        num_modes = 5
+        num_modes = config.dimensionality + 2
     
     return jax.lax.fori_loop(
         0, num_modes,
@@ -274,7 +310,10 @@ def _weno_flux_y(
     registered_variables: RegisteredVariables,
 ):
     # Transpose to make y the "x" direction
-    qy = jnp.transpose(conserved_state, (0, 2, 1, 3))
+    if config.dimensionality == 2:
+        qy = jnp.transpose(conserved_state, (0, 2, 1))
+    elif config.dimensionality == 3:
+        qy = jnp.transpose(conserved_state, (0, 2, 1, 3))
     
     # Swap components
     momentum_x = qy[registered_variables.momentum_index.x]
@@ -294,7 +333,10 @@ def _weno_flux_y(
     Fy = _weno_flux_x(qy, rhomin, pgmin, gamma, config, registered_variables)
     
     # Transpose back
-    Fy = jnp.transpose(Fy, (0, 2, 1, 3))
+    if config.dimensionality == 2:
+        Fy = jnp.transpose(Fy, (0, 2, 1))
+    elif config.dimensionality == 3:
+        Fy = jnp.transpose(Fy, (0, 2, 1, 3))
     
     # Swap components back
     Fmomentum_x = Fy[registered_variables.momentum_index.x]

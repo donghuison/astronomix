@@ -20,6 +20,7 @@ from astronomix._physics_modules._neural_net_force._neural_net_force import (
     _neural_net_force,
 )
 from astronomix._physics_modules._self_gravity._poisson_solver import _compute_gravitational_potential
+from astronomix._physics_modules._viscosity._viscosity import fd_viscosity_source, fv_viscosity_update
 from astronomix._stencil_operations._stencil_operations import _shift, _stencil_add
 from astronomix.data_classes.simulation_helper_data import HelperData
 from astronomix._geometry.boundaries import _boundary_handler
@@ -109,6 +110,7 @@ def _run_physics_modules(
             params,
             dt,
         )
+
         # primitive_state = first_order_pressure_update(
         #     primitive_state,
         #     registered_variables,
@@ -133,6 +135,9 @@ def _run_physics_modules(
         primitive_state = _cnn_mhd_corrector(
             primitive_state, config, registered_variables, params, dt
         )
+
+    if config.diffusion:
+        primitive_state = fv_viscosity_update(primitive_state, params, config, registered_variables, dt)
 
     return primitive_state
 
@@ -455,42 +460,8 @@ def _physics_sources(
             raise NotImplementedError(
                 "Only SIMPLE_SOURCE_TERM self-gravity is implemented for the finite difference scheme."
             )
-    
-    # ── Physical viscosity (explicit, tensor form) ────────────────────────
+
     if config.diffusion:
-        mu = params.viscosity # the dynamic viscosity
-        dx = config.grid_spacing
-        ndim = config.dimensionality
-
-        rho = primitive_state[registered_variables.density_index]
-        v = primitive_state[1:ndim + 1]                            # (ndim, *spatial)
-
-        def _d1(field, ax):
-            return _stencil_add(
-                field, indices=(3, 2, 1, -1, -2, -3),
-                factors=(1.0, -9.0, 45.0, -45.0, 9.0, -1.0), axis=ax,
-            ) / (60.0 * dx)
-
-        # velocity gradient tensor  G_{ij} = ∂v_i/∂x_j   (ndim, ndim, *spatial)
-        grad_v = jnp.stack([_d1(v, j + 1) for j in range(ndim)], axis=1)
-
-        # stress tensor  τ_{ij} = μ (G_{ij} + G_{ji} − ⅔ δ_{ij} ∇·v)
-        div_v = jnp.trace(grad_v, axis1=0, axis2=1)               # (*spatial)
-        delta = jnp.eye(ndim)[(slice(None), slice(None)) + (None,) * rho.ndim]
-        tau = mu * (grad_v + grad_v.swapaxes(0, 1)
-                    - (2.0 / 3.0) * delta * div_v)                 # (ndim, ndim, *spatial)
-
-        # momentum source  (∇·τ)_i = Σ_j ∂τ_{ij}/∂x_j            (ndim, *spatial)
-        div_tau = sum(_d1(tau[:, j], j + 1) for j in range(ndim))
-
-        # energy source  Σ_j ∂/∂x_j (Σ_i v_i τ_{ij})
-        v_dot_tau = jnp.einsum('i...,ij...->j...', v, tau)        # (ndim, *spatial)
-        energy_src = sum(_d1(v_dot_tau[j], j) for j in range(ndim))
-
-        S_visc = jnp.zeros_like(primitive_state)
-        S_visc = S_visc.at[1:ndim + 1].set(div_tau)
-        S_visc = S_visc.at[registered_variables.energy_index].set(energy_src)
-
-        S += S_visc * dt
+        S += fd_viscosity_source(primitive_state, params, config, registered_variables) * dt
     
     return S
