@@ -146,7 +146,7 @@ def simulate_taylor_green(
     registered_variables = get_registered_variables(config)
 
     # ── coordinate arrays ───────────────────────────────────────────────
-    dx = config.box_size / num_cells
+    dx = config.box_size.x / num_cells
     coords = jnp.arange(num_cells) * dx + 0.5 * dx   # cell centres
     x, y, z = jnp.meshgrid(coords, coords, coords, indexing="ij")
 

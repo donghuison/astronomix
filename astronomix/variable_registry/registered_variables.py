@@ -20,13 +20,10 @@ from jaxtyping import Array, Float, Int
 
 from typing import Union
 
-from astronomix.option_classes.simulation_config import FINITE_DIFFERENCE, XAXIS, YAXIS, ZAXIS, SimulationConfig
+from astronomix.option_classes.simulation_config import (
+    FINITE_DIFFERENCE, XAXIS, YAXIS, ZAXIS, SimulationConfig, StaticIntVector
+)
 
-
-class StaticIntVector(NamedTuple):
-    x: int
-    y: int
-    z: int
 
 # =============================================================
 

@@ -1,3 +1,4 @@
+import math
 from types import NoneType
 from typing import NamedTuple, Union
 
@@ -99,6 +100,25 @@ DOUBLE_PRECISION = 1
 # ============================================================
 
 # ===================== type definitions =====================
+
+class StaticIntVector(NamedTuple):
+    x: int = -1
+    y: int = -1
+    z: int = -1
+
+class StaticFloatVector(NamedTuple):
+    x: float = -1.0
+    y: float = -1.0
+    z: float = -1.0
+
+    def __truediv__(self, other: StaticIntVector) -> "StaticFloatVector":
+        if not isinstance(other, StaticIntVector):
+            return NotImplemented
+        return StaticFloatVector(
+            x=self.x / other.x,
+            y=self.y / other.y,
+            z=self.z / other.z,
+        )
 
 STATE_TYPE = Union[
     Float[Array, "num_vars num_cells_x"],
@@ -236,10 +256,10 @@ class SimulationConfig(NamedTuple):
     diffusion: bool = False
 
     #: The size of the simulation box.
-    box_size: float = 1.0
+    box_size: Union[float, StaticFloatVector] = 1.0
 
-    #: The number of cells in the simulation (including ghost cells).
-    num_cells: int = 400
+    #: The number of cells in the simulation.
+    num_cells: Union[int, StaticIntVector] = 400
 
     #: The reconstruction order is the number of
     #: cells on each side of the cell of interest
@@ -360,19 +380,52 @@ class SimulationConfig(NamedTuple):
 def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
     """Finalizes the simulation configuration."""
 
-    num_cells = state_shape[-1]
-    config = config._replace(num_cells=num_cells)
+    # num_cells = state_shape[-1]
+    # config = config._replace(num_cells=num_cells)
 
+    # set the number of cells
+    if config.dimensionality == 1:
+        num_cells_x = state_shape[-1]
+        config = config._replace(num_cells=StaticIntVector(num_cells_x, -1, -1))
     if config.dimensionality == 2:
         num_cells_x, num_cells_y = state_shape[-2:]
-        if num_cells_x != num_cells_y:
-            raise ValueError("The number of cells in x and y must be equal.")
+        config = config._replace(num_cells=StaticIntVector(num_cells_x, num_cells_y, -1))
     elif config.dimensionality == 3:
         num_cells_x, num_cells_y, num_cells_z = state_shape[-3:]
-        if num_cells_x != num_cells_y or num_cells_x != num_cells_z:
-            raise ValueError("The number of cells in x, y and z must be equal.")
+        config = config._replace(num_cells=StaticIntVector(num_cells_x, num_cells_y, num_cells_z))
 
-    config = config._replace(grid_spacing=config.box_size / config.num_cells)
+    if isinstance(config.box_size, float):
+        config = config._replace(
+            box_size=StaticFloatVector(
+                config.box_size,
+                config.box_size,
+                config.box_size
+            )
+        )
+
+    # for now we assume the grid spacing is the same in all dimensions
+    grid_spacing_vec = config.box_size / config.num_cells
+
+    # as soon as we accept a grid spacing vector, 
+    # this will not be necessary anymore
+    # config = config._replace(grid_spacing=config.box_size / config.num_cells)
+    if config.dimensionality == 1:
+        config = config._replace(grid_spacing=grid_spacing_vec.x)
+    elif config.dimensionality == 2:
+        config = config._replace(grid_spacing=grid_spacing_vec.x)
+        if not math.isclose(grid_spacing_vec.x, grid_spacing_vec.y):
+            raise ValueError(
+                "For now, we assume the grid spacing is the same in all dimensions. "
+                f"Got grid spacing {grid_spacing_vec}."
+            )
+    elif config.dimensionality == 3:
+        config = config._replace(grid_spacing=grid_spacing_vec.x)
+        if not (math.isclose(grid_spacing_vec.x, grid_spacing_vec.y) and math.isclose(grid_spacing_vec.x, grid_spacing_vec.z)):
+            raise ValueError(
+                "For now, we assume the grid spacing is the same in all dimensions. "
+                f"Got grid spacing {grid_spacing_vec}."
+            )
+            
 
     if config.geometry == SPHERICAL:
         print(

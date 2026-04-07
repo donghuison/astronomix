@@ -1,3 +1,85 @@
+"""
+Viscosity in Fluids
+
+Intuition of the 1D case
+------------------------
+
+It might be intuitive that in a setting with viscosity,
+a velocity gradient \partial_z v_x of v_x leads to 
+a diffusive momentum flux -\mu \partial_z v_x = -\tau_xz
+(the assumption of a linear relation here implies a 
+Newtonian fluid) which gradient then enters the Euler 
+equations, leading to a source term 
+\partial_z \tau_xz = \mu \partial_z^2 v_x.
+
+3D generalization
+-----------------
+
+Given the velocity gradient tensor G_{ij} = ∂v_i/∂x_j,
+most generally, the viscous stress tensor (which encodes 
+momentum fluxes in all directions) for a Newtonian fluid
+is given by 
+
+\tau_{ij} = K_{ij}^{kl} G_{kl}
+
+where K is a 4th order tensor with 3^4 = 81 components.
+
+Our fluid is isotropic, which
+means that the components of K must be invariant under any 
+rotation of the coordinate system R \in SO(3). The only
+2nd order isotropic tensor is \delta_{ij}, so naturally,
+
+K_{ij}^{kl} = \lambda \delta_{ij} \delta^{kl} + \mu \delta_i^k \delta_j^l + \nu \delta_i^l \delta_j^k
+
+so we are down to 3 parameters. Additionally, \tau_{ij}
+must be symmetric (otherwise we would create a net torque
+and violate angular momentum conservation, imagine a small 
+fluid element), implying K_{ij}^{kl} = K_{ji}^{kl},
+which implies \nu = \mu (we are down to two parameters), such that
+
+K_{ij}^{kl} = \lambda \delta_{ij} \delta^{kl} + \mu (δ_i^k δ_j^l + δ_i^l δ_j^k)
+
+Inserting this into the definition of \tau_{ij} gives
+
+\tau_{ij} = \lambda \delta_{ij} G_{kk} + \mu (G_{ij} + G_{ji})
+
+We can split the velocity gradient tensor into a symmetric and
+antisymmetric part
+
+G_{ij} = ∂v_i/∂x_j = 1/2 * (∂v_i/∂x_j + ∂v_j/∂x_i) + 1/2 * (∂v_i/∂x_j - ∂v_j/∂x_i)
+                     |-------- symmetric --------|  |------ antisymmetric -------| 
+
+where the antisymmetric part corresponds to the vorticity and drops out by
+the symmetry of \tau_{ij}, leaving only the symmetric part.
+
+Therefore (also use G_{kk} = ∇·v)
+
+\tau_{ij} = \lambda \delta_{ij} ∇·v + \mu * (∂v_i/∂x_j + ∂v_j/∂x_i)
+
+As a next step, we split \tau_{ij} into a 
+(isotropic) hydrostatic part
+
+h_{ij} = 1/3 * \tau_{kk} \delta_{ij} = (λ + 2/3 μ) ∇·v δ_{ij}
+        |- mean trace -|
+
+acting like a pressure and a deviatoric part 
+
+s_{ij} = \tau_{ij} - h_{ij} = \mu * (∂v_i/∂x_j + ∂v_j/∂x_i - 2/3 δ_{ij} ∇·v)
+
+and we impose Stoke's hypothesis (λ + 2/3 μ = 0), eliminating the bulk isotropic viscosity,
+leaving only the deviatoric part, such that
+
+\tau_{ij} = s_{ij} = \mu * (∂v_i/∂x_j + ∂v_j/∂x_i - 2/3 δ_{ij} ∇·v)
+
+resulting in a momentum source term of ∇·τ and an energy 
+source term of ∇·(v·τ).
+
+# Video explanation: https://www.youtube.com/watch?v=YPDaFQUqVE4
+
+# TODO: we might also support a variant without Stoke's hypothesis.
+"""
+
+
 from functools import partial
 
 import jax
@@ -76,7 +158,7 @@ def fv_viscosity_update(primitive_state, params, config, registered_variables, d
 
 @partial(jax.jit, static_argnames=('config', 'registered_variables'))
 def fd_viscosity_source(primitive_state, params, config, registered_variables):
-
+    
     mu = params.viscosity # the dynamic viscosity
     dx = config.grid_spacing
     ndim = config.dimensionality

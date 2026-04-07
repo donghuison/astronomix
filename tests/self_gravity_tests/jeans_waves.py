@@ -58,7 +58,7 @@ from astronomix import SimulationParams
 from astronomix import get_helper_data
 from astronomix import time_integration
 from astronomix.initial_condition_generation.construct_primitive_state import construct_primitive_state
-from astronomix.option_classes.simulation_config import DONOR_ACCOUNTING, FD_FLUX_GRAVITY, FINITE_VOLUME, PERIODIC_ROLL, WENO_FLUX_GRAVITY, finalize_config
+from astronomix.option_classes.simulation_config import DONOR_ACCOUNTING, FD_FLUX_GRAVITY, FINITE_VOLUME, PERIODIC_ROLL, WENO_FLUX_GRAVITY, StaticFloatVector, StaticIntVector, finalize_config
 from astronomix import get_registered_variables
 
 # astronomix constants
@@ -85,7 +85,8 @@ def jeans_analytical(
     return rho, (vx, vy, vz), P, w
 
 def jeans_simulation(
-    num_cells,
+    # num_cells,
+    num_cells_x, # must be even
     num_periods = 1,
     solver_mode = FINITE_DIFFERENCE,
     self_gravity_version = SIMPLE_SOURCE_TERM,
@@ -95,7 +96,17 @@ def jeans_simulation(
     Return the L1 density error.
     """
 
-    box_size = jnp.pi # in each dimension
+    k_vec = jnp.array([2, 4, 4])
+    box_size = 2 * jnp.pi / k_vec
+    # TODO: ADD AUTO CASTING
+    box_size = StaticFloatVector(
+        x = float(box_size[0]),
+        y = float(box_size[1]),
+        z = float(box_size[2]),
+    )
+
+    # box_size = jnp.pi # in each dimension
+
     G = 1 / (4 * jnp.pi)
 
     # setup simulation config
@@ -107,10 +118,10 @@ def jeans_simulation(
         self_gravity_version=self_gravity_version,
         boundary_handling=PERIODIC_ROLL,
         num_ghost_cells=0,
-        mhd=(solver_mode == FINITE_DIFFERENCE),
+        mhd=False,
         dimensionality=3,
         box_size=box_size,
-        num_cells=num_cells,
+        num_cells=StaticIntVector(num_cells_x, num_cells_x // 2, num_cells_x // 2),
         boundary_settings=BoundarySettings(
             BoundarySettings1D(
                 left_boundary=PERIODIC_BOUNDARY, right_boundary=PERIODIC_BOUNDARY
@@ -138,7 +149,6 @@ def jeans_simulation(
     rho_B = 1.0
     c_s_squared = 1.0
     gamma = 5/3
-    k_vec = jnp.array([2, 4, 4])
     eps = 1e-6
 
     initial_rho, initial_v, initial_P, w = jeans_analytical(
@@ -181,15 +191,15 @@ def jeans_simulation(
 
     # plot the initial and final density slices
     fig_comp, axs_comp = plt.subplots(1, 3, figsize=(15, 5))
-    im0 = axs_comp[0].imshow(initial_state[registered_variables.density_index, :, :, num_cells // 2], origin='lower', extent=(0, box_size, 0, box_size))
+    im0 = axs_comp[0].imshow(initial_state[registered_variables.density_index, :, :, config.num_cells.z // 2], origin='lower', extent=(0, box_size.x, 0, box_size.y))
     axs_comp[0].set_title('Initial Density Slice')
     fig_comp.colorbar(im0, ax=axs_comp[0])
-    im1 = axs_comp[1].imshow(final_state[registered_variables.density_index, :, :, num_cells // 2], origin='lower', extent=(0, box_size, 0, box_size))
+    im1 = axs_comp[1].imshow(final_state[registered_variables.density_index, :, :, config.num_cells.z // 2], origin='lower', extent=(0, box_size.x, 0, box_size.y))
     axs_comp[1].set_title('Final Density Slice')
     fig_comp.colorbar(im1, ax=axs_comp[1])
 
     projected_abs_diff = jnp.abs(final_state[registered_variables.density_index] - initial_rho).sum(axis=2)
-    im2 = axs_comp[2].imshow(projected_abs_diff, origin='lower', extent=(0, box_size, 0, box_size))
+    im2 = axs_comp[2].imshow(projected_abs_diff, origin='lower', extent=(0, box_size.x, 0, box_size.y))
     axs_comp[2].set_title('Projected Absolute Density Difference')
     fig_comp.colorbar(im2, ax=axs_comp[2])
 
@@ -200,23 +210,23 @@ def jeans_simulation(
     if animate:
         fig_anim, axs_anim = plt.subplots(1, 2, figsize=(10, 5))
 
-        im = axs_anim[0].imshow(initial_state[registered_variables.density_index, :, :, num_cells // 2], origin='lower', extent=(0, box_size, 0, box_size))
+        im = axs_anim[0].imshow(initial_state[registered_variables.density_index, :, :, config.num_cells.z // 2], origin='lower', extent=(0, box_size.x, 0, box_size.y))
         axs_anim[0].set_title('Density Slice Evolution (Simulated)')
         fig_anim.colorbar(im, ax=axs_anim[0])
 
         analytical_solution = jeans_analytical(
             x, t=result.time_points[0], rho_B=rho_B, eps=eps, c_s_squared=c_s_squared, k_vec=k_vec, gamma=gamma, G=G
         )
-        im_analytical = axs_anim[1].imshow(analytical_solution[0][:, :, num_cells // 2], origin='lower', extent=(0, box_size, 0, box_size))
+        im_analytical = axs_anim[1].imshow(analytical_solution[0][:, :, config.num_cells.z // 2], origin='lower', extent=(0, box_size.x, 0, box_size.y))
         axs_anim[1].set_title('Density Slice Evolution (Analytical)')
         fig_anim.colorbar(im_analytical, ax=axs_anim[1])
 
         def update(frame):
-            im.set_data(result.states[frame][registered_variables.density_index, :, :, num_cells // 2])
+            im.set_data(result.states[frame][registered_variables.density_index, :, :, config.num_cells.z // 2])
             analytical_solution = jeans_analytical(
                 x, t=result.time_points[frame], rho_B=rho_B, eps=eps, c_s_squared=c_s_squared, k_vec=k_vec, gamma=gamma, G=G
             )
-            im_analytical.set_data(analytical_solution[0][:, :, num_cells // 2])
+            im_analytical.set_data(analytical_solution[0][:, :, config.num_cells.z // 2])
             return im, im_analytical
 
         anim = FuncAnimation(fig_anim, update, frames=len(result.states), blit=True)

@@ -1,6 +1,7 @@
 # ==== GPU selection ====
 from autocvd import autocvd
 autocvd(num_gpus = 1)
+# ruff: noqa: E402
 # =======================
 
 # numerics
@@ -35,7 +36,7 @@ gamma = 5/3  # adiabatic index
 
 # spatial domain
 box_size = 2 * jnp.pi
-num_cells = 512
+num_cells = 128
 
 # setup simulation config
 config = SimulationConfig(

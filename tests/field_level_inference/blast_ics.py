@@ -141,7 +141,7 @@ fig_ics, ax_ics = plt.subplots(figsize=(6, 5))
 im = ax_ics.imshow(
     rho[:, :, num_cells // 2],
     origin="lower",
-    extent=(0, config.box_size, 0, config.box_size),
+    extent=(0, config.box_size.x, 0, config.box_size.y),
     cmap="jet",
 )
 cbar = make_axes_locatable(ax_ics).append_axes("right", size="5%", pad=0.1)
@@ -220,7 +220,7 @@ fig, axs = plt.subplots(2, 3, figsize=(9, 6))
 im = axs[0, 0].imshow(
     density[:, :, num_cells // 2],
     origin="lower",
-    extent=(0, config.box_size, 0, config.box_size),
+    extent=(0, config.box_size.x, 0, config.box_size.y),
     cmap="jet",
 )
 cbar = make_axes_locatable(axs[0, 0]).append_axes("right", size="5%", pad=0.1)
@@ -233,7 +233,7 @@ axs[0, 0].set_ylabel("y")
 im = axs[1, 1].imshow(
     pressure[:, :, num_cells // 2],
     origin="lower",
-    extent=(0, config.box_size, 0, config.box_size),
+    extent=(0, config.box_size.x, 0, config.box_size.y),
     cmap="jet",
 )
 cbar = make_axes_locatable(axs[1, 1]).append_axes("right", size="5%", pad=0.1)
@@ -245,7 +245,7 @@ axs[1, 1].set_ylabel("y")
 im = axs[0, 1].imshow(
     v_squared[:, :, num_cells // 2],
     origin="lower",
-    extent=(0, config.box_size, 0, config.box_size),
+    extent=(0, config.box_size.x, 0, config.box_size.y),
     cmap="jet",
 )
 cbar = make_axes_locatable(axs[0, 1]).append_axes("right", size="5%", pad=0.1)
@@ -257,7 +257,7 @@ axs[0, 1].set_ylabel("y")
 im = axs[1, 0].imshow(
     b_squared[:, :, num_cells // 2],
     origin="lower",
-    extent=(0, config.box_size, 0, config.box_size),
+    extent=(0, config.box_size.x, 0, config.box_size.y),
     cmap="jet",
 )
 cbar = make_axes_locatable(axs[1, 0]).append_axes("right", size="5%", pad=0.1)
@@ -270,7 +270,7 @@ axs[1, 0].set_ylabel("y")
 diag_indices = jnp.arange(0, num_cells)
 B_diag = b_squared[diag_indices, diag_indices, num_cells // 2]
 r_diag = jnp.sqrt((diag_indices) ** 2 + (diag_indices) ** 2) * (
-    config.box_size / num_cells
+    config.box_size.x / num_cells
 )
 axs[0, 2].plot(r_diag, B_diag)
 axs[0, 2].set_ylabel("|B|^2")

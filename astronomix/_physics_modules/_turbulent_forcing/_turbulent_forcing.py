@@ -17,16 +17,13 @@ def _create_forcing_field(
     config: SimulationConfig,
 ):
     
-    # in our case we assume a cubic box
-    # with equal number of cells in each direction
+    xsize = config.box_size.x
+    ysize = config.box_size.y
+    zsize = config.box_size.z
 
-    xsize = config.box_size
-    ysize = config.box_size
-    zsize = config.box_size
-
-    nx = config.num_cells + 2 * config.num_ghost_cells
-    ny = config.num_cells + 2 * config.num_ghost_cells
-    nz = config.num_cells + 2 * config.num_ghost_cells
+    nx = config.num_cells.x + 2 * config.num_ghost_cells
+    ny = config.num_cells.y + 2 * config.num_ghost_cells
+    nz = config.num_cells.z + 2 * config.num_ghost_cells
 
     # wavenumbers using fftfreq
     kx = 2.0 * jnp.pi * jnp.fft.fftfreq(nx, d=xsize/nx)
@@ -42,7 +39,7 @@ def _create_forcing_field(
     kk = jnp.sqrt(k_squared)
     
     # power spectrum of the forcing
-    kpk = 4.0 * jnp.pi / config.box_size
+    kpk = 4.0 * jnp.pi / config.box_size.x # correct?
     Pk = kk**6 * jnp.exp(-8.0 * kk / kpk)
     
     key, sk1, sk2 = jax.random.split(key, 3)
