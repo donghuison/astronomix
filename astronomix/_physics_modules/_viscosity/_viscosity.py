@@ -86,13 +86,18 @@ import jax
 import jax.numpy as jnp   
 from astronomix._fluid_equations._equations import conserved_state_from_primitive, primitive_state_from_conserved
 from astronomix._stencil_operations._stencil_operations import _shift, _stencil_add
+from astronomix.option_classes.simulation_config import DYNAMIC_VISCOSITY, KINEMATIC_VISCOSITY
 
 # the fv one is preliminary, in the future I want an all source
 # term scheme
 @partial(jax.jit, static_argnames=('config', 'registered_variables'))
 def fv_viscosity_update(primitive_state, params, config, registered_variables, dt):
 
-    mu = params.viscosity
+    if config.viscosity_type == DYNAMIC_VISCOSITY:
+        mu = params.viscosity
+    elif config.viscosity_type == KINEMATIC_VISCOSITY:
+        mu = params.viscosity * primitive_state[registered_variables.density_index]
+    
     dx = config.grid_spacing
     ndim = config.dimensionality
 
@@ -131,7 +136,12 @@ def fv_viscosity_update(primitive_state, params, config, registered_variables, d
 
         # τ_{ij} at face for all i:
         # τ_{ij} = μ (∂v_i/∂x_j + ∂v_j/∂x_i − ⅔ δ_{ij} ∇·v)
-        tau_face = mu * (dv_dxj + dvj_dxi - (2.0 / 3.0) * d_ij * div_v)
+        if config.viscosity_type == DYNAMIC_VISCOSITY:
+            mu_face = mu
+        elif config.viscosity_type == KINEMATIC_VISCOSITY:
+            mu_face = 0.5 * (mu + _shift(mu, -1, axis=ax))
+        
+        tau_face = mu_face * (dv_dxj + dvj_dxi - (2.0 / 3.0) * d_ij * div_v)
 
         # velocity at face (for energy flux)
         v_face = 0.5 * (v + _shift(v, -1, axis=ax))
@@ -159,7 +169,11 @@ def fv_viscosity_update(primitive_state, params, config, registered_variables, d
 @partial(jax.jit, static_argnames=('config', 'registered_variables'))
 def fd_viscosity_source(primitive_state, params, config, registered_variables):
     
-    mu = params.viscosity # the dynamic viscosity
+    if config.viscosity_type == DYNAMIC_VISCOSITY:
+        mu = params.viscosity # the dynamic viscosity
+    elif config.viscosity_type == KINEMATIC_VISCOSITY:
+        mu = params.viscosity * primitive_state[registered_variables.density_index]
+    
     dx = config.grid_spacing
     ndim = config.dimensionality
 

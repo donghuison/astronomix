@@ -97,6 +97,10 @@ IMPLICIT_EULER = 1
 SINGLE_PRECISION = 0
 DOUBLE_PRECISION = 1
 
+# Viscosity types
+KINEMATIC_VISCOSITY = 0
+DYNAMIC_VISCOSITY = 1
+
 # ============================================================
 
 # ===================== type definitions =====================
@@ -254,6 +258,9 @@ class SimulationConfig(NamedTuple):
     #: Explicit diffusion term 
     #: (currently only for finite difference mode)
     diffusion: bool = False
+
+    #: Viscosity type - either kinematic or dynamic viscosity.
+    viscosity_type: int = DYNAMIC_VISCOSITY
 
     #: The size of the simulation box.
     box_size: Union[float, StaticFloatVector] = 1.0

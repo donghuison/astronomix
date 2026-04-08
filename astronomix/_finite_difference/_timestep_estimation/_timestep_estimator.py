@@ -17,6 +17,8 @@ from astronomix._fluid_equations._equations import conserved_state_from_primitiv
 from astronomix.data_classes.simulation_helper_data import HelperData
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 from astronomix.option_classes.simulation_config import (
+    DYNAMIC_VISCOSITY,
+    KINEMATIC_VISCOSITY,
     STATE_TYPE,
     SimulationConfig,
 )
@@ -97,7 +99,12 @@ def _cfl_time_step_fd(
             )
         else:
             rho_min = jnp.min(primitive_state[registered_variables.density_index])
-        nu_max = params.viscosity / rho_min
+       
+        if config.viscosity_type == DYNAMIC_VISCOSITY:
+            nu_max = params.viscosity / rho_min
+        elif config.viscosity_type == KINEMATIC_VISCOSITY:
+            nu_max = params.viscosity
+        
         dt_visc = C_CFL * grid_spacing**2 / (2.0 * config.dimensionality * nu_max)
         dt_cfl = jnp.minimum(dt_cfl, dt_visc)
 
@@ -281,7 +288,11 @@ def _cfl_time_step_fd_hydro(
         else:
             rho_min = jnp.min(primitive_state[registered_variables.density_index])
         
-        nu_max = params.viscosity / rho_min
+        if config.viscosity_type == DYNAMIC_VISCOSITY:
+            nu_max = params.viscosity / rho_min
+        elif config.viscosity_type == KINEMATIC_VISCOSITY:
+            nu_max = params.viscosity
+        
         dt_visc = C_CFL * grid_spacing**2 / (2.0 * config.dimensionality * nu_max)
         dt_cfl = jnp.minimum(dt_cfl, dt_visc)
 

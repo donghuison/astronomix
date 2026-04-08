@@ -8,7 +8,7 @@ from jaxtyping import Array, Float, jaxtyped
 from beartype import beartype as typechecker
 from typing import Union
 from astronomix._physics_modules._stellar_wind.stellar_wind import _wind_injection
-from astronomix.option_classes.simulation_config import STATE_TYPE, UNSPLIT
+from astronomix.option_classes.simulation_config import DYNAMIC_VISCOSITY, KINEMATIC_VISCOSITY, STATE_TYPE, UNSPLIT
 
 # astronomix containers
 from astronomix.data_classes.simulation_helper_data import HelperData
@@ -227,7 +227,11 @@ def _cfl_time_step(
         else:
             rho_min = jnp.min(primitive_state[registered_variables.density_index])
         
-        nu_max = params.viscosity / rho_min
+        if config.viscosity_type == DYNAMIC_VISCOSITY:
+            nu_max = params.viscosity / rho_min
+        elif config.viscosity_type == KINEMATIC_VISCOSITY:
+            nu_max = params.viscosity
+
         dt_visc = C_CFL * grid_spacing**2 / (2.0 * config.dimensionality * nu_max)
         dt = jnp.minimum(dt, dt_visc)
 

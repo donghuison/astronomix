@@ -22,8 +22,8 @@ class SimulationParams(NamedTuple):
     #: Gravitational constant.
     gravitational_constant: float = 1.0
 
-    #: Dynamic viscosity for simulations
-    #: with explicit diffusion.
+    #: Dynamic or kinematic viscosity depending 
+    #: on the viscosity_type in SimulationConfig.
     viscosity: float = 0.0
 
     #: The adiabatic index of the gas.
