@@ -26,6 +26,12 @@ class SimulationParams(NamedTuple):
     #: on the viscosity_type in SimulationConfig.
     viscosity: float = 0.0
 
+    #: The isothermal sound speed used when
+    #: config.equation_of_state is ISOTHERMAL.
+    #: NOTE: CURRENTLY ONLY IMPLEMENTED FOR 
+    #: FINITE DIFFERENCE MODE.
+    isothermal_sound_speed: float = 1.0
+
     #: The adiabatic index of the gas.
     gamma: float = 5/3
 

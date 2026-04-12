@@ -104,20 +104,21 @@ from typing import Union
 from jax import checkpoint
 
 from astronomix._finite_difference._fluid_equations._eigen_hydro import _eigen_L_row_hydro, _eigen_R_col_hydro, _eigen_lambdas_hydro
+from astronomix._finite_difference._fluid_equations._eigen_hydro_iso import _eigen_L_row_hydro_iso, _eigen_R_col_hydro_iso, _eigen_lambdas_hydro_iso
 from astronomix._finite_difference._fluid_equations._eigen_mhd import _eigen_L_row, _eigen_R_col, _eigen_lambdas
-from astronomix._finite_difference._fluid_equations._fluxes import _mhd_flux_x
+from astronomix._finite_difference._fluid_equations._eigen_mhd_iso import _eigen_L_row_iso, _eigen_R_col_iso, _eigen_lambdas_iso
+from astronomix._finite_difference._fluid_equations._fluxes import _euler_flux_isothermal_x, _mhd_flux_isothermal_x, _mhd_flux_x
 from astronomix._fluid_equations._equations import primitive_state_from_conserved
 from astronomix._fluid_equations._fluxes import _euler_flux
 from astronomix._stencil_operations._stencil_operations import _shift
-from astronomix.option_classes.simulation_config import SimulationConfig
+from astronomix.option_classes.simulation_config import IDEAL_GAS, ISOTHERMAL, SimulationConfig
+from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 
 @partial(jax.jit, static_argnames=["registered_variables", "config"])
 def _weno_flux_x(
     conserved_state,
-    rhomin: Union[float, jnp.ndarray],
-    pgmin: Union[float, jnp.ndarray],
-    gamma: Union[float, jnp.ndarray],
+    params: SimulationParams,
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ):
@@ -127,17 +128,50 @@ def _weno_flux_x(
 
     epsilon = 1e-8
 
-    # retrieve the center fluxes
-    if config.mhd:
-        F = _mhd_flux_x(conserved_state, rhomin, pgmin, gamma, config, registered_variables)
-    else:
-        F =  _euler_flux(
-            primitive_state_from_conserved(
-                conserved_state, gamma, config, registered_variables
-            ),
-            gamma, config, registered_variables, 1
-        )
-    
+    # only used in the IDEAL_GAS case
+    rhomin = params.minimum_density
+    pgmin = params.minimum_pressure
+    gamma = params.gamma
+
+    # only used in the ISOTHERMAL case
+    isothermal_sound_speed = params.isothermal_sound_speed
+
+    if config.equation_of_state == IDEAL_GAS:
+        # retrieve the center fluxes
+        if config.mhd:
+            F = _mhd_flux_x(
+                conserved_state,
+                rhomin,
+                pgmin,
+                gamma,
+                config,
+                registered_variables
+            )
+        else:
+            F =  _euler_flux(
+                primitive_state_from_conserved(
+                    conserved_state, gamma, config, registered_variables
+                ),
+                gamma, config, registered_variables, 1
+            )
+    elif config.equation_of_state == ISOTHERMAL:
+        if config.mhd:
+            F = _mhd_flux_isothermal_x(
+                conserved_state,
+                rhomin,
+                isothermal_sound_speed,
+                config,
+                registered_variables,
+            )
+        else:
+            F = _euler_flux_isothermal_x(
+                conserved_state,
+                isothermal_sound_speed,
+                config,
+                registered_variables,
+            )
+
+        
     # with this we can already compute the first part of the flux
     F_interface = 1/12 * (
         -_shift(F, 1, axis=1) + 7 * F + 7 * _shift(F, -1, axis=1) - _shift(F, -2, axis=1)
@@ -146,12 +180,20 @@ def _weno_flux_x(
     def mode_flux(mode, F_current):
 
         # get eigenstructure for this mode
-        if config.mhd:
-            lambdas_center = _eigen_lambdas(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
-            L_row = _eigen_L_row(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
-        else:
-            lambdas_center = _eigen_lambdas_hydro(conserved_state, rhomin, pgmin, gamma, config, registered_variables, mode)
-            L_row = _eigen_L_row_hydro(conserved_state, rhomin, pgmin, gamma, config, registered_variables, mode)
+        if config.equation_of_state == IDEAL_GAS:
+            if config.mhd:
+                lambdas_center = _eigen_lambdas(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
+                L_row = _eigen_L_row(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
+            else:
+                lambdas_center = _eigen_lambdas_hydro(conserved_state, rhomin, pgmin, gamma, config, registered_variables, mode)
+                L_row = _eigen_L_row_hydro(conserved_state, rhomin, pgmin, gamma, config, registered_variables, mode)
+        elif config.equation_of_state == ISOTHERMAL:
+            if config.mhd:
+                lambdas_center = _eigen_lambdas_iso(conserved_state, rhomin, isothermal_sound_speed, registered_variables, mode)
+                L_row = _eigen_L_row_iso(conserved_state, rhomin, isothermal_sound_speed, registered_variables, mode)
+            else:
+                lambdas_center = _eigen_lambdas_hydro_iso(conserved_state, rhomin, isothermal_sound_speed, config, registered_variables, mode)
+                L_row = _eigen_L_row_hydro_iso(conserved_state, rhomin, isothermal_sound_speed, config, registered_variables, mode)
 
         F0 = _shift(F,  2, axis=1)   # shape (N_vars, Nx, Ny, Nz) — i-2 at target i
         F1 = _shift(F,  1, axis=1)   # i-1
@@ -275,10 +317,16 @@ def _weno_flux_x(
         Fs = -second + third
 
         # transform back and add to current flux
-        if config.mhd:
-            R_col = _eigen_R_col(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
-        else:
-            R_col = _eigen_R_col_hydro(conserved_state, rhomin, pgmin, gamma, config, registered_variables, mode)
+        if config.equation_of_state == IDEAL_GAS:
+            if config.mhd:
+                R_col = _eigen_R_col(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
+            else:
+                R_col = _eigen_R_col_hydro(conserved_state, rhomin, pgmin, gamma, config, registered_variables, mode)
+        elif config.equation_of_state == ISOTHERMAL:
+            if config.mhd:
+                R_col = _eigen_R_col_iso(conserved_state, rhomin, isothermal_sound_speed, registered_variables, mode)
+            else:
+                R_col = _eigen_R_col_hydro_iso(conserved_state, rhomin, isothermal_sound_speed, config, registered_variables, mode)
 
         if config.dimensionality == 3:
             dF = jnp.einsum('nxyz,xyz->nxyz', R_col, Fs)
@@ -292,6 +340,9 @@ def _weno_flux_x(
         num_modes = 7
     else:
         num_modes = config.dimensionality + 2
+
+    if config.equation_of_state == ISOTHERMAL:
+        num_modes -= 1
     
     return jax.lax.fori_loop(
         0, num_modes,
@@ -302,9 +353,7 @@ def _weno_flux_x(
 @partial(jax.jit, static_argnames=["registered_variables", "config"])
 def _weno_flux_y(
     conserved_state,
-    rhomin: Union[float, jnp.ndarray],
-    pgmin: Union[float, jnp.ndarray],
-    gamma: Union[float, jnp.ndarray],
+    params: SimulationParams,
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ):
@@ -329,7 +378,7 @@ def _weno_flux_y(
         qy = qy.at[registered_variables.magnetic_index.x].set(B_y)
         qy = qy.at[registered_variables.magnetic_index.y].set(B_x)
     
-    Fy = _weno_flux_x(qy, rhomin, pgmin, gamma, config, registered_variables)
+    Fy = _weno_flux_x(qy, params, config, registered_variables)
     
     # Transpose back
     if config.dimensionality == 2:
@@ -358,9 +407,7 @@ def _weno_flux_y(
 @partial(jax.jit, static_argnames=["registered_variables", "config"])
 def _weno_flux_z(
     conserved_state,
-    rhomin: Union[float, jnp.ndarray],
-    pgmin: Union[float, jnp.ndarray],
-    gamma: Union[float, jnp.ndarray],
+    params: SimulationParams,
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ):
@@ -382,7 +429,7 @@ def _weno_flux_z(
         qz = qz.at[registered_variables.magnetic_index.x].set(B_z)
         qz = qz.at[registered_variables.magnetic_index.z].set(B_x)
     
-    Fz = _weno_flux_x(qz, rhomin, pgmin, gamma, config, registered_variables)
+    Fz = _weno_flux_x(qz, params, config, registered_variables)
     
     # Transpose back
     Fz = jnp.transpose(Fz, (0, 3, 2, 1))

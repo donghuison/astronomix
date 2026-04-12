@@ -10,13 +10,15 @@ from beartype import beartype as typechecker
 from typing import Union
 
 # general astronomix imports
-from astronomix._finite_difference._fluid_equations._equations import conserved_state_from_primitive_mhd, primitive_state_from_conserved_mhd
+from astronomix._finite_difference._fluid_equations._equations import conserved_state_from_primitive_isothermal, conserved_state_from_primitive_mhd, primitive_state_from_conserved_isothermal, primitive_state_from_conserved_mhd
 from astronomix._finite_difference._magnetic_update._constrained_transport import update_cell_center_fields
 from astronomix._finite_difference._time_integrators._ssprk import _ssprk4_hydro, _ssprk4_with_ct
 from astronomix._fluid_equations._equations import conserved_state_from_primitive, primitive_state_from_conserved
 from astronomix.data_classes.simulation_helper_data import HelperData
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 from astronomix.option_classes.simulation_config import (
+    IDEAL_GAS,
+    ISOTHERMAL,
     STATE_TYPE,
     SimulationConfig,
 )
@@ -38,9 +40,14 @@ def _evolve_state_fd(
     if config.mhd:
         # NOTE: here we assume the magnetic field at interfaces
         # is stored in the last three indices of the state array
-        conserved_state = conserved_state_from_primitive_mhd(
-            primitive_state[:-3], gamma, registered_variables
-        )
+        if config.equation_of_state == IDEAL_GAS:
+            conserved_state = conserved_state_from_primitive_mhd(
+                primitive_state[:-3], gamma, registered_variables
+            )
+        elif config.equation_of_state == ISOTHERMAL:
+            conserved_state = conserved_state_from_primitive_isothermal(
+                primitive_state[:-3], config, registered_variables
+            )
 
         # extract interface magnetic fields
         bxb = primitive_state[registered_variables.interface_magnetic_field_index.x]
@@ -63,9 +70,14 @@ def _evolve_state_fd(
         )
 
         # back to primitive state
-        primitive_state = primitive_state_from_conserved_mhd(
-            conserved_state, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables
-        )
+        if config.equation_of_state == IDEAL_GAS:
+            primitive_state = primitive_state_from_conserved_mhd(
+                conserved_state, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables
+            )
+        elif config.equation_of_state == ISOTHERMAL:
+            primitive_state = primitive_state_from_conserved_isothermal(
+                conserved_state, params.minimum_density, config, registered_variables
+            )
 
         # append updated interface magnetic fields
         # NOTE: same assumption as above

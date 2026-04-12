@@ -11,13 +11,17 @@ from typing import Union
 
 # general astronomix imports
 from astronomix._finite_difference._fluid_equations._eigen_hydro import _eigen_all_lambdas_hydro
+from astronomix._finite_difference._fluid_equations._eigen_hydro_iso import _eigen_all_lambdas_hydro_iso
 from astronomix._finite_difference._fluid_equations._eigen_mhd import _eigen_all_lambdas
-from astronomix._finite_difference._fluid_equations._equations import conserved_state_from_primitive_mhd, primitive_state_from_conserved_mhd
+from astronomix._finite_difference._fluid_equations._eigen_mhd_iso import _eigen_all_lambdas_iso
+from astronomix._finite_difference._fluid_equations._equations import conserved_state_from_primitive_isothermal, conserved_state_from_primitive_mhd, primitive_state_from_conserved_mhd
 from astronomix._fluid_equations._equations import conserved_state_from_primitive
 from astronomix.data_classes.simulation_helper_data import HelperData
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 from astronomix.option_classes.simulation_config import (
     DYNAMIC_VISCOSITY,
+    IDEAL_GAS,
+    ISOTHERMAL,
     KINEMATIC_VISCOSITY,
     STATE_TYPE,
     SimulationConfig,
@@ -38,13 +42,24 @@ def _cfl_time_step_fd(
     C_CFL: Union[float, Float[Array, ""]] = 0.8,
 ) -> Float[Array, ""]:
     
-    conserved_state = conserved_state_from_primitive_mhd(
-        primitive_state, gamma, registered_variables
-    )
+    if config.equation_of_state == IDEAL_GAS:
+        conserved_state = conserved_state_from_primitive_mhd(
+            primitive_state, gamma, registered_variables
+        )
+    elif config.equation_of_state == ISOTHERMAL:
+        conserved_state = conserved_state_from_primitive_isothermal(
+            primitive_state, config, registered_variables
+        )
 
-    lambda_x = _eigen_all_lambdas(
-        conserved_state, params.minimum_density, params.minimum_pressure, gamma, registered_variables
-    )
+    if config.equation_of_state == IDEAL_GAS:
+        lambda_x = _eigen_all_lambdas(
+            conserved_state, params.minimum_density, params.minimum_pressure, gamma, registered_variables
+        )
+    elif config.equation_of_state == ISOTHERMAL:
+        lambda_x = _eigen_all_lambdas_iso(
+            conserved_state, params.minimum_density, params.isothermal_sound_speed, registered_variables
+        )
+    
     lambda_x = jnp.max(jnp.abs(lambda_x))
 
     if config.dimensionality >= 2:
@@ -62,9 +77,14 @@ def _cfl_time_step_fd(
         qy = qy.at[registered_variables.magnetic_index.x].set(B_y)
         qy = qy.at[registered_variables.magnetic_index.y].set(B_x)
 
-        lambda_y = _eigen_all_lambdas(
-            qy, params.minimum_density, params.minimum_pressure, gamma, registered_variables
-        )
+        if config.equation_of_state == IDEAL_GAS:
+            lambda_y = _eigen_all_lambdas(
+                qy, params.minimum_density, params.minimum_pressure, gamma, registered_variables
+            )
+        elif config.equation_of_state == ISOTHERMAL:
+            lambda_y = _eigen_all_lambdas_iso(
+                qy, params.minimum_density, params.isothermal_sound_speed, registered_variables
+            )
         lambda_y = jnp.max(jnp.abs(lambda_y))
     else:
         lambda_y = 0.0
@@ -81,9 +101,14 @@ def _cfl_time_step_fd(
         qz = qz.at[registered_variables.magnetic_index.x].set(B_z)
         qz = qz.at[registered_variables.magnetic_index.z].set(B_x)
 
-        lambda_z = _eigen_all_lambdas(
-            qz, params.minimum_density, params.minimum_pressure, gamma, registered_variables
-        )
+        if config.equation_of_state == IDEAL_GAS:
+            lambda_z = _eigen_all_lambdas(
+                qz, params.minimum_density, params.minimum_pressure, gamma, registered_variables
+            )
+        elif config.equation_of_state == ISOTHERMAL:
+            lambda_z = _eigen_all_lambdas_iso(
+                qz, params.minimum_density, params.isothermal_sound_speed, registered_variables
+            )
         lambda_z = jnp.max(jnp.abs(lambda_z))
     else:
         lambda_z = 0.0
@@ -222,14 +247,23 @@ def _cfl_time_step_fd_hydro(
     
     # TODO: use specific lambda function
 
-    conserved_state = conserved_state_from_primitive(
-        primitive_state, gamma, config, registered_variables
-    )
+    if config.equation_of_state == IDEAL_GAS:
+        conserved_state = conserved_state_from_primitive(
+            primitive_state, gamma, config, registered_variables
+        )
+    elif config.equation_of_state == ISOTHERMAL:
+        conserved_state = conserved_state_from_primitive_isothermal(
+            primitive_state, config, registered_variables
+        )
 
-    lambda_x = _eigen_all_lambdas_hydro(
-        conserved_state, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables
-    )
-
+    if config.equation_of_state == IDEAL_GAS:
+        lambda_x = _eigen_all_lambdas_hydro(
+            conserved_state, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables
+        )
+    elif config.equation_of_state == ISOTHERMAL:
+        lambda_x = _eigen_all_lambdas_hydro_iso(
+            conserved_state, params.minimum_density, params.isothermal_sound_speed, config, registered_variables
+        )
     lambda_x = jnp.max(jnp.abs(lambda_x))
 
     if config.dimensionality >= 2:
@@ -247,9 +281,14 @@ def _cfl_time_step_fd_hydro(
         #     qy, gamma, registered_variables
         # )
 
-        lambda_y = _eigen_all_lambdas_hydro(
-            qy, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables
-        )
+        if config.equation_of_state == IDEAL_GAS:
+            lambda_y = _eigen_all_lambdas_hydro(
+                qy, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables
+            )
+        elif config.equation_of_state == ISOTHERMAL:
+            lambda_y = _eigen_all_lambdas_hydro_iso(
+                qy, params.minimum_density, params.isothermal_sound_speed, config, registered_variables
+            )
 
         lambda_y = jnp.max(jnp.abs(lambda_y))
     else:
@@ -266,9 +305,14 @@ def _cfl_time_step_fd_hydro(
         #     qz, gamma, registered_variables
         # )
 
-        lambda_z = _eigen_all_lambdas_hydro(
-            qz, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables
-        )
+        if config.equation_of_state == IDEAL_GAS:
+            lambda_z = _eigen_all_lambdas_hydro(
+                qz, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables
+            )
+        elif config.equation_of_state == ISOTHERMAL:
+            lambda_z = _eigen_all_lambdas_hydro_iso(
+                qz, params.minimum_density, params.isothermal_sound_speed, config, registered_variables
+            )
 
         lambda_z = jnp.max(jnp.abs(lambda_z))
     else:

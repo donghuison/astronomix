@@ -22,7 +22,7 @@ from astronomix._finite_volume._magnetic_update._vector_maths import divergence3
 from astronomix._geometry.boundaries import _boundary_handler
 from astronomix._physics_modules._turbulent_forcing._turbulent_forcing import _apply_forcing
 from astronomix.data_classes.simulation_state_struct import StateStruct
-from astronomix.option_classes.simulation_config import BACKWARDS, FINITE_DIFFERENCE, FINITE_VOLUME, FORWARDS, GHOST_CELLS, PERIODIC_ROLL, STATE_TYPE
+from astronomix.option_classes.simulation_config import BACKWARDS, FINITE_DIFFERENCE, FINITE_VOLUME, FORWARDS, GHOST_CELLS, IDEAL_GAS, PERIODIC_ROLL, STATE_TYPE
 
 # astronomix containers
 from astronomix.option_classes.simulation_config import SimulationConfig
@@ -745,11 +745,12 @@ def _time_integration(
                     primitive_state[registered_variables.density_index], params.minimum_density
                 )
             )
-            primitive_state = primitive_state.at[registered_variables.pressure_index].set(
-                jnp.maximum(
-                    primitive_state[registered_variables.pressure_index], params.minimum_pressure
+            if config.equation_of_state == IDEAL_GAS:
+                primitive_state = primitive_state.at[registered_variables.pressure_index].set(
+                    jnp.maximum(
+                        primitive_state[registered_variables.pressure_index], params.minimum_pressure
+                    )
                 )
-            )
 
         # EVOLVE THE STATE
         if config.solver_mode == FINITE_VOLUME:

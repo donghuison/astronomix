@@ -75,19 +75,19 @@ def _ssprk4_with_ct(
         dtdz = dt_tilde / grid_spacing
 
         # Calculate fluxes based on the state of the current stage
-        dF_x = _weno_flux_x(current_q, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables)
+        dF_x = _weno_flux_x(current_q, params, config, registered_variables)
 
         if config.dimensionality == 1:
             dF_y = 0.0
             dF_z = 0.0
 
         if config.dimensionality == 2:
-            dF_y = _weno_flux_y(current_q, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables)
+            dF_y = _weno_flux_y(current_q, params, config, registered_variables)
             dF_z = 0.0
 
         if config.dimensionality == 3:
-            dF_y = _weno_flux_y(current_q, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables)
-            dF_z = _weno_flux_z(current_q, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables)
+            dF_y = _weno_flux_y(current_q, params, config, registered_variables)
+            dF_z = _weno_flux_z(current_q, params, config, registered_variables)
 
         # Calculate RHS for interface magnetic fields using Constrained Transport
         rhs_bx, rhs_by, rhs_bz = constrained_transport_rhs(
@@ -278,13 +278,13 @@ def _ssprk4_hydro(
         dtdz = dt_tilde / grid_spacing
 
         # Calculate fluxes based on the state of the current stage
-        dF_x = _weno_flux_x(current_q, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables)
+        dF_x = _weno_flux_x(current_q, params, config, registered_variables)
 
         if config.dimensionality >= 2:
-            dF_y = _weno_flux_y(current_q, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables)
+            dF_y = _weno_flux_y(current_q, params, config, registered_variables)
 
         if config.dimensionality == 3:
-            dF_z = _weno_flux_z(current_q, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables)
+            dF_z = _weno_flux_z(current_q, params, config, registered_variables)
 
         # Calculate RHS for conserved fluid variables
         if config.dimensionality == 1:

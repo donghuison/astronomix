@@ -34,7 +34,7 @@ from astronomix._finite_difference._maths._differencing import finite_difference
 from astronomix._finite_difference._maths._interpolate import interp_center_to_face, point_values_to_averages_single_axis
 from astronomix._finite_difference._maths._interpolate import interp_face_to_center
 from astronomix._finite_difference._maths._interpolate import point_values_to_averages
-from astronomix.option_classes.simulation_config import SimulationConfig
+from astronomix.option_classes.simulation_config import IDEAL_GAS, SimulationConfig
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 
 XAXIS = 0
@@ -406,9 +406,10 @@ def update_cell_center_fields(
     BY = registered_variables.magnetic_index.y
     BZ = registered_variables.magnetic_index.z
 
-    b2_old = (
-        conserved_state[BX] ** 2 + conserved_state[BY] ** 2 + conserved_state[BZ] ** 2
-    )
+    if config.equation_of_state == IDEAL_GAS:
+        b2_old = (
+            conserved_state[BX] ** 2 + conserved_state[BY] ** 2 + conserved_state[BZ] ** 2
+        )
 
     # interpolate from interfaces back to cell centers
     Bx_center = interp_face_to_center(bx_interface, XAXIS)
@@ -426,12 +427,14 @@ def update_cell_center_fields(
     conserved_new = conserved_new.at[BY].set(By_center)
     conserved_new = conserved_new.at[BZ].set(Bz_center)
 
-    b2_new = conserved_new[BX] ** 2 + conserved_new[BY] ** 2 + conserved_new[BZ] ** 2
+    if config.equation_of_state == IDEAL_GAS:
+        b2_new = conserved_new[BX] ** 2 + conserved_new[BY] ** 2 + conserved_new[BZ] ** 2
 
-    # update total energy: E_new = E_old + 0.5 * (b2_new - b2_old)
-    conserved_new = conserved_new.at[registered_variables.pressure_index].add(
-        0.5 * (b2_new - b2_old)
-    )
+        # update total energy: E_new = E_old + 0.5 * (b2_new - b2_old)
+        conserved_new = conserved_new.at[registered_variables.pressure_index].add(
+            0.5 * (b2_new - b2_old)
+        )
+    # no pressure update for the isothermal equation of state
 
     return conserved_new
 

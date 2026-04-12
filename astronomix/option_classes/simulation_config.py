@@ -101,6 +101,10 @@ DOUBLE_PRECISION = 1
 KINEMATIC_VISCOSITY = 0
 DYNAMIC_VISCOSITY = 1
 
+# Equation of state
+IDEAL_GAS = 0
+ISOTHERMAL = 1
+
 # ============================================================
 
 # ===================== type definitions =====================
@@ -231,6 +235,11 @@ class SimulationConfig(NamedTuple):
 
     #: The geometry of the simulation.
     geometry: int = CARTESIAN
+
+    #: The equation of state for the simulation.
+    #: NOTE: CURRENTLY ONLY IMPLEMENTED FOR 
+    #: FINITE DIFFERENCE MODE.
+    equation_of_state: int = IDEAL_GAS
 
     #: Magnetohydrodynamics switch.
     mhd: bool = False

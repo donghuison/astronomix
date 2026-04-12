@@ -9,6 +9,11 @@ autocvd(num_gpus=1)
 # ruff: noqa: E402
 # =======================
 
+# jax debug nans
+import jax
+# x64
+jax.config.update("jax_enable_x64", True)
+
 # numerics
 import jax.numpy as jnp
 
@@ -25,6 +30,8 @@ from astronomix._physics_modules._turbulent_forcing._turbulent_forcing_options i
 from astronomix.initial_condition_generation.construct_primitive_state import construct_primitive_state
 from astronomix.option_classes.simulation_config import (
     FINITE_DIFFERENCE,
+    IDEAL_GAS,
+    ISOTHERMAL,
     PERIODIC_BOUNDARY,
     BoundarySettings,
     BoundarySettings1D,
@@ -39,6 +46,7 @@ from astronomix.variable_registry.registered_variables import get_registered_var
 # Configure the simulation
 config = SimulationConfig(
     solver_mode = FINITE_DIFFERENCE,
+    equation_of_state = ISOTHERMAL, # IDEAL_GAS / ISOTHERMAL
     progress_bar = True,
     dimensionality = 3,
     num_cells = 64,
@@ -68,9 +76,11 @@ config = SimulationConfig(
 # Set the simulation parameters
 params = SimulationParams(
     C_cfl = 1.5,
+    isothermal_sound_speed = 1.0, # only active when equation_of_state is isothermal
+    gamma = 5.0 / 3.0, # only active when equation_of_state is ideal_gas
     t_end = 1.0,
     turbulent_forcing_params = TurbulentForcingParams(
-        energy_injection_rate = 1.65
+        energy_injection_rate = 1.65, # 1.65
     ),
 )
 
@@ -85,7 +95,7 @@ velocity_z = jnp.zeros_like(density)
 pressure = jnp.ones_like(density)
 magnetic_field_x = jnp.zeros_like(density)
 magnetic_field_y = jnp.zeros_like(density)
-magnetic_field_z = jnp.ones_like(density) * 10.0
+magnetic_field_z = jnp.ones_like(density) * 0.2
 bxb, byb, bzb = initialize_interface_fields(magnetic_field_x, magnetic_field_y, magnetic_field_z)
 initial_state = construct_primitive_state(
     config=config,
@@ -119,19 +129,25 @@ print(f"Turbulent crossing time: {t_cross:.3f}")
 
 # Calculate the final Mach number
 final_density = final_state[registered_variables.density_index]
-final_pressure = final_state[registered_variables.pressure_index]
-final_sound_speed = jnp.sqrt(params.gamma * final_pressure / final_density)
-final_mach_number = v_rms / jnp.mean(final_sound_speed)
+if config.equation_of_state == IDEAL_GAS:
+    final_pressure = final_state[registered_variables.pressure_index]
+    final_sound_speed = jnp.sqrt(params.gamma * final_pressure / final_density)
+    print(f"Final sound speed: {jnp.mean(final_sound_speed):.3f}")
+    final_mach_number = v_rms / jnp.mean(final_sound_speed)
+else:
+    final_sound_speed = params.isothermal_sound_speed
+    final_mach_number = v_rms / final_sound_speed
 print(f"Final Mach number: {final_mach_number:.3f}")
 
 # Calculate the final Alfvén Mach number
-final_magnetic_field_x = final_state[registered_variables.magnetic_index.x]
-final_magnetic_field_y = final_state[registered_variables.magnetic_index.y]
-final_magnetic_field_z = final_state[registered_variables.magnetic_index.z]
-final_magnetic_energy_density = 0.5 * (final_magnetic_field_x**2 + final_magnetic_field_y**2 + final_magnetic_field_z**2)
-final_alfven_speed = jnp.sqrt(2 * final_magnetic_energy_density / final_density)
-final_alfven_mach_number = v_rms / jnp.mean(final_alfven_speed)
-print(f"Final Alfvén Mach number: {final_alfven_mach_number:.3f}")
+if config.mhd:
+    final_magnetic_field_x = final_state[registered_variables.magnetic_index.x]
+    final_magnetic_field_y = final_state[registered_variables.magnetic_index.y]
+    final_magnetic_field_z = final_state[registered_variables.magnetic_index.z]
+    final_magnetic_energy_density = 0.5 * (final_magnetic_field_x**2 + final_magnetic_field_y**2 + final_magnetic_field_z**2)
+    final_alfven_speed = jnp.sqrt(2 * final_magnetic_energy_density / final_density)
+    final_alfven_mach_number = v_rms / jnp.mean(final_alfven_speed)
+    print(f"Final Alfvén Mach number: {final_alfven_mach_number:.3f}")
 
 # Make animation
 print("Creating animation...")
