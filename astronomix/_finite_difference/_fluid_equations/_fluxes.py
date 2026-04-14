@@ -80,7 +80,6 @@ def _mhd_flux_isothermal_x(
     registered_variables: RegisteredVariables,
 ) -> STATE_TYPE:
     
-    # I think the minimum density enforcement is a bit redundant here
     primitive_state = primitive_state_from_conserved_isothermal(
         conserved_state, minimum_density, config, registered_variables
     )
@@ -116,6 +115,7 @@ def _mhd_flux_isothermal_x(
 )
 def _euler_flux_isothermal_x(
     conserved_state: STATE_TYPE,
+    minimum_density: Union[float, Float[Array, ""]],
     isothermal_sound_speed: Union[float, Float[Array, ""]],
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
@@ -140,6 +140,10 @@ def _euler_flux_isothermal_x(
         m_x = conserved_state[registered_variables.velocity_index.x]
 
     rho = conserved_state[registered_variables.density_index]
+
+    if config.enforce_positivity:
+        rho = jnp.maximum(rho, minimum_density)
+
     p = isothermal_sound_speed**2 * rho
 
     # compute the flux vector

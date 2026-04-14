@@ -11,7 +11,7 @@ autocvd(num_gpus=1)
 import jax
 import jax.numpy as jnp
 
-# jax.config.update("jax_enable_x64", True)
+jax.config.update("jax_enable_x64", True)
 
 from astronomix._finite_difference._interface_fluxes._weno import (
     _weno_flux_x,
@@ -124,9 +124,13 @@ def run_blast_simulation(num_cells, B0):
     V_y = jnp.zeros_like(r)
     V_z = jnp.zeros_like(r)
 
-    B_x = B0 / jnp.sqrt(2)
-    B_y = B0 / jnp.sqrt(2)
-    B_z = 0
+    B_direction = jnp.array([1.0, 0.0, 0.0])
+
+    B_direction_normalized = B_direction / jnp.linalg.norm(B_direction)
+
+    B_x = B0 * B_direction_normalized[0]
+    B_y = B0 * B_direction_normalized[1]
+    B_z = B0 * B_direction_normalized[2]
 
     print(f"Magnetic field: Bx={B_x}, By={B_y}, Bz={B_z}")
 
@@ -158,71 +162,71 @@ def run_blast_simulation(num_cells, B0):
 
 
 num_cells = 64
-B0 = 10
+B0 = 10.0
 
 initial_state, config, registered_variables, params, helper_data = run_blast_simulation(
     num_cells, B0
 )
 
-bxb = initial_state[registered_variables.interface_magnetic_field_index.x]
-byb = initial_state[registered_variables.interface_magnetic_field_index.y]
-bzb = initial_state[registered_variables.interface_magnetic_field_index.z]
+# bxb = initial_state[registered_variables.interface_magnetic_field_index.x]
+# byb = initial_state[registered_variables.interface_magnetic_field_index.y]
+# bzb = initial_state[registered_variables.interface_magnetic_field_index.z]
 
-conserved_state = conserved_state_from_primitive_mhd(
-    primitive_state=initial_state[:-3],
-    gamma=params.gamma,
-    registered_variables=registered_variables,
-)
+# conserved_state = conserved_state_from_primitive_mhd(
+#     primitive_state=initial_state[:-3],
+#     gamma=params.gamma,
+#     registered_variables=registered_variables,
+# )
 
-divergence = jnp.mean(
-    jnp.abs(
-        1.0
-        / config.grid_spacing
-        * (
-            finite_difference_int6(bxb, axis=0)
-            + finite_difference_int6(byb, axis=1)
-            + finite_difference_int6(bzb, axis=2)
-        )
-    )
-)
-print(divergence)
+# divergence = jnp.mean(
+#     jnp.abs(
+#         1.0
+#         / config.grid_spacing
+#         * (
+#             finite_difference_int6(bxb, axis=0)
+#             + finite_difference_int6(byb, axis=1)
+#             + finite_difference_int6(bzb, axis=2)
+#         )
+#     )
+# )
+# print(divergence)
 
-# Calculate fluxes based on the state of the current stage
-dF_x = _weno_flux_x(conserved_state, params.minimum_density, params.minimum_pressure, params.gamma, config, registered_variables)
-dF_y = _weno_flux_y(conserved_state, params.minimum_density, params.minimum_pressure, params.gamma, config, registered_variables)
-dF_z = _weno_flux_z(conserved_state, params.minimum_density, params.minimum_pressure, params.gamma, config, registered_variables)
+# # Calculate fluxes based on the state of the current stage
+# dF_x = _weno_flux_x(conserved_state, params.minimum_density, params.minimum_pressure, params.gamma, config, registered_variables)
+# dF_y = _weno_flux_y(conserved_state, params.minimum_density, params.minimum_pressure, params.gamma, config, registered_variables)
+# dF_z = _weno_flux_z(conserved_state, params.minimum_density, params.minimum_pressure, params.gamma, config, registered_variables)
 
-# Calculate RHS for interface magnetic fields using Constrained Transport
-rhs_bx, rhs_by, rhs_bz = constrained_transport_rhs(
-    conserved_state,
-    dF_x,
-    dF_y,
-    dF_z,
-    1.0,
-    1.0,
-    1.0,
-    config,
-    registered_variables,
-)
+# # Calculate RHS for interface magnetic fields using Constrained Transport
+# rhs_bx, rhs_by, rhs_bz = constrained_transport_rhs(
+#     conserved_state,
+#     dF_x,
+#     dF_y,
+#     dF_z,
+#     1.0,
+#     1.0,
+#     1.0,
+#     config,
+#     registered_variables,
+# )
 
-divergence = jnp.abs(
-    1.0
-    / config.grid_spacing
-    * (
-        finite_difference_int6(rhs_bx, axis=0)
-        + finite_difference_int6(rhs_by, axis=1)
-        + finite_difference_int6(rhs_bz, axis=2)
-    )
-)
-print("rhs div B:", jnp.mean(divergence))
+# divergence = jnp.abs(
+#     1.0
+#     / config.grid_spacing
+#     * (
+#         finite_difference_int6(rhs_bx, axis=0)
+#         + finite_difference_int6(rhs_by, axis=1)
+#         + finite_difference_int6(rhs_bz, axis=2)
+#     )
+# )
+# print("rhs div B:", jnp.mean(divergence))
 
 
-fig, ax = plt.subplots(figsize=(6, 6))
-im = ax.imshow(divergence[:, :, num_cells // 2], origin="lower")
-fig.colorbar(im, ax=ax, label="|div B|")
-ax.set_title("Divergence of RHS of B field at center slice")
-plt.savefig("figures/how_blast_divergence_rhs.png", dpi=300)
-plt.close(fig)
+# fig, ax = plt.subplots(figsize=(6, 6))
+# im = ax.imshow(divergence[:, :, num_cells // 2], origin="lower")
+# fig.colorbar(im, ax=ax, label="|div B|")
+# ax.set_title("Divergence of RHS of B field at center slice")
+# plt.savefig("figures/how_blast_divergence_rhs.png", dpi=300)
+# plt.close(fig)
 
 run_simulation = True
 

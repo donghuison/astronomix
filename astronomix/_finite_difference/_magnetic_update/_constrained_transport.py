@@ -87,45 +87,38 @@ def constrained_transport_rhs(
     Bz = conserved_state[registered_variables.magnetic_index.z]
 
     # Step 1: Compute modified magnetic field fluxes (Eq. 12 - 17)
+    # Products are computed at cell centers, then interpolated together
+    # to the interface (NOT interpolating factors separately and multiplying).
 
-    # At x-interfaces, after the interpolation at index i,
-    # we have values at i+1/2
-    Bx_x_interface = interp_center_to_face(Bx, XAXIS)
-    vy_x_interface = interp_center_to_face(vy, XAXIS)
-    vz_x_interface = interp_center_to_face(vz, XAXIS)
-
-    By_flux_x_interface_mod = By_flux_x_interface + Bx_x_interface * vy_x_interface
-    Bz_flux_x_interface_mod = Bz_flux_x_interface + Bx_x_interface * vz_x_interface
+    # At x-interfaces
+    Bx_vy = Bx * vy
+    Bx_vz = Bx * vz
+    By_flux_x_interface_mod = By_flux_x_interface + interp_center_to_face(Bx_vy, XAXIS)
+    Bz_flux_x_interface_mod = Bz_flux_x_interface + interp_center_to_face(Bx_vz, XAXIS)
 
     # At y-interfaces
     if config.dimensionality == 1:
-        # there is no y interface, so the center 
-        # values are also the interface values
-        By_y_interface = By
-        vx_y_interface = vx
-        vz_y_interface = vz
+        By_vx = By * vx
+        By_vz = By * vz
+        Bx_flux_y_interface_mod = Bx_flux_y_interface + By_vx
+        Bz_flux_y_interface_mod = Bz_flux_y_interface + By_vz
     else:
-        By_y_interface = interp_center_to_face(By, YAXIS)
-        vx_y_interface = interp_center_to_face(vx, YAXIS)
-        vz_y_interface = interp_center_to_face(vz, YAXIS)
-
-    Bx_flux_y_interface_mod = Bx_flux_y_interface + By_y_interface * vx_y_interface
-    Bz_flux_y_interface_mod = Bz_flux_y_interface + By_y_interface * vz_y_interface
+        By_vx = By * vx
+        By_vz = By * vz
+        Bx_flux_y_interface_mod = Bx_flux_y_interface + interp_center_to_face(By_vx, YAXIS)
+        Bz_flux_y_interface_mod = Bz_flux_y_interface + interp_center_to_face(By_vz, YAXIS)
 
     # At z-interfaces
     if config.dimensionality <= 2:
-        # there is no z interface, so the center 
-        # values are also the interface values
-        Bz_z_interface = Bz
-        vx_z_interface = vx
-        vy_z_interface = vy
+        Bz_vx = Bz * vx
+        Bz_vy = Bz * vy
+        Bx_flux_z_interface_mod = Bx_flux_z_interface + Bz_vx
+        By_flux_z_interface_mod = By_flux_z_interface + Bz_vy
     else:
-        Bz_z_interface = interp_center_to_face(Bz, ZAXIS)
-        vx_z_interface = interp_center_to_face(vx, ZAXIS)
-        vy_z_interface = interp_center_to_face(vy, ZAXIS)
-
-    Bx_flux_z_interface_mod = Bx_flux_z_interface + Bz_z_interface * vx_z_interface
-    By_flux_z_interface_mod = By_flux_z_interface + Bz_z_interface * vy_z_interface
+        Bz_vx = Bz * vx
+        Bz_vy = Bz * vy
+        Bx_flux_z_interface_mod = Bx_flux_z_interface + interp_center_to_face(Bz_vx, ZAXIS)
+        By_flux_z_interface_mod = By_flux_z_interface + interp_center_to_face(Bz_vy, ZAXIS)
 
     # Step 2: Compute electric field components at cell edges (Equations 19-21)
 
@@ -168,13 +161,7 @@ def constrained_transport_rhs(
     # electric field component at (z,x) edges
     Omega_y_edge = f_star_z_edge - h_star_x_edge
 
-    # Step 3: Maintain high-order accuracy in spite of
-    # dimensional splitting by converting point values to averages
-    # In the paper (Seo & Ryu 2023) they say "the advective
-    # fluxes are modified to approximate “point values” at grid
-    # cell edges", but the formula used (also the finite differencing)
-    # is that from point values to averages, compare 
-    # Buchmüller & Helzel 2014.
+    # Step 3: point values to averages
     if config.dimensionality == 1:
         Omega_z_bar = point_values_to_averages_single_axis(Omega_z_edge, XAXIS)
         Omega_x_bar = Omega_x_edge
@@ -188,8 +175,7 @@ def constrained_transport_rhs(
         Omega_x_bar = point_values_to_averages(Omega_x_edge, YAXIS, ZAXIS)
         Omega_y_bar = point_values_to_averages(Omega_y_edge, XAXIS, ZAXIS)
 
-    # Update the interface magnetic fields based on the discrete curl of
-    # the electric field at edges (Eq. 24 - 26)
+    # Update interface magnetic fields via discrete curl
     if config.dimensionality == 1:
         rhs_bx = 0.0
         rhs_by = dtdx * finite_difference_int6(Omega_z_bar, XAXIS)
@@ -210,6 +196,177 @@ def constrained_transport_rhs(
                 + dtdy * finite_difference_int6(Omega_x_bar, YAXIS)
 
     return rhs_bx, rhs_by, rhs_bz
+
+# @partial(jax.jit, static_argnames=["registered_variables", "config"])
+# def constrained_transport_rhs(
+#     conserved_state,
+#     weno_flux_x,
+#     weno_flux_y,
+#     weno_flux_z,
+#     dtdx, 
+#     dtdy,
+#     dtdz,
+#     config: SimulationConfig,
+#     registered_variables: RegisteredVariables,
+# ):
+#     """
+#     Here we compute the RHS updates for the interface magnetic fields.
+#     """
+
+#     # TODO: products should be interpolated together, not interpolating separately 
+#     # and then multiplying!
+
+#     # Step 0: retrieve variables
+
+#     # at index i, the fluxes are at interfaces i+1/2
+#     By_flux_x_interface = weno_flux_x[registered_variables.magnetic_index.y]
+#     Bz_flux_x_interface = weno_flux_x[registered_variables.magnetic_index.z]
+#     if config.dimensionality >= 2:
+#         Bx_flux_y_interface = weno_flux_y[registered_variables.magnetic_index.x]
+#         Bz_flux_y_interface = weno_flux_y[registered_variables.magnetic_index.z]
+#     if config.dimensionality == 3:
+#         Bx_flux_z_interface = weno_flux_z[registered_variables.magnetic_index.x]
+#         By_flux_z_interface = weno_flux_z[registered_variables.magnetic_index.y]
+#     if config.dimensionality < 3:
+#         Bx_flux_z_interface = 0.0
+#         By_flux_z_interface = 0.0
+#     if config.dimensionality < 2:
+#         Bx_flux_y_interface = 0.0
+#         Bz_flux_y_interface = 0.0
+
+#     # cell-centered variables
+#     rho = conserved_state[registered_variables.density_index]
+#     vx = conserved_state[registered_variables.momentum_index.x] / rho
+#     vy = conserved_state[registered_variables.momentum_index.y] / rho
+#     vz = conserved_state[registered_variables.momentum_index.z] / rho
+#     Bx = conserved_state[registered_variables.magnetic_index.x]
+#     By = conserved_state[registered_variables.magnetic_index.y]
+#     Bz = conserved_state[registered_variables.magnetic_index.z]
+
+#     # Step 1: Compute modified magnetic field fluxes (Eq. 12 - 17)
+
+#     # At x-interfaces, after the interpolation at index i,
+#     # we have values at i+1/2
+#     Bx_x_interface = interp_center_to_face(Bx, XAXIS)
+#     vy_x_interface = interp_center_to_face(vy, XAXIS)
+#     vz_x_interface = interp_center_to_face(vz, XAXIS)
+
+#     By_flux_x_interface_mod = By_flux_x_interface + Bx_x_interface * vy_x_interface
+#     Bz_flux_x_interface_mod = Bz_flux_x_interface + Bx_x_interface * vz_x_interface
+
+#     # At y-interfaces
+#     if config.dimensionality == 1:
+#         # there is no y interface, so the center 
+#         # values are also the interface values
+#         By_y_interface = By
+#         vx_y_interface = vx
+#         vz_y_interface = vz
+#     else:
+#         By_y_interface = interp_center_to_face(By, YAXIS)
+#         vx_y_interface = interp_center_to_face(vx, YAXIS)
+#         vz_y_interface = interp_center_to_face(vz, YAXIS)
+
+#     Bx_flux_y_interface_mod = Bx_flux_y_interface + By_y_interface * vx_y_interface
+#     Bz_flux_y_interface_mod = Bz_flux_y_interface + By_y_interface * vz_y_interface
+
+#     # At z-interfaces
+#     if config.dimensionality <= 2:
+#         # there is no z interface, so the center 
+#         # values are also the interface values
+#         Bz_z_interface = Bz
+#         vx_z_interface = vx
+#         vy_z_interface = vy
+#     else:
+#         Bz_z_interface = interp_center_to_face(Bz, ZAXIS)
+#         vx_z_interface = interp_center_to_face(vx, ZAXIS)
+#         vy_z_interface = interp_center_to_face(vy, ZAXIS)
+
+#     Bx_flux_z_interface_mod = Bx_flux_z_interface + Bz_z_interface * vx_z_interface
+#     By_flux_z_interface_mod = By_flux_z_interface + Bz_z_interface * vy_z_interface
+
+#     # Step 2: Compute electric field components at cell edges (Equations 19-21)
+
+#     # interpolate from the y interfaces to the (x,y) edges
+#     g_star_x_edge = interp_center_to_face(Bx_flux_y_interface_mod, XAXIS)
+
+#     # interpolate from the x interfaces to the (x,y) edges
+#     if config.dimensionality == 1:
+#         f_star_y_edge = By_flux_x_interface_mod
+#     else:
+#         f_star_y_edge = interp_center_to_face(By_flux_x_interface_mod, YAXIS)
+
+#     # electric field component at (x,y) edges
+#     Omega_z_edge = g_star_x_edge - f_star_y_edge
+
+#     # interpolate from the z interfaces to the (y,z) edges
+#     if config.dimensionality == 1:
+#         h_star_y_edge = By_flux_z_interface_mod
+#     else:
+#         h_star_y_edge = interp_center_to_face(By_flux_z_interface_mod, YAXIS)
+
+#     # interpolate from the y interfaces to the (y,z) edges
+#     if config.dimensionality <= 2:
+#         g_star_z_edge = Bz_flux_y_interface_mod
+#     else:
+#         g_star_z_edge = interp_center_to_face(Bz_flux_y_interface_mod, ZAXIS)
+
+#     # electric field component at (y,z) edges
+#     Omega_x_edge = h_star_y_edge - g_star_z_edge
+
+#     # interpolate from the x interfaces to the (z,x) edges
+#     if config.dimensionality <= 2:
+#         f_star_z_edge = Bz_flux_x_interface_mod
+#     else:
+#         f_star_z_edge = interp_center_to_face(Bz_flux_x_interface_mod, ZAXIS)
+
+#     # interpolate from the z interfaces to the (z,x) edges
+#     h_star_x_edge = interp_center_to_face(Bx_flux_z_interface_mod, XAXIS)
+
+#     # electric field component at (z,x) edges
+#     Omega_y_edge = f_star_z_edge - h_star_x_edge
+
+#     # Step 3: Maintain high-order accuracy in spite of
+#     # dimensional splitting by converting point values to averages
+#     # In the paper (Seo & Ryu 2023) they say "the advective
+#     # fluxes are modified to approximate “point values” at grid
+#     # cell edges", but the formula used (also the finite differencing)
+#     # is that from point values to averages, compare 
+#     # Buchmüller & Helzel 2014.
+#     if config.dimensionality == 1:
+#         Omega_z_bar = point_values_to_averages_single_axis(Omega_z_edge, XAXIS)
+#         Omega_x_bar = Omega_x_edge
+#         Omega_y_bar = point_values_to_averages_single_axis(Omega_y_edge, XAXIS)
+#     if config.dimensionality == 2:
+#         Omega_z_bar = point_values_to_averages(Omega_z_edge, XAXIS, YAXIS)
+#         Omega_x_bar = point_values_to_averages_single_axis(Omega_x_edge, YAXIS)
+#         Omega_y_bar = point_values_to_averages_single_axis(Omega_y_edge, XAXIS)
+#     if config.dimensionality == 3:
+#         Omega_z_bar = point_values_to_averages(Omega_z_edge, XAXIS, YAXIS)
+#         Omega_x_bar = point_values_to_averages(Omega_x_edge, YAXIS, ZAXIS)
+#         Omega_y_bar = point_values_to_averages(Omega_y_edge, XAXIS, ZAXIS)
+
+#     # Update the interface magnetic fields based on the discrete curl of
+#     # the electric field at edges (Eq. 24 - 26)
+#     if config.dimensionality == 1:
+#         rhs_bx = 0.0
+#         rhs_by = dtdx * finite_difference_int6(Omega_z_bar, XAXIS)
+#         rhs_bz = - dtdx * finite_difference_int6(Omega_y_bar, XAXIS)
+#     if config.dimensionality == 2:
+#         rhs_bx = - dtdy * finite_difference_int6(Omega_z_bar, YAXIS)
+#         rhs_by = dtdx * finite_difference_int6(Omega_z_bar, XAXIS)
+#         rhs_bz = - dtdx * finite_difference_int6(Omega_y_bar, XAXIS) \
+#                  + dtdy * finite_difference_int6(Omega_x_bar, YAXIS)
+#     if config.dimensionality == 3:
+#         rhs_bx = - dtdy * finite_difference_int6(Omega_z_bar, YAXIS) \
+#                 + dtdz * finite_difference_int6(Omega_y_bar, ZAXIS)
+
+#         rhs_by = - dtdz * finite_difference_int6(Omega_x_bar, ZAXIS) \
+#                 + dtdx * finite_difference_int6(Omega_z_bar, XAXIS)
+
+#         rhs_bz = - dtdx * finite_difference_int6(Omega_y_bar, XAXIS) \
+#                 + dtdy * finite_difference_int6(Omega_x_bar, YAXIS)
+
+#     return rhs_bx, rhs_by, rhs_bz
 
 # @partial(jax.jit, static_argnames=["registered_variables"])
 # def constrained_transport_rhs(

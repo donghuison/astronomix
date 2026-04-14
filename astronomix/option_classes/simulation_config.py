@@ -2,6 +2,8 @@ import math
 from types import NoneType
 from typing import NamedTuple, Union
 
+import jax
+
 from astronomix._physics_modules._cnn_mhd_corrector._cnn_mhd_corrector_options import (
     CNNMHDconfig,
 )
@@ -172,6 +174,15 @@ class SnapshotSettings(NamedTuple):
 
     #: Whether to return radial momentum
     return_radial_momentum: bool = False
+
+    #: Whether to return the kinetic energy spectrum
+    return_kinetic_energy_spectrum: bool = False
+
+    #: Whether to return the magnetic energy spectrum
+    return_magnetic_energy_spectrum: bool = False
+
+    #: Whether to return the helicity spectrum
+    return_helicity_spectrum: bool = False
 
     #: Whether to return the magnetic field divergence
     #: NOTE: currently only implemented for finite difference MHD
@@ -398,6 +409,11 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
 
     # num_cells = state_shape[-1]
     # config = config._replace(num_cells=num_cells)
+
+    if jax.config.jax_enable_x64:
+        config._replace(numerical_precision=DOUBLE_PRECISION)
+    else:
+        config._replace(numerical_precision=SINGLE_PRECISION)
 
     # set the number of cells
     if config.dimensionality == 1:

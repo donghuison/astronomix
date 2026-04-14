@@ -126,7 +126,11 @@ def _weno_flux_x(
     WENO flux reconstruction.
     """
 
-    epsilon = 1e-8
+    # if jax.config.jax_enable_x64:
+    #     epsilon = 1e-8
+    # else:
+    #     epsilon = 1e-6
+    epsilon = 1e-7
 
     # only used in the IDEAL_GAS case
     rhomin = params.minimum_density
@@ -166,6 +170,7 @@ def _weno_flux_x(
         else:
             F = _euler_flux_isothermal_x(
                 conserved_state,
+                rhomin,
                 isothermal_sound_speed,
                 config,
                 registered_variables,

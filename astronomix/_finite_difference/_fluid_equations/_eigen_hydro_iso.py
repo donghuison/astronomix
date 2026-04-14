@@ -75,17 +75,35 @@ def _eigenvector_building_blocks(
     def avg_x(arr):
         return 0.5 * (arr + _shift(arr, shift=-1, axis=0))
 
-    velocity_x_interface = avg_x(velocity_x)
+    # velocity_x_interface = avg_x(velocity_x)
+
+    # if config.dimensionality == 1:
+    #     velocity_y_interface = 0.0
+    #     velocity_z_interface = 0.0
+    # elif config.dimensionality == 2:
+    #     velocity_y_interface = avg_x(velocity_y)
+    #     velocity_z_interface = 0.0
+    # elif config.dimensionality == 3:
+    #     velocity_y_interface = avg_x(velocity_y)
+    #     velocity_z_interface = avg_x(velocity_z)
+
+    # average momenta approach
+    rho_interface = avg_x(jnp.maximum(rho, rhomin))
+    rho_interface = jnp.maximum(rho_interface, rhomin)
+    velocity_x_interface = avg_x(momentum_x) / rho_interface
 
     if config.dimensionality == 1:
         velocity_y_interface = 0.0
         velocity_z_interface = 0.0
     elif config.dimensionality == 2:
-        velocity_y_interface = avg_x(velocity_y)
+        # velocity_y_interface = avg_x(velocity_y)
+        velocity_y_interface = avg_x(momentum_y) / rho_interface
         velocity_z_interface = 0.0
     elif config.dimensionality == 3:
-        velocity_y_interface = avg_x(velocity_y)
-        velocity_z_interface = avg_x(velocity_z)
+        # velocity_y_interface = avg_x(velocity_y)
+        velocity_y_interface = avg_x(momentum_y) / rho_interface
+        # velocity_z_interface = avg_x(velocity_z)
+        velocity_z_interface = avg_x(momentum_z) / rho_interface
 
     cs2 = sound_speed ** 2
     cs2_inverse = jnp.where(cs2 > 0.0, 1.0 / cs2, 0.0)
