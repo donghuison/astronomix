@@ -87,9 +87,9 @@ config = SimulationConfig(
     solver_mode = FINITE_DIFFERENCE,
     equation_of_state = ISOTHERMAL, # IDEAL_GAS / ISOTHERMAL
     progress_bar = True,
-    runtime_debugging = False,
     dimensionality = 3,
     num_cells = 64,
+    enforce_positivity=True,
     box_size = 1.0,
     mhd = True,
     boundary_settings=BoundarySettings(
@@ -119,6 +119,7 @@ params = SimulationParams(
         protection_density_threshold = 0.02,
         protection_max_velocity = 50.0,
     ),
+    minimum_density=0.02,
 )
 
 # Initialize the registered variables
