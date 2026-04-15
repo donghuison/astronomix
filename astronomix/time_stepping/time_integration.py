@@ -584,6 +584,8 @@ def _time_integration(
                     kinetic_energy_spectrum = snapshot_data.kinetic_energy_spectrum.at[
                         snapshot_data.current_checkpoint
                     ].set(kinetic_energy_spectrum_i)
+                else:
+                    kinetic_energy_spectrum = None
                 
                 if config.snapshot_settings.return_magnetic_energy_spectrum and config.mhd:
                     _, magnetic_energy_spectrum_i = get_magnetic_energy_spectrum(
@@ -594,6 +596,8 @@ def _time_integration(
                     magnetic_energy_spectrum = snapshot_data.magnetic_energy_spectrum.at[
                         snapshot_data.current_checkpoint
                     ].set(magnetic_energy_spectrum_i)
+                else:
+                    magnetic_energy_spectrum = None
 
 
                 if config.snapshot_settings.return_helicity_spectrum and config.mhd:
@@ -605,6 +609,8 @@ def _time_integration(
                     helicity_spectrum = snapshot_data.helicity_spectrum.at[
                         snapshot_data.current_checkpoint
                     ].set(helicity_spectrum_i)
+                else:
+                    helicity_spectrum = None
                 
                 current_checkpoint = snapshot_data.current_checkpoint + 1
                 snapshot_data = snapshot_data._replace(

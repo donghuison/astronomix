@@ -674,6 +674,106 @@ def side_by_side_comparison():
 
 # 	pass
 
+def khi_growth_over_time():
+	"""
+	Reproduces Fig. 3 from https://arxiv.org/pdf/2504.15345.
+
+	Plots ln(v_y / v_y0) vs t / τ_KH for χ = 10 and varying Mach numbers
+	at infinite Reynolds number (inviscid). Solid lines indicate unstable
+	KHI (M < M_crit), dash-dotted lines indicate suppressed instability
+	(M > M_crit).
+	"""
+	import matplotlib.colors as mcolors
+
+	density_contrast = 10.0
+	reynolds_number = float("inf")
+
+	# Mach numbers from 0.1 to 1.8 in steps of 0.1 (matching the paper's sweep)
+	mach_numbers = [round(0.1 * i, 1) for i in range(1, 19)]
+
+	# Critical Mach number for χ = 10 (Eq. 27 in Mandelker et al. 2016)
+	M_crit = (1 + density_contrast**(-1/3))**(3/2)
+	print(f"Critical Mach number for χ={density_contrast}: {M_crit:.3f}")
+
+	# Precompute shared quantities for τ_KH calculation
+	slab_density = density_contrast * background_density
+	c_background = float(jnp.sqrt(gamma * pressure / background_density))
+	Delta = float((slab_density + background_density)**2 / (slab_density * background_density))
+
+	# The perturbation wavelength used in example_setup_run
+	wavelength = box_size / 5
+
+	# Colormap setup: rainbow from blue (low M) to red (high M)
+	cmap = plt.cm.jet
+	norm = mcolors.Normalize(vmin=0.0, vmax=1.8)
+
+	fig, ax = plt.subplots(figsize=(8, 6))
+
+	for M in mach_numbers:
+		print(f"Running M = {M:.1f} ...")
+
+		v_slab = M * c_background
+		t_kh = jnp.sqrt(Delta) / (2 * jnp.pi) * wavelength / v_slab
+		t_kh = float(t_kh)
+		print(f"  τ_KH = {t_kh:.4f}")
+
+		result, registered_variables, helper_data, Re_crit, M_crit_val = example_setup_run(
+			density_contrast = density_contrast,
+			reynolds_number = reynolds_number,
+			mach_number = M,
+			adapt_simulation_time = False,  # default simulation_time = 2.0 covers ~2 τ_KH for all M
+			return_snapshots = True,
+		)
+
+		# Extract max|v_y| at each snapshot
+		num_snapshots = len(result.states)
+		times = jnp.array([float(result.time_points[i]) for i in range(num_snapshots)])
+		vy_max = jnp.array([
+			float(jnp.max(jnp.abs(result.states[i][registered_variables.velocity_index.y])))
+			for i in range(num_snapshots)
+		])
+
+		# Normalize time by τ_KH
+		t_normalized = times / t_kh
+
+		# Normalize v_y by initial value and take log
+		vy0 = vy_max[0]
+		# Guard against zero (shouldn't happen with perturbation, but be safe)
+		vy_ratio = jnp.where(vy_max > 0, vy_max / vy0, 1e-10)
+		ln_ratio = jnp.log(vy_ratio)
+
+		# Only plot up to ~2 τ_KH
+		mask = t_normalized <= 2.0
+		t_plot = t_normalized[mask]
+		ln_plot = ln_ratio[mask]
+
+		# Line style: solid if M < M_crit, dash-dotted if M >= M_crit
+		linestyle = '-' if M < M_crit else '-.'
+		linewidth = 2.0 if M >= M_crit else 1.5
+		color = cmap(norm(M))
+
+		ax.plot(t_plot, ln_plot, linestyle=linestyle, color=color, linewidth=linewidth)
+		print(f"  Done. Final ln(v_y/v_y0) = {float(ln_plot[-1]):.2f}")
+
+	# Vertical dashed line at t/τ_KH = 1
+	ax.axvline(1.0, color='gray', linestyle='--', alpha=0.5)
+
+	# Colorbar
+	sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+	sm.set_array([])
+	cbar = fig.colorbar(sm, ax=ax)
+	cbar.set_label(r'$\mathcal{M}_\mathrm{h}$', fontsize=14)
+
+	ax.set_xlabel(r'$t\;/\;\tau_\mathrm{KH}$', fontsize=14)
+	ax.set_ylabel(r'$\ln\!\left(\frac{v_y}{v_{y0}}\right)$', fontsize=14)
+	ax.set_xlim(0, 2.0)
+	ax.set_ylim(-4.5, 2.5)
+	ax.set_title(rf'Growth of KHI with time for $\chi = {density_contrast:.0f}$', fontsize=14)
+
+	plt.tight_layout()
+	plt.savefig('figures/khi_growth_over_time.png', dpi=150)
+	print("Saved figures/khi_growth_over_time.png")
+
 # CLAUDE first version
 def parameter_sweep():
 	"""
@@ -803,5 +903,6 @@ def parameter_sweep():
 	# plt.close(fig)
 
 if __name__ == "__main__":
-	side_by_side_comparison()
+	# side_by_side_comparison()
 	# parameter_sweep()
+	khi_growth_over_time()

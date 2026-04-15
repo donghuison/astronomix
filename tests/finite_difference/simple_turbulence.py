@@ -33,10 +33,6 @@ will differ but out main focus is covering an interesting
 dynamic space.
 """
 
-"""
-Minimal driven turbulence test setup in astronomix.
-"""
-
 # ==== GPU selection ====
 from autocvd import autocvd
 autocvd(num_gpus=1)
@@ -71,25 +67,33 @@ from astronomix.option_classes.simulation_config import (
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.time_stepping import time_integration
 from astronomix.variable_registry.registered_variables import get_registered_variables
+from astronomix.analysis_helpers.energy_spectrum import get_kinetic_energy_spectrum, get_magnetic_energy_spectrum
+from astronomix.plotting_helpers.power_law_indicators import add_power_law_indicators
 
-M_s_aim = 10.0
-# M_A_aim = 10.0
-plasma_beta_aim = 0.1
+# set the sound speed based on a target Mach number
+M_s_aim = 0.5
+sound_speed = 1.0 / M_s_aim
+
+# set the initial magnetic field based on a target Alfvén Mach number
+M_A_aim = 10.0
+B_0 = 1.0 / M_A_aim
+
+# alternatively one might want to set the initial magnetic field
+# based on a target plasma beta
 # beta = P_gas / P_magnetic = (c_s^2 * rho) / (B^2 / 2) = 2 * M_A^2 / M_s^2
 # -> B = sqrt(2 * rho * c_s^2 / beta) = sqrt(2 * M_s^2 / beta)
-
-sound_speed = 1.0 / M_s_aim
-# B_0 = 1.0 / M_A_aim
-B_0 = jnp.sqrt(2 * M_s_aim**2 / plasma_beta_aim)
+# plasma_beta_aim = 0.1
+# B_0 = jnp.sqrt(2 * M_s_aim**2 / plasma_beta_aim)
 
 # Configure the simulation
 config = SimulationConfig(
     solver_mode = FINITE_DIFFERENCE,
     equation_of_state = ISOTHERMAL, # IDEAL_GAS / ISOTHERMAL
+    memory_analysis = True,
     progress_bar = True,
     dimensionality = 3,
-    num_cells = 64,
-    enforce_positivity=True,
+    num_cells = 256,
+    enforce_positivity = False, # only necessary for high Mach turbulence
     box_size = 1.0,
     mhd = True,
     boundary_settings=BoundarySettings(
@@ -105,7 +109,7 @@ config = SimulationConfig(
     ),
     turbulent_forcing_config = TurbulentForcingConfig(
         turbulent_forcing = True,
-        vacuum_protection = True,
+        vacuum_protection = True, # this is only necessary for high Mach turbulence
     ),
 )
 
@@ -113,13 +117,13 @@ config = SimulationConfig(
 params = SimulationParams(
     C_cfl = 1.5,
     isothermal_sound_speed = sound_speed, # only active when equation_of_state is isothermal
-    t_end = 1.0,
+    t_end = 4.0,
     turbulent_forcing_params = TurbulentForcingParams(
         energy_injection_rate = 1.65,
         protection_density_threshold = 0.02,
         protection_max_velocity = 50.0,
     ),
-    minimum_density=0.02,
+    minimum_density = 0.02,
 )
 
 # Initialize the registered variables
@@ -232,3 +236,29 @@ fig.colorbar(im2, cax=cax2, label="Magnetic Field")
 
 plt.tight_layout()
 plt.savefig("final_state_slices.png", dpi=300)
+
+# also plot the final kinetic and magnetic power spectra
+k, kinetic_spectrum = get_kinetic_energy_spectrum(
+    final_velocity_x, final_velocity_y, final_velocity_z, final_density
+)
+_, magnetic_spectrum = get_magnetic_energy_spectrum(
+    final_magnetic_field_x, final_magnetic_field_y, final_magnetic_field_z
+)
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.loglog(k, kinetic_spectrum, label="Kinetic Energy Spectrum")
+ax.loglog(k, magnetic_spectrum, label="Magnetic Energy Spectrum")
+ax.set_xlabel("Wavenumber k")
+ax.set_ylabel("Energy Spectrum E(k)")
+ax.set_title("Final Energy Spectra")
+ax.set_xlim(left = 30)
+ax.set_ylim(bottom = 1e-10, top = 1e-1)
+add_power_law_indicators(
+    ax,
+    anchor=(50, 1e-5),
+    exponents=[-5/3,],
+    scales=[0.5, 0.5],
+    labels=[r' $k^{-5/3}$', r' $k^{-2}$'],
+)
+ax.legend()
+plt.tight_layout()
+plt.savefig("final_energy_spectra.png", dpi=300)
