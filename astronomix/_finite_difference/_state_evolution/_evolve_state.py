@@ -14,9 +14,11 @@ from astronomix._finite_difference._fluid_equations._equations import conserved_
 from astronomix._finite_difference._magnetic_update._constrained_transport import update_cell_center_fields
 from astronomix._finite_difference._time_integrators._ssprk import _ssprk4_hydro, _ssprk4_with_ct
 from astronomix._fluid_equations._equations import conserved_state_from_primitive, primitive_state_from_conserved
+from astronomix._geometry.boundaries import _boundary_handler
 from astronomix.data_classes.simulation_helper_data import HelperData
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 from astronomix.option_classes.simulation_config import (
+    GHOST_CELLS,
     IDEAL_GAS,
     ISOTHERMAL,
     STATE_TYPE,
@@ -105,6 +107,12 @@ def _evolve_state_fd(
             gamma,
             config,
             registered_variables
+        )
+    
+    # handle the boundary conditions
+    if config.boundary_handling == GHOST_CELLS:
+        primitive_state = _boundary_handler(
+            primitive_state, config
         )
 
     return primitive_state

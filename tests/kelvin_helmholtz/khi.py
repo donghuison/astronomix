@@ -234,6 +234,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import matplotlib.animation as animation
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
+import matplotlib.colors as mcolors
 
 # astronomix
 from astronomix import (
@@ -245,7 +246,13 @@ from astronomix import (
     get_registered_variables,
 )
 from astronomix.option_classes.simulation_config import (
+    FINITE_VOLUME,
     KINEMATIC_VISCOSITY,
+    MINMOD,
+    MUSCL,
+    OPEN_BOUNDARY,
+    SPLIT,
+    UNSPLIT,
     SnapshotSettings,
     finalize_config,
     FINITE_DIFFERENCE,
@@ -254,9 +261,9 @@ from astronomix.option_classes.simulation_config import (
     BoundarySettings1D,
 )
 
-# SINGLE_INTERFACE = 0
-# SLAB = 1
-# interface_mode = SINGLE_INTERFACE
+SINGLE_INTERFACE = 0
+SLAB = 1
+interface_mode = SINGLE_INTERFACE
 
 VELOCITY_PERTURBATION = 0
 PRESSURE_PERTURBATION = 1
@@ -269,6 +276,8 @@ pressure = 1.0 # uniform pressure everywhere
 background_velocity = 0.0
 box_size = 1.0
 gamma = 5/3
+
+num_cells = 1024
 
 @dataclass
 class PerturbationSetup:
@@ -326,6 +335,9 @@ def slab_profile(f_b, f_s, Y, y_center, slab_radius, smoothing_length):
 		(1 + jnp.tanh((slab_radius + (Y - y_center)) / smoothing_length))
 	)
 
+def single_interface(f_l, f_u, Y, y_center, smoothing_length):
+	return 0.5 * (f_l * (1 - jnp.tanh((Y - y_center) / smoothing_length)) + f_u * (1 + jnp.tanh((Y - y_center) / smoothing_length)))
+
 def velocity_perturbation(cell_centers, slab_radius, perturbation_setup):
 	# NOTE: here without smoothing
 	k = 2 * jnp.pi / perturbation_setup.wavelength
@@ -336,6 +348,15 @@ def velocity_perturbation(cell_centers, slab_radius, perturbation_setup):
 		jnp.exp(-((Y - y_center) - slab_radius)**2 / (sigma_y**2)) + 
 		jnp.exp(-((Y - y_center) + slab_radius)**2 / (sigma_y**2))
 	)
+	return vy_pert
+
+def single_interface_velocity_perturbation(cell_centers, perturbation_setup):
+	# v_y = A * sin(k * x) * exp(-((y - y_c) / σ)^2)
+	k = 2 * jnp.pi / perturbation_setup.wavelength
+	X = cell_centers[:, :, 0] # x-coordinates of cell centers
+	Y = cell_centers[:, :, 1] # y-coordinates of cell centers
+	sigma = 0.2 * perturbation_setup.wavelength
+	vy_pert = perturbation_setup.amplitude * jnp.sin(k * X) * jnp.exp(-((Y - y_center) / sigma)**2)
 	return vy_pert
 
 def pressure_perturbation(cell_centers, slab_radius, y_center, perturbation_setup):
@@ -362,10 +383,10 @@ def simulate_khi(setup: KHISetup, return_snapshots = False):
 		viscosity_type = KINEMATIC_VISCOSITY,
 		boundary_settings = BoundarySettings(
 			x = BoundarySettings1D(PERIODIC_BOUNDARY, PERIODIC_BOUNDARY),   # flow dir
-			y = BoundarySettings1D(PERIODIC_BOUNDARY, PERIODIC_BOUNDARY),   # transverse
+			y = BoundarySettings1D(OPEN_BOUNDARY, OPEN_BOUNDARY),           # transverse
     	),
 		return_snapshots = return_snapshots,
-		num_snapshots = 100,
+		num_snapshots = 300,
 		snapshot_settings = SnapshotSettings(
 			return_states = True,
 		)
@@ -375,7 +396,7 @@ def simulate_khi(setup: KHISetup, return_snapshots = False):
 	params = SimulationParams(
 		viscosity = setup.viscosity,
 		t_end = setup.simulation_time,
-		C_cfl = 1.5,
+		C_cfl = 1.5 if config.solver_mode == FINITE_DIFFERENCE else 0.4, 
 		gamma = gamma,
 	)
 
@@ -393,35 +414,58 @@ def simulate_khi(setup: KHISetup, return_snapshots = False):
 	smooth_profiles = True
 
 	if smooth_profiles:
-		density = slab_profile(
-			f_b = background_density,
-			f_s = stream_density,
-			Y = Y,
-			y_center = y_center,
-			slab_radius = setup.slab_radius,
-			smoothing_length = setup.smoothing_length,
-		)
+		if interface_mode == SINGLE_INTERFACE:
 
-		v_x = slab_profile(
-			f_b = background_velocity,
-			f_s = setup.mach_number * c_background,
-			Y = Y,
-			y_center = y_center,
-			slab_radius = setup.slab_radius,
-			smoothing_length = setup.smoothing_length,
-		)
+			density = single_interface(
+				f_l = stream_density,
+				f_u = background_density,
+				Y = Y,
+				y_center = y_center,
+				smoothing_length = setup.smoothing_length,
+			)
+
+			v_mach = setup.mach_number * c_background
+			v_x = single_interface(
+				f_l = -v_mach / 2,
+				f_u = v_mach / 2,
+				Y = Y,
+				y_center = y_center,
+				smoothing_length = setup.smoothing_length,
+			)
+		
+		elif interface_mode == SLAB:
+			density = slab_profile(
+				f_b = background_density,
+				f_s = stream_density,
+				Y = Y,
+				y_center = y_center,
+				slab_radius = setup.slab_radius,
+				smoothing_length = setup.smoothing_length,
+			)
+
+			v_x = slab_profile(
+				f_b = background_velocity,
+				f_s = setup.mach_number * c_background,
+				Y = Y,
+				y_center = y_center,
+				slab_radius = setup.slab_radius,
+				smoothing_length = setup.smoothing_length,
+			)
 	else:
-		density = jnp.where(
-			jnp.abs(Y - y_center) <= setup.slab_radius,
-			stream_density,
-			background_density
-		)
+		if interface_mode == SLAB:
+			density = jnp.where(
+				jnp.abs(Y - y_center) <= setup.slab_radius,
+				stream_density,
+				background_density
+			)
 
-		v_x = jnp.where(
-			jnp.abs(Y - y_center) <= setup.slab_radius,
-			setup.mach_number * c_background,
-			background_velocity
-		)
+			v_x = jnp.where(
+				jnp.abs(Y - y_center) <= setup.slab_radius,
+				setup.mach_number * c_background,
+				background_velocity
+			)
+		else:
+			raise NotImplementedError("Single interface without smoothing not implemented yet.")
 
 	v_y = jnp.zeros_like(v_x)
 
@@ -438,24 +482,36 @@ def simulate_khi(setup: KHISetup, return_snapshots = False):
 
 	# add perturbation
 	if setup.perturbation_type == VELOCITY_PERTURBATION:
-		vy_pert = velocity_perturbation(
-			cell_centers = cell_centers,
-			slab_radius = setup.slab_radius,
-			perturbation_setup = setup.perturbation_setup,
-		)
-		primitive_state = primitive_state_unperturbed.at[
-			registered_variables.velocity_index.y
-		].add(vy_pert)
+		if interface_mode == SLAB:
+			vy_pert = velocity_perturbation(
+				cell_centers = cell_centers,
+				slab_radius = setup.slab_radius,
+				perturbation_setup = setup.perturbation_setup,
+			)
+			primitive_state = primitive_state_unperturbed.at[
+				registered_variables.velocity_index.y
+			].add(vy_pert)
+		elif interface_mode == SINGLE_INTERFACE:
+			vy_pert = single_interface_velocity_perturbation(
+				cell_centers = cell_centers,
+				perturbation_setup = setup.perturbation_setup
+			)
+			primitive_state = primitive_state_unperturbed.at[
+				registered_variables.velocity_index.y
+			].add(vy_pert)
 	elif setup.perturbation_type == PRESSURE_PERTURBATION:
-		P_pert = pressure_perturbation(
-			cell_centers = cell_centers,
-			slab_radius = setup.slab_radius,
-			y_center = y_center,
-			perturbation_setup = setup.perturbation_setup,
-		)
-		primitive_state = primitive_state_unperturbed.at[
-			registered_variables.pressure_index
-		].add(P_pert)
+		if interface_mode == SLAB:
+			P_pert = pressure_perturbation(
+				cell_centers = cell_centers,
+				slab_radius = setup.slab_radius,
+				y_center = y_center,
+				perturbation_setup = setup.perturbation_setup,
+			)
+			primitive_state = primitive_state_unperturbed.at[
+				registered_variables.pressure_index
+			].add(P_pert)
+		elif interface_mode == SINGLE_INTERFACE:
+			raise NotImplementedError("Single interface with pressure perturbation not implemented yet.")
 	else:
 		raise NotImplementedError("Only velocity and pressure perturbations are implemented so far.")
 
@@ -472,12 +528,24 @@ def simulate_khi(setup: KHISetup, return_snapshots = False):
 
 	return result, helper_data, registered_variables
 
-def example_setup_run(density_contrast, reynolds_number, mach_number, adapt_simulation_time = False, return_snapshots = True):
+def example_setup_run(
+	density_contrast,
+	Re_or_nu,
+	mach_number,
+	adapt_simulation_time = False,
+	return_snapshots = True,
+	nu_specified = False
+):
 
-	num_cells = 512
 	simulation_time = 2.0
 	slab_radius = 0.1
-	diffusion = reynolds_number is not jnp.inf and reynolds_number is not float("inf")
+
+	if nu_specified:
+		kinematic_viscosity = Re_or_nu
+		diffusion = True if kinematic_viscosity > 0 else False
+	else:
+		diffusion = True if Re_or_nu != float("inf") else False
+		reynolds_number = Re_or_nu
 
 	slab_density = density_contrast * background_density
 	c_background = jnp.sqrt(gamma * pressure / background_density)
@@ -488,11 +556,19 @@ def example_setup_run(density_contrast, reynolds_number, mach_number, adapt_simu
 
 	Delta = (slab_density + background_density)**2 / (slab_density * background_density)
 	Re_crit = 880 / Delta
-	Re = reynolds_number
+	Re = Re_or_nu
 
-	perturbation_type = PRESSURE_PERTURBATION
-	wavelength = box_size / 5
-	amplitude = 0.01 * c_slab
+	perturbation_type = VELOCITY_PERTURBATION
+	
+	# wavelength = box_size / 5
+	# amplitude = 0.01 * c_slab
+
+	# in the Tirso paper
+	wavelength = box_size / 2
+	amplitude = mach_number * c_background / 20
+	# smoothing_length = wavelength / 10
+	smoothing_length = wavelength / 20
+	# smoothing_length = wavelength / 20
 
 	# Roedinger like
 	# perturbation_type = VELOCITY_PERTURBATION
@@ -501,16 +577,21 @@ def example_setup_run(density_contrast, reynolds_number, mach_number, adapt_simu
 	# # amplitude for Ma = 0.5
 	# # amplitude = 0.1 * 0.5 * c_background
 
-	smoothing_length = wavelength / 102
+	# smoothing_length = wavelength / 102
 
-	kinematic_viscosity = wavelength * v_slab / Re
+	if not nu_specified:
+		kinematic_viscosity = wavelength * v_slab / Re
 
 	if adapt_simulation_time:
 		# KHI growth time from Eq. 2 in Roediger et al 2013
-		t_kh = jnp.sqrt(Delta) / (2 * jnp.pi) * wavelength / v_slab
+		# t_kh = jnp.sqrt(Delta) / (2 * jnp.pi) * wavelength / v_slab
+		# Tirso paper
+		t_kh = jnp.sqrt(Delta) * wavelength / v_slab
 		print(f"Kelvin-Helmholtz time (inviscid): {t_kh:.3f}")
 		# e.g. 20 * t_kh
-		simulation_time = 20.0 * t_kh
+		# simulation_time = 20.0 * t_kh
+		# Tirso
+		simulation_time = 2.0 * t_kh
 		print(f"Adapting simulation time to {simulation_time:.3f} to capture KHI growth.")
 
 	setup = KHISetup(
@@ -547,7 +628,7 @@ def side_by_side_comparison():
 	print(f"👨‍🔧 Running setup A: χ={density_contrast_A}, Re={reynolds_number_A}, M={mach_number_A}")
 	result_A, registered_variables_A, helper_data_A, Re_crit_A, M_crit_A = example_setup_run(
 		density_contrast = density_contrast_A,
-		reynolds_number = reynolds_number_A,
+		Re_or_nu = reynolds_number_A,
 		mach_number = mach_number_A,
 		adapt_simulation_time = True,
 	)
@@ -555,7 +636,7 @@ def side_by_side_comparison():
 	print(f"👨‍🔧 Running setup B: χ={density_contrast_B}, Re={reynolds_number_B}, M={mach_number_B}")
 	result_B, registered_variables_B, helper_data_B, Re_crit_B, M_crit_B = example_setup_run(
 		density_contrast = density_contrast_B,
-		reynolds_number = reynolds_number_B,
+		Re_or_nu = reynolds_number_B,
 		mach_number = mach_number_B,
 		adapt_simulation_time = True,
 	)
@@ -683,13 +764,180 @@ def khi_growth_over_time():
 	KHI (M < M_crit), dash-dotted lines indicate suppressed instability
 	(M > M_crit).
 	"""
-	import matplotlib.colors as mcolors
 
 	density_contrast = 10.0
 	reynolds_number = float("inf")
 
 	# Mach numbers from 0.1 to 1.8 in steps of 0.1 (matching the paper's sweep)
-	mach_numbers = [round(0.1 * i, 1) for i in range(1, 19)]
+	mach_numbers = jnp.arange(0.1, 1.9, 0.1)
+	# mach_numbers = [0.5, 2.5]
+
+	# Critical Mach number for χ = 10 (Eq. 27 in Mandelker et al. 2016)
+	# M_crit = (1 + density_contrast**(-1/3))**(3/2)
+	M_crit = 1.65
+	print(f"Critical Mach number for χ={density_contrast}: {M_crit:.3f}")
+
+	# Precompute shared quantities for τ_KH calculation
+	slab_density = density_contrast * background_density
+	c_background = float(jnp.sqrt(gamma * pressure / background_density))
+	Delta = float((slab_density + background_density)**2 / (slab_density * background_density))
+
+	# The perturbation wavelength used in example_setup_run
+	# wavelength = box_size / 5
+	# Tirso paper
+	wavelength = box_size / 2
+
+	# Colormap setup: rainbow from blue (low M) to red (high M)
+	cmap = plt.cm.jet
+	norm = mcolors.Normalize(vmin=0.0, vmax=1.8)
+
+	fig, ax = plt.subplots(figsize=(8, 6))
+
+	for i, M in enumerate(mach_numbers):
+		print(f"Running M = {M:.1f} ...")
+		print(f"Simulation {i + 1}/{len(mach_numbers)}")
+
+		v_slab = M * c_background
+		# t_kh = jnp.sqrt(Delta) / (2 * jnp.pi) * wavelength / v_slab
+		t_kh = jnp.sqrt(Delta) * wavelength / v_slab
+		t_kh = float(t_kh)
+		print(f"  τ_KH = {t_kh:.4f}")
+
+		result, registered_variables, helper_data, Re_crit, M_crit_val = example_setup_run(
+			density_contrast = density_contrast,
+			Re_or_nu = reynolds_number,
+			mach_number = M,
+			adapt_simulation_time = True,
+			return_snapshots = True,
+		)
+
+		num_snapshots = len(result.states)
+		times = jnp.array([float(result.time_points[j]) for j in range(num_snapshots)])
+
+		# X = helper_data.geometric_centers[:, :, 0]
+		# k = 2 * jnp.pi / wavelength
+		# sin_kx = jnp.sin(k * X)  # shape (nx, ny)
+		# cos_kx = jnp.cos(k * X)  # shape (nx, ny)
+
+		# mode_amplitudes = []
+
+		# center_idx = num_cells // 2
+
+		# for j in range(num_snapshots):
+		# 	vy_field = result.states[j][registered_variables.velocity_index.y]
+			
+		# 	# Project onto both components, to remove phase dependence
+		# 	proj_sin = jnp.mean(vy_field * sin_kx, axis=0) * 2  # shape (ny,)
+		# 	proj_cos = jnp.mean(vy_field * cos_kx, axis=0) * 2  # shape (ny,)
+			
+		# 	# The true amplitude is the vector magnitude of the Fourier coefficients
+		# 	amp_y = jnp.sqrt(proj_sin**2 + proj_cos**2)
+			
+		# 	# mode at interface
+		# 	mode_amp = amp_y[center_idx]
+		# 	mode_amplitudes.append(float(mode_amp))
+
+		# Prepare McNally's discrete convolution variables
+		k = 2 * jnp.pi / wavelength
+		X = helper_data.geometric_centers[:, :, 0]
+		Y = helper_data.geometric_centers[:, :, 1]
+
+		sin_kx = jnp.sin(k * X)
+		cos_kx = jnp.cos(k * X)
+
+		# This is Eq 8 (d_i) from McNally: The exponential KHI envelope
+		# (Assuming the single interface is at y_center = 0.5)
+		W = jnp.exp(-k * jnp.abs(Y - y_center)) 
+
+		sum_W = jnp.sum(W) # Denominator for Eq 9
+
+		mode_amplitudes = []
+		for j in range(num_snapshots):
+			vy_field = result.states[j][registered_variables.velocity_index.y]
+			
+			# This evaluates Eq 6 (s_i) and Eq 7 (c_i) integrated over the domain
+			sum_s = jnp.sum(vy_field * sin_kx * W)
+			sum_c = jnp.sum(vy_field * cos_kx * W)
+			
+			# This evaluates Eq 9 (M) from McNally
+			mode_amp = 2 * jnp.sqrt((sum_s / sum_W)**2 + (sum_c / sum_W)**2)
+			
+			mode_amplitudes.append(float(mode_amp))
+
+		mode_amplitudes = jnp.array(mode_amplitudes)
+
+		# Normalize time by τ_KH
+		t_normalized = times / t_kh
+
+		# Normalize by initial mode amplitude and take log
+		amp0 = mode_amplitudes[0]
+		if amp0 > 0:
+			ln_ratio = jnp.log(mode_amplitudes / amp0)
+		else:
+			ln_ratio = jnp.zeros_like(mode_amplitudes)
+
+		# Only plot up to ~2 τ_KH
+		mask = t_normalized <= 2.0
+		t_plot = t_normalized[mask]
+		ln_plot = ln_ratio[mask]
+		last_mask_index = jnp.sum(mask) - 1
+
+		# Line style: solid if M < M_crit, dash-dotted if M >= M_crit
+		linestyle = '-' if M < M_crit else '-.'
+		linewidth = 2.0 if M >= M_crit else 1.5
+		color = cmap(norm(M))
+
+		ax.plot(t_plot, ln_plot, linestyle=linestyle, color=color, linewidth=linewidth)
+		print(f"  Done. Final ln(A/A0) = {float(ln_plot[-1]):.2f}")
+
+		# also plot the final density snapshot
+		fig_snap, ax_snap = plt.subplots(figsize=(6, 5))
+		extent = [0, box_size, 0, box_size]
+		im = ax_snap.imshow(result.states[last_mask_index][registered_variables.density_index].T, cmap='viridis', aspect='auto', origin='lower', extent=extent, norm=LogNorm())
+		ax_snap.set_title(f"KHI density snapshot, M={M:.1f}, t={times[last_mask_index]:.3f}")
+		cbar = fig_snap.colorbar(im, ax=ax_snap)
+		cbar.set_label('Density')
+		fig_snap.tight_layout()
+		fig_snap.savefig(f'figures/khi_density_snapshot_M{M:.1f}.png', dpi=150)
+		print(f"Saved figures/khi_density_snapshot_M{M:.1f}.png")
+
+	# # Vertical dashed line at t/τ_KH = 1
+	# ax.axvline(1.0, color='gray', linestyle='--', alpha=0.5)
+
+	# Colorbar
+	sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+	sm.set_array([])
+	cbar = fig.colorbar(sm, ax=ax)
+	cbar.set_label(r'$\mathcal{M}_\mathrm{h}$', fontsize=14)
+
+	ax.set_xlabel(r'$t\;/\;\tau_\mathrm{KH}$', fontsize=14)
+	ax.set_ylabel(r'$\ln\!\left(\frac{v_y}{v_{y0}}\right)$', fontsize=14)
+	# ax.set_xlim(0, 2.0)
+	# ax.set_ylim(-4.5, 2.5)
+	ax.set_title(rf'Growth of KHI with time for $\chi = {density_contrast:.0f}$', fontsize=14)
+
+	fig.tight_layout()
+	fig.savefig('figures/khi_growth_over_time.png', dpi=150)
+	print("Saved figures/khi_growth_over_time.png")
+
+
+def parameter_sweep():
+	
+	density_contrast = 10.0
+
+	num_nu = 100
+	num_Ma = 100
+
+	nu_ref = 1809 # "Spitzer viscosity"
+	# nus = jnp.linspace(0.0, 0.6, num_nu) * nu_ref
+	Res = jnp.geomspace(30, 3000, num_nu)
+	mach_numbers = jnp.linspace(0.5, 2.5, num_Ma)
+
+	# num_nu = 1
+	# num_Ma = 1
+
+	# Res = [30]
+	# mach_numbers = [1.4]
 
 	# Critical Mach number for χ = 10 (Eq. 27 in Mandelker et al. 2016)
 	M_crit = (1 + density_contrast**(-1/3))**(3/2)
@@ -700,207 +948,110 @@ def khi_growth_over_time():
 	c_background = float(jnp.sqrt(gamma * pressure / background_density))
 	Delta = float((slab_density + background_density)**2 / (slab_density * background_density))
 
-	# The perturbation wavelength used in example_setup_run
-	wavelength = box_size / 5
+	wavelength = box_size / 2
 
-	# Colormap setup: rainbow from blue (low M) to red (high M)
-	cmap = plt.cm.jet
-	norm = mcolors.Normalize(vmin=0.0, vmax=1.8)
+	heat_map = jnp.zeros((num_nu, num_Ma))
 
-	fig, ax = plt.subplots(figsize=(8, 6))
+	for nu_index in range(num_nu):
+		for mach_index in range(num_Ma):
 
-	for M in mach_numbers:
-		print(f"Running M = {M:.1f} ...")
+			M = mach_numbers[mach_index]
+			# nu = nus[nu_index]
+			Re = Res[nu_index]
 
-		v_slab = M * c_background
-		t_kh = jnp.sqrt(Delta) / (2 * jnp.pi) * wavelength / v_slab
-		t_kh = float(t_kh)
-		print(f"  τ_KH = {t_kh:.4f}")
+			# print(f"Running M = {M:.1f}, ν = {nu:.2e} ...")
+			print(f"Running M = {M:.1f}, Re = {Re:.2e} ...")
+			print(f"Simulation {nu_index * num_Ma + mach_index + 1}/{num_nu * num_Ma}")
 
-		result, registered_variables, helper_data, Re_crit, M_crit_val = example_setup_run(
-			density_contrast = density_contrast,
-			reynolds_number = reynolds_number,
-			mach_number = M,
-			adapt_simulation_time = False,  # default simulation_time = 2.0 covers ~2 τ_KH for all M
-			return_snapshots = True,
-		)
+			v_slab = M * c_background
+			# t_kh = jnp.sqrt(Delta) / (2 * jnp.pi) * wavelength / v_slab
+			t_kh = jnp.sqrt(Delta) * wavelength / v_slab
+			t_kh = float(t_kh)
+			print(f"  τ_KH = {t_kh:.4f}")
 
-		# Extract max|v_y| at each snapshot
-		num_snapshots = len(result.states)
-		times = jnp.array([float(result.time_points[i]) for i in range(num_snapshots)])
-		vy_max = jnp.array([
-			float(jnp.max(jnp.abs(result.states[i][registered_variables.velocity_index.y])))
-			for i in range(num_snapshots)
-		])
-
-		# Normalize time by τ_KH
-		t_normalized = times / t_kh
-
-		# Normalize v_y by initial value and take log
-		vy0 = vy_max[0]
-		# Guard against zero (shouldn't happen with perturbation, but be safe)
-		vy_ratio = jnp.where(vy_max > 0, vy_max / vy0, 1e-10)
-		ln_ratio = jnp.log(vy_ratio)
-
-		# Only plot up to ~2 τ_KH
-		mask = t_normalized <= 2.0
-		t_plot = t_normalized[mask]
-		ln_plot = ln_ratio[mask]
-
-		# Line style: solid if M < M_crit, dash-dotted if M >= M_crit
-		linestyle = '-' if M < M_crit else '-.'
-		linewidth = 2.0 if M >= M_crit else 1.5
-		color = cmap(norm(M))
-
-		ax.plot(t_plot, ln_plot, linestyle=linestyle, color=color, linewidth=linewidth)
-		print(f"  Done. Final ln(v_y/v_y0) = {float(ln_plot[-1]):.2f}")
-
-	# Vertical dashed line at t/τ_KH = 1
-	ax.axvline(1.0, color='gray', linestyle='--', alpha=0.5)
-
-	# Colorbar
-	sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-	sm.set_array([])
-	cbar = fig.colorbar(sm, ax=ax)
-	cbar.set_label(r'$\mathcal{M}_\mathrm{h}$', fontsize=14)
-
-	ax.set_xlabel(r'$t\;/\;\tau_\mathrm{KH}$', fontsize=14)
-	ax.set_ylabel(r'$\ln\!\left(\frac{v_y}{v_{y0}}\right)$', fontsize=14)
-	ax.set_xlim(0, 2.0)
-	ax.set_ylim(-4.5, 2.5)
-	ax.set_title(rf'Growth of KHI with time for $\chi = {density_contrast:.0f}$', fontsize=14)
-
-	plt.tight_layout()
-	plt.savefig('figures/khi_growth_over_time.png', dpi=150)
-	print("Saved figures/khi_growth_over_time.png")
-
-# CLAUDE first version
-def parameter_sweep():
-	"""
-	Three 2D parameter sweeps, each on a 10x10 grid:
-
-	1. Fixed χ = 10: vary Re × Ma  (captures both critical Mach and critical Reynolds)
-	2. Fixed sub-critical Ma = 0.5: vary χ × Re  (viscous suppression across density contrasts)
-	3. Fixed moderate Re = 500: vary χ × Ma  (compressibility effects across density contrasts)
-
-	For each simulation we record max|v_y| of the final state as the instability diagnostic.
-	"""
-
-	# we only do the first sweep for now
-
-	chi = 10.0
-
-	num_machs = 10
-	num_res = 20
-
-	mach_number = 1.0
-
-	reynolds_numbers = jnp.geomspace(30, 1e4, num_res)
-
-	results = jnp.zeros((num_res,))
-	for j, Re in enumerate(reynolds_numbers):
-		print(f"Simulation {j + 1}/{num_res}")
-		print(f"Running simulation for M={mach_number:.2f}, Re={Re:.0f}...")
-		try:
-			result, registered_variables, helper_data, Re_crit, M_crit = example_setup_run(
-				density_contrast = chi,
-				reynolds_number = Re,
-				mach_number = mach_number,
+			result, registered_variables, helper_data, Re_crit, M_crit_val = example_setup_run(
+				density_contrast = density_contrast,
+				Re_or_nu = Re,
+				mach_number = M,
 				adapt_simulation_time = True,
-				return_snapshots = False,
+				return_snapshots = True,
+				nu_specified = False,
 			)
-			v_y = result[registered_variables.velocity_index.y]
-			results = results.at[j].set(jnp.max(v_y))
-			print(f"Simulation completed for M={mach_number:.2f}, Re={Re:.0f}. Max |v_y| = {jnp.max(jnp.abs(v_y)):.4f}")
-			print(f"Critical Mach number: {M_crit:.2f}, Critical Reynolds number: {Re_crit:.0f}")
-		except Exception as e:
-			print(f"Simulation failed for M={mach_number:.2f}, Re={Re:.0f}: {e}")
-			results = results.at[j].set(jnp.nan)
 
-	c_background = jnp.sqrt(gamma * pressure / background_density)
-	amplitude = 0.1 * 0.5 * c_background
+			num_snapshots = len(result.states)
+			times = jnp.array([float(result.time_points[j]) for j in range(num_snapshots)])
 
-	fig, ax = plt.subplots(figsize=(10, 8))
-	ax.plot(reynolds_numbers, results, marker='o')
-	ax.plot(reynolds_numbers, amplitude * jnp.ones_like(reynolds_numbers), 'r--', label='Perturbation Amplitude')
-	ax.set_xscale('log')
-	ax.set_yscale('log')
-	ax.set_xlabel('Reynolds Number')
-	ax.set_ylabel('Max |v_y| (final state)')
-	ax.set_title(f'KHI parameter sweep, χ={chi}, M={mach_number:.2f}')
-	plt.tight_layout()
-	plt.savefig(f"figures/khi_parameter_sweep_chi{chi:.0f}_M{mach_number:.2f}.png")
+			X = helper_data.geometric_centers[:, :, 0]
+			k = 2 * jnp.pi / wavelength
+			sin_kx = jnp.sin(k * X)  # shape (nx, ny)
+			cos_kx = jnp.cos(k * X)  # shape (nx, ny)
 
-	# mach_numbers = jnp.linspace(0.5, 2.5, num_machs)
-	# reynolds_numbers = jnp.geomspace(30, 1e4, num_res)
+			mode_amplitudes = []
+			for j in range(num_snapshots):
+				vy_field = result.states[j][registered_variables.velocity_index.y]
+				
+				# Project onto both components, to remove phase dependence
+				proj_sin = jnp.mean(vy_field * sin_kx, axis=0) * 2  # shape (ny,)
+				proj_cos = jnp.mean(vy_field * cos_kx, axis=0) * 2  # shape (ny,)
+				
+				# The true amplitude is the vector magnitude of the Fourier coefficients
+				amp_y = jnp.sqrt(proj_sin**2 + proj_cos**2)
+				
+				# Max over y to get the envelope peak
+				mode_amp = jnp.max(amp_y)
+				mode_amplitudes.append(float(mode_amp))
 
-	# results = jnp.zeros((num_machs, num_res))
+			mode_amplitudes = jnp.array(mode_amplitudes)
 
-	# for i, M in enumerate(mach_numbers):
-	# 	for j, Re in enumerate(reynolds_numbers):
-	# 		print(f"Simulation {i*num_res + j + 1}/{num_machs*num_res}")
-	# 		print(f"Running simulation for M={M:.2f}, Re={Re:.0f}...")
-	# 		try:
-	# 			result, registered_variables, helper_data, Re_crit, M_crit = example_setup_run(
-	# 				density_contrast = chi,
-	# 				reynolds_number = Re,
-	# 				mach_number = M,
-	# 				adapt_simulation_time = True,
-	# 				return_snapshots = False,
-	# 			)
-	# 			# final_vy = result[registered_variables.velocity_index.y]
-	# 			# results = results.at[i, j].set(jnp.max(jnp.abs(final_vy)))
+			# Normalize time by τ_KH
+			t_normalized = times / t_kh
 
-	# 			# load the result stored
-	# 			# result = jnp.load(f"data/khi_M{M:.2f}_Re{Re:.0f}.npy")
+			# Normalize by initial mode amplitude and take log
+			amp0 = mode_amplitudes[0]
+			if amp0 > 0:
+				ln_ratio = jnp.log(mode_amplitudes / amp0)
+			else:
+				ln_ratio = jnp.zeros_like(mode_amplitudes)
 
-	# 			# compute the average \partial_x v_y as a diagnostic
-	# 			v_y = result[2]
-	# 			# dxvy = 0.5 * (jnp.roll(v_y, shift=-1, axis=0) - jnp.roll(v_y, shift=1, axis=0))
-	# 			results = results.at[i, j].set(jnp.max(v_y))
+			# Only plot up to ~2 τ_KH
+			mask = t_normalized <= 2.0
+			t_plot = t_normalized[mask]
+			ln_plot = ln_ratio[mask]
+			last_mask_index = jnp.sum(mask) - 1
 
-	# 			# let us try the maximum density outside the slab instead
-	# 			# density = result[registered_variables.density_index]
-	# 			# Y = helper_data.geometric_centers[:, :, 1]
-	# 			# outside_slab_mask = jnp.abs(Y - y_center) > 0.12
-	# 			# results = results.at[i, j].set(jnp.max(jnp.where(outside_slab_mask, density, 0.0)))
+			result_value = ln_ratio[last_mask_index]
+			heat_map = heat_map.at[nu_index, mach_index].set(result_value)
+			print(f"  Done. Final ln(A/A0) = {result_value:.2f}")
 
-	# 			# save the final state
-	# 			jnp.save(f"data/khi_M{M:.2f}_Re{Re:.0f}.npy", result)
-	# 			# plot the density, transverse velocity, and pressure of the final state
-	# 			fig, axs = plt.subplots(1, 3, figsize=(15, 5))
-	# 			extent = [0, box_size, 0, box_size]
-	# 			im_rho = axs[0].imshow(result[registered_variables.density_index].T, cmap='viridis', aspect='auto', origin='lower', extent=extent)
-	# 			im_vy = axs[1].imshow(result[registered_variables.velocity_index.y].T, cmap='RdBu_r', aspect='auto', origin='lower', extent=extent)
-	# 			im_P = axs[2].imshow(result[registered_variables.pressure_index].T, cmap='RdBu_r', aspect='auto', origin='lower', extent=extent)
-	# 			axs[0].set_title(f'M={M:.2f}, Re={Re:.0f}\nDensity')
-	# 			axs[1].set_title('Transverse Velocity ($v_y$)')
-	# 			axs[2].set_title('Pressure')
-	# 			for ax in axs:
-	# 				ax.set_aspect('equal')
-	# 				ax.set_xticks([])
-	# 				ax.set_yticks([])
-	# 			plt.tight_layout()
-	# 			plt.savefig(f"figures/collection/khi_M{M:.2f}_Re{Re:.0f}.png")
-	# 			plt.close(fig)
-	# 			# print(f"Simulation completed for M={M:.2f}, Re={Re:.0f}. Max |v_y| = {jnp.max(jnp.abs(final_vy)):.4f}")
-	# 			# print(f"Critical Mach number: {M_crit:.2f}, Critical Reynolds number: {Re_crit:.0f}")
-	# 		except Exception as e:
-	# 			print(f"Simulation failed for M={M:.2f}, Re={Re:.0f}: {e}")
-	# 			results = results.at[i, j].set(jnp.nan)
+			# also plot the final density snapshot
+			fig_snap, ax_snap = plt.subplots(figsize=(6, 5))
+			extent = [0, box_size, 0, box_size]
+			im = ax_snap.imshow(result.states[last_mask_index][registered_variables.density_index].T, cmap='viridis', aspect='auto', origin='lower', extent=extent, norm=LogNorm())
+			ax_snap.set_title(f"KHI density snapshot, M={M:.1f}, Re={Re:.2e}, t={times[last_mask_index]:.3f}")
+			cbar = fig_snap.colorbar(im, ax=ax_snap)
+			cbar.set_label('Density')
+			fig_snap.tight_layout()
+			fig_snap.savefig(f'figures/sweep/khi_density_snapshot_M{M:.1f}_Re{Re:.2e}.png', dpi=150)
+			print(f"Saved figures/sweep/khi_density_snapshot_M{M:.1f}_Re{Re:.2e}.png")
 
-	# # After the sweep, we can plot the results as a heatmap
-	# fig, ax = plt.subplots(figsize=(10, 8))
-	# im = ax.imshow(results, origin='lower', aspect='auto', extent=[reynolds_numbers[0], reynolds_numbers[-1], mach_numbers[0], mach_numbers[-1]]) # , norm=LogNorm())
-	# ax.set_xscale('log')
-	# ax.set_xlabel('Reynolds Number')
-	# ax.set_ylabel('Mach Number')
-	# ax.set_title(f'χ={chi}')
-	# cbar = fig.colorbar(im, ax=ax)
-	# cbar.set_label('diagnostic')
-	# plt.tight_layout()
-	# plt.savefig(f"figures/khi_parameter_sweep_chi{chi:.0f}.png")
-	# plt.close(fig)
+	print(heat_map)
+	# save the heatmap for later data analysis
+	jnp.save(f'khi_growth_heatmap_chi{density_contrast:.0f}.npy', heat_map)
+	print(f"Saved khi_growth_heatmap_chi{density_contrast:.0f}.npy")
+
+	# plot the results as a heatmap
+	fig_heat, ax_heat = plt.subplots(figsize=(8, 6))
+	im = ax_heat.imshow(heat_map, origin='lower', aspect='auto', extent=[mach_numbers[0], mach_numbers[-1], Res[0], Res[-1]], cmap='viridis')
+	ax_heat.set_xlabel('Mach number')
+	ax_heat.set_yscale('log')
+	ax_heat.set_ylabel('Reynolds number')
+	ax_heat.set_title(f'KHI growth (ln(A/A0) at t ~ 2 τ_KH) for χ={density_contrast:.0f}')
+	cbar = fig_heat.colorbar(im, ax=ax_heat)
+	cbar.set_label(r'$\ln\!\left(\frac{A}{A_0}\right)$', fontsize=14)
+	fig_heat.tight_layout()
+	fig_heat.savefig(f'figures/khi_growth_heatmap_chi{density_contrast:.0f}.png', dpi=150)
+	print(f"Saved figures/khi_growth_heatmap_chi{density_contrast:.0f}.png")
+
 
 if __name__ == "__main__":
 	# side_by_side_comparison()

@@ -14,6 +14,7 @@ tests/finite_difference/wind_frames
 tests/kelvin_helmholtz/data
 
 tests/kelvin_helmholtz/figures/collection
+tests/kelvin_helmholtz/figures/sweep
 
 tests/cooling_corrector/data
 tests/mhd_tests/data

@@ -25,10 +25,11 @@ from astronomix._finite_difference._magnetic_update._constrained_transport impor
     constrained_transport_rhs,
     update_cell_center_fields,
 )
+from astronomix._geometry.boundaries_legacy import _boundary_handler
 from astronomix._physics_modules.run_physics_modules import _physics_sources
 from astronomix._stencil_operations._stencil_operations import _shift
 from astronomix.data_classes.simulation_helper_data import HelperData
-from astronomix.option_classes.simulation_config import SimulationConfig
+from astronomix.option_classes.simulation_config import GHOST_CELLS, SimulationConfig
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 
@@ -183,6 +184,9 @@ def _ssprk4_with_ct(
                 params.minimum_pressure,
                 registered_variables,
             )
+
+        if config.boundary_handling == GHOST_CELLS:
+            raise NotImplementedError("Not implemented for FD MHD yet.")
 
         k_rhs = k_rhs_s[stage_idx]
         k_0 = k_0_s[stage_idx]
@@ -370,6 +374,11 @@ def _ssprk4_hydro(
                 params.minimum_density,
                 params.minimum_pressure,
                 registered_variables,
+            )
+
+        if config.boundary_handling == GHOST_CELLS:
+            q_curr = _boundary_handler(
+                q_curr, config
             )
 
         k_rhs = k_rhs_s[stage_idx]

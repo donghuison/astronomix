@@ -505,7 +505,7 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
         #         "feel free to contribute."
         #     )
         
-        if config.dimensionality == 3 and config.boundary_settings != BoundarySettings(
+        if config.dimensionality == 3 and config.boundary_settings == BoundarySettings(
             BoundarySettings1D(
                 left_boundary=PERIODIC_BOUNDARY, right_boundary=PERIODIC_BOUNDARY
             ),
@@ -516,11 +516,16 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
                 left_boundary=PERIODIC_BOUNDARY, right_boundary=PERIODIC_BOUNDARY
             ),
         ):
-            raise ValueError(
-                "Finite difference solver mode currently only supports periodic boundaries."
+            # set boundary handling to periodic roll and num_ghost_cells to 0
+            print(
+                "For 3D simulations with periodic boundaries, setting boundary handling to " \
+                "PERIODIC_ROLL and num_ghost_cells to 0 for better performance."
             )
+            config = config._replace(boundary_handling=PERIODIC_ROLL, num_ghost_cells=0)
+        else:
+            config = config._replace(boundary_handling=GHOST_CELLS, num_ghost_cells=4) 
         
-        if config.dimensionality == 2 and config.boundary_settings != BoundarySettings(
+        if config.dimensionality == 2 and config.boundary_settings == BoundarySettings(
             BoundarySettings1D(
                 left_boundary=PERIODIC_BOUNDARY, right_boundary=PERIODIC_BOUNDARY
             ),
@@ -528,25 +533,26 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
                 left_boundary=PERIODIC_BOUNDARY, right_boundary=PERIODIC_BOUNDARY
             ),
         ):
-            raise ValueError(
-                "Finite difference solver mode currently only supports periodic boundaries."
+            # set boundary handling to periodic roll and num_ghost_cells to 0
+            print(
+                "For 2D simulations with periodic boundaries, setting boundary handling to " \
+                "PERIODIC_ROLL and num_ghost_cells to 0 for better performance."
             )
-        
+            config = config._replace(boundary_handling=PERIODIC_ROLL, num_ghost_cells=0)
+        else:
+            config = config._replace(boundary_handling=GHOST_CELLS, num_ghost_cells=4)
+
         if config.time_integrator != RK4_SSP:
             print(
                 "Setting time integrator to RK4_SSP for finite difference solver mode."
             )
             config = config._replace(time_integrator=RK4_SSP)
-        
-        if config.boundary_handling == GHOST_CELLS:
-            print(
-                "Setting boundary handling to " \
-                "PERIODIC_ROLL for finite difference solver mode."
-            )
-            config = config._replace(boundary_handling=PERIODIC_ROLL)
 
         if config.boundary_handling == PERIODIC_ROLL:
             config = config._replace(num_ghost_cells=0)
+
+        if config.boundary_handling == GHOST_CELLS and config.diffusion:
+            config = config._replace(num_ghost_cells=max(config.num_ghost_cells, 6))
 
     # set boundary conditions if not set
     if config.boundary_settings is None:
