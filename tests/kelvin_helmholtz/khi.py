@@ -263,7 +263,11 @@ from astronomix.option_classes.simulation_config import (
 
 SINGLE_INTERFACE = 0
 SLAB = 1
-interface_mode = SINGLE_INTERFACE
+interface_mode = SLAB
+
+ROEDIGER = 0
+TIRSO = 1
+paper_mode = ROEDIGER
 
 VELOCITY_PERTURBATION = 0
 PRESSURE_PERTURBATION = 1
@@ -277,7 +281,7 @@ background_velocity = 0.0
 box_size = 1.0
 gamma = 5/3
 
-num_cells = 1024
+num_cells = 512
 
 @dataclass
 class PerturbationSetup:
@@ -558,26 +562,18 @@ def example_setup_run(
 	Re_crit = 880 / Delta
 	Re = Re_or_nu
 
-	perturbation_type = VELOCITY_PERTURBATION
-	
-	# wavelength = box_size / 5
-	# amplitude = 0.01 * c_slab
-
 	# in the Tirso paper
-	wavelength = box_size / 2
-	amplitude = mach_number * c_background / 20
-	# smoothing_length = wavelength / 10
-	smoothing_length = wavelength / 20
-	# smoothing_length = wavelength / 20
+	if paper_mode == TIRSO:
+		perturbation_type = VELOCITY_PERTURBATION
+		wavelength = box_size / 2
+		amplitude = mach_number * c_background / 20
+		smoothing_length = wavelength / 10
 
-	# Roedinger like
-	# perturbation_type = VELOCITY_PERTURBATION
-	# wavelength = box_size / 4
-	# amplitude = 0.1 * v_slab
-	# # amplitude for Ma = 0.5
-	# # amplitude = 0.1 * 0.5 * c_background
-
-	# smoothing_length = wavelength / 102
+	if paper_mode == ROEDIGER:
+		perturbation_type = VELOCITY_PERTURBATION
+		wavelength = box_size / 4
+		amplitude = 0.1 * v_slab
+		smoothing_length = wavelength / 102
 
 	if not nu_specified:
 		kinematic_viscosity = wavelength * v_slab / Re
@@ -586,12 +582,21 @@ def example_setup_run(
 		# KHI growth time from Eq. 2 in Roediger et al 2013
 		# t_kh = jnp.sqrt(Delta) / (2 * jnp.pi) * wavelength / v_slab
 		# Tirso paper
-		t_kh = jnp.sqrt(Delta) * wavelength / v_slab
+		if paper_mode == TIRSO:
+			t_kh = jnp.sqrt(Delta) * wavelength / v_slab
+		if paper_mode == ROEDIGER:
+			t_kh = jnp.sqrt(Delta) / (2 * jnp.pi) * wavelength / v_slab
+		
 		print(f"Kelvin-Helmholtz time (inviscid): {t_kh:.3f}")
-		# e.g. 20 * t_kh
-		# simulation_time = 20.0 * t_kh
-		# Tirso
-		simulation_time = 2.0 * t_kh
+
+		if paper_mode == ROEDIGER:
+			# e.g. 20 * t_kh
+			simulation_time = 20.0 * t_kh
+
+		if paper_mode == TIRSO:
+			# Tirso
+			simulation_time = 2.0 * t_kh
+
 		print(f"Adapting simulation time to {simulation_time:.3f} to capture KHI growth.")
 
 	setup = KHISetup(
@@ -617,12 +622,21 @@ def example_setup_run(
 
 def side_by_side_comparison():
 
+	# very close
+	# density_contrast_A = 10.0
+	# reynolds_number_A = 100.0 # float("inf")
+	# mach_number_A = 0.5
+
+	# density_contrast_B = 10.0
+	# reynolds_number_B = 300.0
+	# mach_number_B = 0.5
+
 	density_contrast_A = 10.0
-	reynolds_number_A = 100.0 # float("inf")
+	reynolds_number_A = float("inf")
 	mach_number_A = 0.5
 
 	density_contrast_B = 10.0
-	reynolds_number_B = 300.0
+	reynolds_number_B = 600.0
 	mach_number_B = 0.5
 
 	print(f"👨‍🔧 Running setup A: χ={density_contrast_A}, Re={reynolds_number_A}, M={mach_number_A}")
@@ -813,29 +827,6 @@ def khi_growth_over_time():
 
 		num_snapshots = len(result.states)
 		times = jnp.array([float(result.time_points[j]) for j in range(num_snapshots)])
-
-		# X = helper_data.geometric_centers[:, :, 0]
-		# k = 2 * jnp.pi / wavelength
-		# sin_kx = jnp.sin(k * X)  # shape (nx, ny)
-		# cos_kx = jnp.cos(k * X)  # shape (nx, ny)
-
-		# mode_amplitudes = []
-
-		# center_idx = num_cells // 2
-
-		# for j in range(num_snapshots):
-		# 	vy_field = result.states[j][registered_variables.velocity_index.y]
-			
-		# 	# Project onto both components, to remove phase dependence
-		# 	proj_sin = jnp.mean(vy_field * sin_kx, axis=0) * 2  # shape (ny,)
-		# 	proj_cos = jnp.mean(vy_field * cos_kx, axis=0) * 2  # shape (ny,)
-			
-		# 	# The true amplitude is the vector magnitude of the Fourier coefficients
-		# 	amp_y = jnp.sqrt(proj_sin**2 + proj_cos**2)
-			
-		# 	# mode at interface
-		# 	mode_amp = amp_y[center_idx]
-		# 	mode_amplitudes.append(float(mode_amp))
 
 		# Prepare McNally's discrete convolution variables
 		k = 2 * jnp.pi / wavelength
@@ -1054,6 +1045,6 @@ def parameter_sweep():
 
 
 if __name__ == "__main__":
-	# side_by_side_comparison()
+	side_by_side_comparison()
 	# parameter_sweep()
-	khi_growth_over_time()
+	# khi_growth_over_time()

@@ -35,7 +35,7 @@ from astronomix.option_classes.simulation_config import (
 
 @partial(jax.jit, static_argnames=["registered_variables", "config"])
 def magnetic_update(
-    magnetic_field, gas_state, grid_spacing, dt, registered_variables, config
+    magnetic_field, gas_state, grid_spacing, dt, registered_variables, config, params
 ):
     """Update the magnetic field and gas state.
 
@@ -106,8 +106,8 @@ def magnetic_update(
 
 
     if config.boundary_handling == GHOST_CELLS:
-        magnetic_field = _boundary_handler(magnetic_field, config, MAGNETIC_FIELD_ONLY)
-        velocity = _boundary_handler(velocity, config, VELOCITY_ONLY)
+        magnetic_field = _boundary_handler(magnetic_field, config, params, MAGNETIC_FIELD_ONLY)
+        velocity = _boundary_handler(velocity, config, params, VELOCITY_ONLY)
 
     B_0 = magnetic_field
     v_0 = velocity
@@ -121,8 +121,8 @@ def magnetic_update(
     v_1 = velocity - dt * phiB
 
     if config.boundary_handling == GHOST_CELLS:
-        B_1 = _boundary_handler(B_1, config, MAGNETIC_FIELD_ONLY)
-        v_1 = _boundary_handler(v_1, config, VELOCITY_ONLY)
+        B_1 = _boundary_handler(B_1, config, params, MAGNETIC_FIELD_ONLY)
+        v_1 = _boundary_handler(v_1, config, params, VELOCITY_ONLY)
 
     def while_condition(state):
         B_k, v_k, B_kp1, v_kp1, current_iter = state
@@ -159,8 +159,8 @@ def magnetic_update(
         v_kp1 = velocity - dt * phiB
 
         if config.boundary_handling == GHOST_CELLS:
-            B_kp1 = _boundary_handler(B_kp1, config, MAGNETIC_FIELD_ONLY)
-            v_kp1 = _boundary_handler(v_kp1, config, VELOCITY_ONLY)
+            B_kp1 = _boundary_handler(B_kp1, config, params, MAGNETIC_FIELD_ONLY)
+            v_kp1 = _boundary_handler(v_kp1, config, params, VELOCITY_ONLY)
 
         return B_k, v_k, B_kp1, v_kp1, current_iter + 1
 

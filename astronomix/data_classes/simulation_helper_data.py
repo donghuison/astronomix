@@ -127,7 +127,7 @@ def get_helper_data(
 
     helper_data_necessary = (
         config.wind_config.stellar_wind or config.cooling_config.cooling or 
-        config.return_snapshots
+        config.return_snapshots or config.frame_tracking
     )
 
     if not production or helper_data_necessary:

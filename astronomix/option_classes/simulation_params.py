@@ -8,6 +8,17 @@ from astronomix._physics_modules._neural_net_force._neural_net_force_options imp
 from astronomix._physics_modules._stellar_wind.stellar_wind_options import WindParams
 from astronomix._physics_modules._turbulent_forcing._turbulent_forcing_options import TurbulentForcingParams
 
+class FixedBoundaryState1D(NamedTuple):
+    #: Left state of shape (num_variables,).
+    left_state: jnp.ndarray = jnp.array([])
+    #: Right state of shape (num_variables,).
+    right_state: jnp.ndarray = jnp.array([])
+
+class FixedBoundaryState(NamedTuple):
+    x: FixedBoundaryState1D = FixedBoundaryState1D()
+    y: FixedBoundaryState1D = FixedBoundaryState1D()
+    z: FixedBoundaryState1D = FixedBoundaryState1D()
+
 class SimulationParams(NamedTuple):
     """
     Different from the simulation configuration, the simulation parameters
@@ -55,6 +66,10 @@ class SimulationParams(NamedTuple):
 
     #: Snapshot timepoints
     snapshot_timepoints: jnp.array = jnp.array([0.0])
+
+    #: The fixed boundary state if the boundary type
+    #: of the specific boundary is set to FIXED_BOUNDARY.
+    fixed_boundary_state: FixedBoundaryState = FixedBoundaryState()
 
     # parameters of physics modules
 

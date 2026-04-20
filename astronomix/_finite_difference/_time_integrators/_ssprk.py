@@ -25,7 +25,7 @@ from astronomix._finite_difference._magnetic_update._constrained_transport impor
     constrained_transport_rhs,
     update_cell_center_fields,
 )
-from astronomix._geometry.boundaries_legacy import _boundary_handler
+from astronomix._geometry.boundaries import _boundary_handler
 from astronomix._physics_modules.run_physics_modules import _physics_sources
 from astronomix._stencil_operations._stencil_operations import _shift
 from astronomix.data_classes.simulation_helper_data import HelperData
@@ -378,7 +378,7 @@ def _ssprk4_hydro(
 
         if config.boundary_handling == GHOST_CELLS:
             q_curr = _boundary_handler(
-                q_curr, config
+                q_curr, config, params
             )
 
         k_rhs = k_rhs_s[stage_idx]

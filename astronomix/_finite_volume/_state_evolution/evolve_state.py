@@ -60,13 +60,14 @@ def _evolve_state_along_axis(
     dt: Float[Array, ""],
     gamma: Union[float, Float[Array, ""]],
     config: SimulationConfig,
+    params: SimulationParams,
     helper_data: HelperData,
     registered_variables: RegisteredVariables,
     axis: int,
 ) -> STATE_TYPE:
     
     if config.boundary_handling == GHOST_CELLS:
-        primitive_state = _boundary_handler(primitive_state, config)
+        primitive_state = _boundary_handler(primitive_state, config, params)
 
     # get conserved variables
     conservative_states = conserved_state_from_primitive(
@@ -144,7 +145,7 @@ def _evolve_state_along_axis(
         conservative_states, gamma, config, registered_variables
     )
     if config.boundary_handling == GHOST_CELLS:
-        primitive_state = _boundary_handler(primitive_state, config)
+        primitive_state = _boundary_handler(primitive_state, config, params)
 
     # check if the pressure is still positive
     p = primitive_state[registered_variables.pressure_index]
@@ -189,6 +190,7 @@ def _evolve_gas_state_split(
             dt,
             gamma,
             config,
+            params,
             helper_data,
             registered_variables,
             1,
@@ -217,6 +219,7 @@ def _evolve_gas_state_split(
             dt / 2,
             gamma,
             config,
+            params,
             helper_data,
             registered_variables,
             1,
@@ -227,6 +230,7 @@ def _evolve_gas_state_split(
             dt,
             gamma,
             config,
+            params,
             helper_data,
             registered_variables,
             2,
@@ -237,6 +241,7 @@ def _evolve_gas_state_split(
             dt / 2,
             gamma,
             config,
+            params,
             helper_data,
             registered_variables,
             1,
@@ -265,6 +270,7 @@ def _evolve_gas_state_split(
             dt / 2,
             gamma,
             config,
+            params,
             helper_data,
             registered_variables,
             1,
@@ -275,6 +281,7 @@ def _evolve_gas_state_split(
             dt / 2,
             gamma,
             config,
+            params,
             helper_data,
             registered_variables,
             2,
@@ -285,6 +292,7 @@ def _evolve_gas_state_split(
             dt,
             gamma,
             config,
+            params,
             helper_data,
             registered_variables,
             3,
@@ -295,6 +303,7 @@ def _evolve_gas_state_split(
             dt / 2,
             gamma,
             config,
+            params,
             helper_data,
             registered_variables,
             2,
@@ -305,6 +314,7 @@ def _evolve_gas_state_split(
             dt / 2,
             gamma,
             config,
+            params,
             helper_data,
             registered_variables,
             1,
@@ -352,7 +362,7 @@ def _evolve_gas_state_unsplit_inner(
 ) -> STATE_TYPE:
     
     if config.boundary_handling == GHOST_CELLS:
-        primitive_state = _boundary_handler(primitive_state, config)
+        primitive_state = _boundary_handler(primitive_state, config, params)
     
     conservative_states = conserved_state_from_primitive(
         primitive_state, gamma, config, registered_variables
@@ -376,7 +386,7 @@ def _evolve_gas_state_unsplit_inner(
     for axis in range(1, config.dimensionality + 1):
 
         if config.boundary_handling == GHOST_CELLS:
-            primitive_state = _boundary_handler(primitive_state, config)
+            primitive_state = _boundary_handler(primitive_state, config, params)
 
         if config.limiter == VAN_ALBADA_PP:
             primitives_left_interface = pls[axis - 1]
@@ -414,7 +424,7 @@ def _evolve_gas_state_unsplit_inner(
     )
 
     if config.boundary_handling == GHOST_CELLS:
-        primitive_state = _boundary_handler(primitive_state, config)
+        primitive_state = _boundary_handler(primitive_state, config, params)
 
     return primitive_state
 
@@ -490,7 +500,7 @@ def _evolve_gas_state_unsplit(
             for axis in range(1, config.dimensionality + 1):
 
                 if config.boundary_handling == GHOST_CELLS:
-                    primitive_state = _boundary_handler(primitive_state, config)
+                    primitive_state = _boundary_handler(primitive_state, config, params)
 
                 primitives_left_interface, primitives_right_interface = (
                     _reconstruct_at_interface_unsplit_single(
@@ -619,7 +629,7 @@ def _evolve_gas_state_unsplit(
                 jnp.maximum(primitive_state[registered_variables.pressure_index], 1e-4)
             )
 
-            primitive_state = _boundary_handler(primitive_state, config)
+            primitive_state = _boundary_handler(primitive_state, config, params)
 
             return primitive_state
         
@@ -704,6 +714,7 @@ def _evolve_state_fv(
                 dt,
                 registered_variables,
                 config,
+                params
             )
 
             if config.split == UNSPLIT:

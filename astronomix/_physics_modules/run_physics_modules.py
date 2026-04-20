@@ -13,6 +13,8 @@ from astronomix._physics_modules._cnn_mhd_corrector._cnn_mhd_corrector import (
     _cnn_mhd_corrector,
 )
 from astronomix._physics_modules._cooling._cooling import first_order_pressure_update, update_pressure_by_cooling
+from astronomix._physics_modules._cooling._simple_mixing_cooling import update_pressure_by_cooling_mixing
+from astronomix._physics_modules._cooling.cooling_options import SIMPLE_MIXING_LAYER_COOLING
 from astronomix._physics_modules._cosmic_rays.cr_injection import (
     inject_crs_at_strongest_shock,
 )
@@ -202,13 +204,23 @@ def _physics_sources(
         )
 
     if config.cooling_config.cooling:
-        primitive_state = update_pressure_by_cooling(
-            primitive_state,
-            registered_variables,
-            config.cooling_config,
-            params,
-            dt,
-        )
+        if not config.cooling_config.cooling_curve_config.cooling_curve_type == SIMPLE_MIXING_LAYER_COOLING:
+            primitive_state = update_pressure_by_cooling(
+                primitive_state,
+                registered_variables,
+                config.cooling_config,
+                params,
+                dt,
+            )
+        else:
+            primitive_state = update_pressure_by_cooling_mixing(
+                primitive_state,
+                registered_variables,
+                config.cooling_config,
+                params,
+                dt,
+            )
+
         if config.mhd:
             final_conserved_state = conserved_state_from_primitive_mhd(
                 primitive_state, gamma, registered_variables

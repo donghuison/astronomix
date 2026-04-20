@@ -8,6 +8,7 @@ SIMPLE_POWER_LAW = 1
 PIECEWISE_POWER_LAW = 2
 NEURAL_NET_COOLING = 3
 NEURAL_NET_COOLING_WITH_DENSITY = 4
+SIMPLE_MIXING_LAYER_COOLING = 5
 
 EXPLICIT_COOLING = 1
 IMPLICIT_COOLING = 2
@@ -31,7 +32,12 @@ class CoolingNetConfig(NamedTuple):
 class CoolingNetParams(NamedTuple):
     network_params: Union[PyTree, NoneType] = None
 
-COOLING_CURVE_TYPE = Union[SimplePowerLawParams, PiecewisePowerLawParams, CoolingNetParams]
+class MixingCoolingParams(NamedTuple):
+    xi: float = 0.5 # xi = t_sh / t_coolmin
+    mach_number: float = 0.5
+    density_contrast: float = 10.0
+
+COOLING_CURVE_TYPE = Union[SimplePowerLawParams, PiecewisePowerLawParams, CoolingNetParams, MixingCoolingParams]
 
 class CoolingCurveConfig(NamedTuple):
     cooling_curve_type: int = SIMPLE_POWER_LAW

@@ -3,6 +3,7 @@ import jax
 import jax.numpy as jnp
  
 from astronomix.option_classes.simulation_config import (
+    FIXED_BOUNDARY,
     GAS_STATE,
     MAGNETIC_FIELD_ONLY,
     MHD_JET_BOUNDARY,
@@ -11,8 +12,11 @@ from astronomix.option_classes.simulation_config import (
     REFLECTIVE_BOUNDARY,
     STATE_TYPE,
     VELOCITY_ONLY,
+    XAXIS,
+    YAXIS,
     SimulationConfig,
 )
+from astronomix.option_classes.simulation_params import SimulationParams
  
  
 # -----------------------------------------------------------------------------
@@ -181,7 +185,7 @@ def _jet_left_boundary(
 
 @partial(jax.jit, static_argnames=["num_ghost_cells", "bs", "axis"])
 def _apply_axis_bcs(
-    primitive_state: STATE_TYPE, num_ghost_cells: int, bs, axis: int
+    primitive_state: STATE_TYPE, params: SimulationParams, num_ghost_cells: int, bs, axis: int
 ) -> STATE_TYPE:
     """Apply left/right/periodic BCs along a single spatial axis. All branches
     are on static (``SimulationConfig``) fields and resolve at trace time."""
@@ -200,13 +204,36 @@ def _apply_axis_bcs(
         and bs.right_boundary == PERIODIC_BOUNDARY
     ):
         primitive_state = _periodic_boundaries(primitive_state, num_ghost_cells, axis=axis)
- 
+
+    if (
+        bs.left_boundary == FIXED_BOUNDARY
+    ):
+        dst = _axis_slice(axis, 0, num_ghost_cells, primitive_state.ndim) # destination slice
+        left_state = (
+            params.fixed_boundary_state.x.left_state if axis == XAXIS
+            else params.fixed_boundary_state.y.left_state if axis == YAXIS
+            else params.fixed_boundary_state.z.left_state
+        )
+        left_state = left_state.reshape((left_state.shape[0],) + (1,) * (primitive_state.ndim - 1))
+        primitive_state = primitive_state.at[dst].set(left_state)
+
+    if (
+        bs.right_boundary == FIXED_BOUNDARY
+    ):
+        dst = _axis_slice(axis, -num_ghost_cells, None, primitive_state.ndim) # destination slice
+        right_state = (
+            params.fixed_boundary_state.x.right_state if axis == XAXIS
+            else params.fixed_boundary_state.y.right_state if axis == YAXIS
+            else params.fixed_boundary_state.z.right_state
+        )
+        right_state = right_state.reshape((right_state.shape[0],) + (1,) * (primitive_state.ndim - 1))
+        primitive_state = primitive_state.at[dst].set(right_state)
+
     return primitive_state
- 
- 
+
 @partial(jax.jit, static_argnames=["num_ghost_cells", "bs"])
 def _apply_axis_bcs_1d(
-    primitive_state: STATE_TYPE, num_ghost_cells: int, bs
+    primitive_state: STATE_TYPE, params: SimulationParams, num_ghost_cells: int, bs
 ) -> STATE_TYPE:
     """1D has a flat ``boundary_settings`` (no x/y/z split). The general
     reflective functions handle ``axis=1`` correctly — in 1D the normal-velocity
@@ -227,6 +254,22 @@ def _apply_axis_bcs_1d(
         and bs.right_boundary == PERIODIC_BOUNDARY
     ):
         primitive_state = _periodic_boundaries(primitive_state, num_ghost_cells, axis=1)
+
+    if (
+        bs.left_boundary == FIXED_BOUNDARY
+    ):
+        dst = _axis_slice(1, 0, num_ghost_cells, primitive_state.ndim) # destination slice
+        left_state = params.fixed_boundary_state.x.left_state
+        left_state = left_state.reshape((left_state.shape[0],) + (1,) * (primitive_state.ndim - 1))
+        primitive_state = primitive_state.at[dst].set(left_state)
+    
+    if (
+        bs.right_boundary == FIXED_BOUNDARY
+    ):
+        dst = _axis_slice(1, -num_ghost_cells, None, primitive_state.ndim) # destination slice
+        right_state = params.fixed_boundary_state.x.right_state
+        right_state = right_state.reshape((right_state.shape[0],) + (1,) * (primitive_state.ndim - 1))
+        primitive_state = primitive_state.at[dst].set(right_state)
  
     return primitive_state
  
@@ -239,24 +282,25 @@ def _apply_axis_bcs_1d(
 def _boundary_handler(
     primitive_state: STATE_TYPE,
     config: SimulationConfig,
+    params: SimulationParams,
     type_handled: int = GAS_STATE,
 ) -> STATE_TYPE:
     """Apply all boundary conditions to the primitive state."""
     ng = config.num_ghost_cells
  
     if config.dimensionality == 1:
-        return _apply_axis_bcs_1d(primitive_state, ng, config.boundary_settings)
+        return _apply_axis_bcs_1d(primitive_state, params, ng, config.boundary_settings)
  
     # 2D / 3D: dispatch per axis. Each call is a single traced branch.
     primitive_state = _apply_axis_bcs(
-        primitive_state, ng, config.boundary_settings.x, axis=1
+        primitive_state, params, ng, config.boundary_settings.x, axis=1
     )
     primitive_state = _apply_axis_bcs(
-        primitive_state, ng, config.boundary_settings.y, axis=2
+        primitive_state, params, ng, config.boundary_settings.y, axis=2
     )
     if config.dimensionality == 3:
         primitive_state = _apply_axis_bcs(
-            primitive_state, ng, config.boundary_settings.z, axis=3
+            primitive_state, params, ng, config.boundary_settings.z, axis=3
         )
  
     # MHD jet injection (2D only, y-left).

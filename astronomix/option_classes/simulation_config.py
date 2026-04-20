@@ -60,7 +60,8 @@ RK4_SSP = 2
 OPEN_BOUNDARY = 0
 REFLECTIVE_BOUNDARY = 1
 PERIODIC_BOUNDARY = 2
-MHD_JET_BOUNDARY = 3
+FIXED_BOUNDARY = 3
+MHD_JET_BOUNDARY = 4
 
 GAS_STATE = 0
 VELOCITY_ONLY = 1
@@ -193,12 +194,10 @@ class BoundarySettings1D(NamedTuple):
     left_boundary: int = OPEN_BOUNDARY
     right_boundary: int = OPEN_BOUNDARY
 
-
 class BoundarySettings(NamedTuple):
     x: BoundarySettings1D = BoundarySettings1D()
     y: BoundarySettings1D = BoundarySettings1D()
     z: BoundarySettings1D = BoundarySettings1D()
-
 
 class SimulationConfig(NamedTuple):
     """
@@ -396,6 +395,11 @@ class SimulationConfig(NamedTuple):
 
     #: The configuration for the cooling module.
     cooling_config: CoolingConfig = CoolingConfig()
+
+    #: Frame tracking in z-direction
+    #: shifting the frame to follow a
+    #: turbulent radiative mixing layer
+    frame_tracking: bool = False
 
     #: Configuration of the neural network force module.
     neural_net_force_config: NeuralNetForceConfig = NeuralNetForceConfig()
