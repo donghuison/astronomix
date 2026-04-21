@@ -285,10 +285,10 @@ def _time_integration(
         # the time step criterion for now only gas state
         if config.mhd:
             primitive_state = primitive_state.at[:-3, ...].set(
-                _boundary_handler(primitive_state[:-3, ...], config)
+                _boundary_handler(primitive_state[:-3, ...], config, registered_variables, params)
             )
         else:
-            primitive_state = _boundary_handler(primitive_state, config, params)
+            primitive_state = _boundary_handler(primitive_state, config, registered_variables, params)
 
     # -------------------------------------------------------------
     # =============== ↓ Setup of the snapshot array ↓ =============
@@ -868,6 +868,9 @@ def _time_integration(
             primitive_state = primitive_state.at[
                 registered_variables.velocity_index.z
             ].add(boost)
+
+            # apply boundary conditions for safety
+            primitive_state = _boundary_handler(primitive_state, config, registered_variables, params)
 
         # better safe than sorry
         if config.enforce_positivity:

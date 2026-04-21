@@ -62,10 +62,12 @@ REFLECTIVE_BOUNDARY = 1
 PERIODIC_BOUNDARY = 2
 FIXED_BOUNDARY = 3
 MHD_JET_BOUNDARY = 4
+FIXED_BOUNDARY_OPEN_MOMENTUM = 5
 
-GAS_STATE = 0
-VELOCITY_ONLY = 1
-MAGNETIC_FIELD_ONLY = 2
+PRIMITIVE_GAS_STATE = 0
+CONSERVATIVE_GAS_STATE = 1
+VELOCITY_ONLY = 2
+MAGNETIC_FIELD_ONLY = 3
 
 # geometry types
 CARTESIAN = 0
@@ -527,7 +529,8 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
             )
             config = config._replace(boundary_handling=PERIODIC_ROLL, num_ghost_cells=0)
         else:
-            config = config._replace(boundary_handling=GHOST_CELLS, num_ghost_cells=4) 
+            if config.dimensionality == 3:
+                config = config._replace(boundary_handling=GHOST_CELLS, num_ghost_cells=4) 
         
         if config.dimensionality == 2 and config.boundary_settings == BoundarySettings(
             BoundarySettings1D(
@@ -544,7 +547,8 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
             )
             config = config._replace(boundary_handling=PERIODIC_ROLL, num_ghost_cells=0)
         else:
-            config = config._replace(boundary_handling=GHOST_CELLS, num_ghost_cells=4)
+            if config.dimensionality == 2:
+                config = config._replace(boundary_handling=GHOST_CELLS, num_ghost_cells=4)
 
         if config.time_integrator != RK4_SSP:
             print(

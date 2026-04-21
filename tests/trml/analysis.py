@@ -21,7 +21,7 @@ final_state = data["final_state"]
 
 # pad the final state and apply boundary handler
 # final_state = _pad(final_state, config)
-# final_state = _boundary_handler(final_state, config, params)
+# final_state = _boundary_handler(final_state, config, registered_variables, params)
 
 # retrieve the final temperature
 final_temperature = (
@@ -39,34 +39,86 @@ initial_density = initial_state[registered_variables.density_index]
 fig_pdf, ax_pdf = plt.subplots(figsize=(6, 4))
 temp_flat = final_temperature.flatten()
 rho_flat = final_density.flatten()
-log_temperature_bins = np.logspace(np.log10(T_cold), np.log10(T_hot), 200)
+num_bins = 400
 
-# Mass-weighted PDF: dM/dT = rho * dV/dT.
+# just changes where the bins are placed not the 
+# the bin widths will still be in linear space
+temperature_bins = np.logspace(np.log10(T_cold), np.log10(T_hot), num_bins)
+
+# either this produces dV/dT and not dV/dlogT
+# or something is up with the data
 ax_pdf.hist(
     temp_flat,
-    bins=log_temperature_bins,
-    weights=rho_flat,
+    bins=temperature_bins,
+    # weights=rho_flat,
     density=True,
     log=True,
     histtype=u'step',
     linewidth=2,
+    label=f"astronomix ({final_state.shape[1]}^3)",
 )
+
+# also plot Lachlans PDF
+(
+    log10_T_T_hot,
+    mean_diff,
+    mean_comp,
+    mean_cool,
+    sigm_diff,
+    sigm_comp,
+    sigm_cool,
+    dV_dlogT
+) = np.load("data/lancaster/phase_N64_M1_2_chi1e+02_xi3e+00.npy").T
+
+dV_dT = dV_dlogT / (10**log10_T_T_hot * T_hot * np.log(10))
+dV_dT = dV_dT / np.trapezoid(dV_dT, 10**log10_T_T_hot * T_hot)  # normalize the PDF
+
+ax_pdf.plot(
+    10**log10_T_T_hot * T_hot,
+    dV_dT,
+    label="Lancaster (64^3)",
+    linestyle="--",
+)
+
+(
+    log10_T_T_hot,
+    mean_diff,
+    mean_comp,
+    mean_cool,
+    sigm_diff,
+    sigm_comp,
+    sigm_cool,
+    dV_dlogT
+) = np.load("data/lancaster/phase_N512_M1_2_chi1e+02_xi3e+00.npy").T
+
+dV_dT = dV_dlogT / (10**log10_T_T_hot * T_hot * np.log(10))
+dV_dT = dV_dT / np.trapezoid(dV_dT, 10**log10_T_T_hot * T_hot)  # normalize the PDF
+
+ax_pdf.plot(
+    10**log10_T_T_hot * T_hot,
+    dV_dT,
+    label="Lancaster (512^3)",
+    linestyle="--",
+)
+
+ax_pdf.legend()
+
 ax_pdf.set_xlabel("Temperature")
 ax_pdf.set_xscale("log")
 ax_pdf.set_xlim(T_cold, T_hot)
-ax_pdf.set_ylim(bottom = 1e-2)
-ax_pdf.set_ylabel(r"$dM/dlogT$")
+ax_pdf.set_ylim(bottom = 1e-1)
+ax_pdf.set_ylabel(r"$dV/dT$")
 ax_pdf.set_title("Temperature PDF at Final State")
 fig_pdf.tight_layout()
 fig_pdf.savefig("figures/trml_temperature_pdf.svg")
 
 # Plot the cooling function over the temperature range
 # T = P / rho
-isobaric_density_bins = P0 / log_temperature_bins
-cooling_rate = _cooling_rate(log_temperature_bins, isobaric_density_bins, mixing_cooling_params, params.gamma)
+isobaric_density_bins = P0 / temperature_bins
+cooling_rate = _cooling_rate(temperature_bins, isobaric_density_bins, mixing_cooling_params, params.gamma)
 fig_cooling, ax_cooling = plt.subplots(figsize=(6, 4))
 ax_cooling.plot(
-    log_temperature_bins,
+    temperature_bins,
     -cooling_rate * isobaric_density_bins * t_coolmin,
 )
 ax_cooling.set_xlabel("Temperature")

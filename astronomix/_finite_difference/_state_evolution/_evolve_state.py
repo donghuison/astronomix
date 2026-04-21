@@ -112,7 +112,7 @@ def _evolve_state_fd(
     # handle the boundary conditions
     if config.boundary_handling == GHOST_CELLS:
         primitive_state = _boundary_handler(
-            primitive_state, config, params
+            primitive_state, config, registered_variables, params
         )
 
     return primitive_state

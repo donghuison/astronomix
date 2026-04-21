@@ -29,7 +29,7 @@ from astronomix._geometry.boundaries import _boundary_handler
 from astronomix._physics_modules.run_physics_modules import _physics_sources
 from astronomix._stencil_operations._stencil_operations import _shift
 from astronomix.data_classes.simulation_helper_data import HelperData
-from astronomix.option_classes.simulation_config import GHOST_CELLS, SimulationConfig
+from astronomix.option_classes.simulation_config import CONSERVATIVE_GAS_STATE, GHOST_CELLS, SimulationConfig
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 
@@ -378,7 +378,7 @@ def _ssprk4_hydro(
 
         if config.boundary_handling == GHOST_CELLS:
             q_curr = _boundary_handler(
-                q_curr, config, params
+                q_curr, config, registered_variables, params, CONSERVATIVE_GAS_STATE
             )
 
         k_rhs = k_rhs_s[stage_idx]

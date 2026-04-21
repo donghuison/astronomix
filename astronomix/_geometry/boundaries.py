@@ -2,9 +2,13 @@ from functools import partial
 import jax
 import jax.numpy as jnp
  
+from astronomix._fluid_equations._equations import conserved_state_from_primitive
 from astronomix.option_classes.simulation_config import (
+    CONSERVATIVE_GAS_STATE,
     FIXED_BOUNDARY,
-    GAS_STATE,
+    FIXED_BOUNDARY_OPEN_MOMENTUM,
+    ISOTHERMAL,
+    PRIMITIVE_GAS_STATE,
     MAGNETIC_FIELD_ONLY,
     MHD_JET_BOUNDARY,
     OPEN_BOUNDARY,
@@ -17,6 +21,7 @@ from astronomix.option_classes.simulation_config import (
     SimulationConfig,
 )
 from astronomix.option_classes.simulation_params import SimulationParams
+from astronomix.variable_registry.registered_variables import RegisteredVariables
  
  
 # -----------------------------------------------------------------------------
@@ -163,7 +168,7 @@ def _jet_left_boundary(
     jet_lo = num_cells // 2 - half_inj_cell_num
     jet_hi = num_cells // 2 + half_inj_cell_num
  
-    if type_handled == GAS_STATE:
+    if type_handled == PRIMITIVE_GAS_STATE:
         primitive_state = primitive_state.at[
             :, 0:num_ghost_cells, jet_lo:jet_hi
         ].set(to_set_gas_state[:, None, None])
@@ -183,9 +188,9 @@ def _jet_left_boundary(
 # Per-axis dispatch helpers (branches on static config values only — no loops)
 # -----------------------------------------------------------------------------
 
-@partial(jax.jit, static_argnames=["num_ghost_cells", "bs", "axis"])
+@partial(jax.jit, static_argnames=["num_ghost_cells", "bs", "axis", "type_handled", "registered_variables", "config"])
 def _apply_axis_bcs(
-    primitive_state: STATE_TYPE, params: SimulationParams, num_ghost_cells: int, bs, axis: int
+    primitive_state: STATE_TYPE, params: SimulationParams, config: SimulationConfig, registered_variables: RegisteredVariables, num_ghost_cells: int, bs, axis: int, type_handled: int = PRIMITIVE_GAS_STATE
 ) -> STATE_TYPE:
     """Apply left/right/periodic BCs along a single spatial axis. All branches
     are on static (``SimulationConfig``) fields and resolve at trace time."""
@@ -206,7 +211,7 @@ def _apply_axis_bcs(
         primitive_state = _periodic_boundaries(primitive_state, num_ghost_cells, axis=axis)
 
     if (
-        bs.left_boundary == FIXED_BOUNDARY
+        bs.left_boundary == FIXED_BOUNDARY or bs.left_boundary == FIXED_BOUNDARY_OPEN_MOMENTUM
     ):
         dst = _axis_slice(axis, 0, num_ghost_cells, primitive_state.ndim) # destination slice
         left_state = (
@@ -214,11 +219,30 @@ def _apply_axis_bcs(
             else params.fixed_boundary_state.y.left_state if axis == YAXIS
             else params.fixed_boundary_state.z.left_state
         )
+
+        # AD HOC FIX
+        # the fixed state is given as a 1D array of primitive variables, if
+        # the boundary handler is applied on the conservative state we need to convert it first
+        if type_handled == CONSERVATIVE_GAS_STATE:
+
+            if config.mhd or config.equation_of_state == ISOTHERMAL:
+                raise NotImplementedError("FIXED_BOUNDARY with conservative state is not implemented for MHD or isothermal EOS yet")
+
+            # convert the fixed primitive state to conservative form
+            left_state = conserved_state_from_primitive(left_state, params.gamma, config, registered_variables)
+
         left_state = left_state.reshape((left_state.shape[0],) + (1,) * (primitive_state.ndim - 1))
         primitive_state = primitive_state.at[dst].set(left_state)
 
+        if bs.left_boundary == FIXED_BOUNDARY_OPEN_MOMENTUM:
+            normal_vel_idx = axis
+            src = _axis_slice(axis, num_ghost_cells, num_ghost_cells + 1, primitive_state.ndim)
+            primitive_state = primitive_state.at[(normal_vel_idx,) + dst[1:]].set(
+                primitive_state[(normal_vel_idx,) + src[1:]]
+            )
+
     if (
-        bs.right_boundary == FIXED_BOUNDARY
+        bs.right_boundary == FIXED_BOUNDARY or bs.right_boundary == FIXED_BOUNDARY_OPEN_MOMENTUM 
     ):
         dst = _axis_slice(axis, -num_ghost_cells, None, primitive_state.ndim) # destination slice
         right_state = (
@@ -226,8 +250,27 @@ def _apply_axis_bcs(
             else params.fixed_boundary_state.y.right_state if axis == YAXIS
             else params.fixed_boundary_state.z.right_state
         )
+
+        # the fixed state is given as a 1D array of primitive variables, if
+        # the boundary handler is applied on the conservative state we need to convert it first
+        if type_handled == CONSERVATIVE_GAS_STATE:
+            
+            if config.mhd or config.equation_of_state == ISOTHERMAL:
+                raise NotImplementedError("FIXED_BOUNDARY with conservative state is not implemented for MHD or isothermal EOS yet")
+            
+            # convert the fixed primitive state to conservative form
+            right_state = conserved_state_from_primitive(right_state, params.gamma, config, registered_variables)
+
         right_state = right_state.reshape((right_state.shape[0],) + (1,) * (primitive_state.ndim - 1))
         primitive_state = primitive_state.at[dst].set(right_state)
+ 
+        if bs.right_boundary == FIXED_BOUNDARY_OPEN_MOMENTUM:
+            normal_vel_idx = axis
+            src = _axis_slice(axis, -num_ghost_cells - 1, -num_ghost_cells, primitive_state.ndim)
+            # Broadcast the last-interior-cell's normal velocity into all right ghost cells
+            primitive_state = primitive_state.at[(normal_vel_idx,) + dst[1:]].set(
+                primitive_state[(normal_vel_idx,) + src[1:]]
+            )
 
     return primitive_state
 
@@ -256,12 +299,15 @@ def _apply_axis_bcs_1d(
         primitive_state = _periodic_boundaries(primitive_state, num_ghost_cells, axis=1)
 
     if (
-        bs.left_boundary == FIXED_BOUNDARY
+        bs.left_boundary == FIXED_BOUNDARY or bs.left_boundary == FIXED_BOUNDARY_OPEN_MOMENTUM
     ):
         dst = _axis_slice(1, 0, num_ghost_cells, primitive_state.ndim) # destination slice
         left_state = params.fixed_boundary_state.x.left_state
         left_state = left_state.reshape((left_state.shape[0],) + (1,) * (primitive_state.ndim - 1))
         primitive_state = primitive_state.at[dst].set(left_state)
+
+        if bs.left_boundary == FIXED_BOUNDARY_OPEN_MOMENTUM:
+            raise NotImplementedError("FIXED_BOUNDARY_OPEN_MOMENTUM is not implemented for 1D yet")
     
     if (
         bs.right_boundary == FIXED_BOUNDARY
@@ -270,6 +316,9 @@ def _apply_axis_bcs_1d(
         right_state = params.fixed_boundary_state.x.right_state
         right_state = right_state.reshape((right_state.shape[0],) + (1,) * (primitive_state.ndim - 1))
         primitive_state = primitive_state.at[dst].set(right_state)
+
+        if bs.right_boundary == FIXED_BOUNDARY_OPEN_MOMENTUM:
+            raise NotImplementedError("FIXED_BOUNDARY_OPEN_MOMENTUM is not implemented for 1D yet")
  
     return primitive_state
  
@@ -278,12 +327,13 @@ def _apply_axis_bcs_1d(
 # Top-level boundary handler
 # -----------------------------------------------------------------------------
  
-@partial(jax.jit, static_argnames=["config", "type_handled"])
+@partial(jax.jit, static_argnames=["config", "type_handled", "registered_variables"])
 def _boundary_handler(
     primitive_state: STATE_TYPE,
     config: SimulationConfig,
+    registered_variables: RegisteredVariables,
     params: SimulationParams,
-    type_handled: int = GAS_STATE,
+    type_handled: int = PRIMITIVE_GAS_STATE,
 ) -> STATE_TYPE:
     """Apply all boundary conditions to the primitive state."""
     ng = config.num_ghost_cells
@@ -293,14 +343,14 @@ def _boundary_handler(
  
     # 2D / 3D: dispatch per axis. Each call is a single traced branch.
     primitive_state = _apply_axis_bcs(
-        primitive_state, params, ng, config.boundary_settings.x, axis=1
+        primitive_state, params, config, registered_variables, ng, config.boundary_settings.x, axis=1, type_handled=type_handled
     )
     primitive_state = _apply_axis_bcs(
-        primitive_state, params, ng, config.boundary_settings.y, axis=2
+        primitive_state, params, config, registered_variables, ng, config.boundary_settings.y, axis=2, type_handled=type_handled
     )
     if config.dimensionality == 3:
         primitive_state = _apply_axis_bcs(
-            primitive_state, params, ng, config.boundary_settings.z, axis=3
+            primitive_state, params, config, registered_variables, ng, config.boundary_settings.z, axis=3, type_handled=type_handled
         )
  
     # MHD jet injection (2D only, y-left).

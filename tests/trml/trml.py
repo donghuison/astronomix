@@ -67,6 +67,7 @@ from astronomix.option_classes.simulation_params import FixedBoundaryState, Fixe
 from astronomix.option_classes.simulation_config import (
     FINITE_VOLUME,
     FIXED_BOUNDARY,
+    FIXED_BOUNDARY_OPEN_MOMENTUM,
     KINEMATIC_VISCOSITY,
     MINMOD,
     MUSCL,
@@ -95,11 +96,11 @@ L_y = box_size
 L_z = 1.5 * box_size
 
 # Simulation time
-t_end_in_t_sh = 5.0
+t_end_in_t_sh = 30.0
 
 # Mixing settings
 density_contrast = 100.0
-xi = 3
+xi = 3.0
 mach_number = 0.5
 gamma = 5 / 3
 P0 = 1.0
@@ -125,7 +126,7 @@ config = SimulationConfig(
     boundary_settings = BoundarySettings(
         x = BoundarySettings1D(PERIODIC_BOUNDARY, PERIODIC_BOUNDARY),
         y = BoundarySettings1D(PERIODIC_BOUNDARY, PERIODIC_BOUNDARY),
-        z = BoundarySettings1D(OPEN_BOUNDARY, FIXED_BOUNDARY),
+        z = BoundarySettings1D(OPEN_BOUNDARY, FIXED_BOUNDARY_OPEN_MOMENTUM),
     ),
     enforce_positivity = True,
 	cooling_config = CoolingConfig(
@@ -226,13 +227,12 @@ params = SimulationParams(
     minimum_pressure = P0 / 100,
 	fixed_boundary_state = FixedBoundaryState(
 		z = FixedBoundaryState1D(
-			# the x and y index are arbitrary here
-			right_state = initial_state[:, -1, -1, -1]
+			right_state = jnp.array([rho_hot, v_rel / 2, 0.0, 0.0, P0])
         )
     ),
 	cooling_params = CoolingParams(
 		cooling_curve_params = mixing_cooling_params,
-        floor_temperature = T_cold / 100,
+        floor_temperature = T_cold,
     )
 )
 

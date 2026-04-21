@@ -246,6 +246,7 @@ from astronomix import (
     get_registered_variables,
 )
 from astronomix.option_classes.simulation_config import (
+    DYNAMIC_VISCOSITY,
     FINITE_VOLUME,
     KINEMATIC_VISCOSITY,
     MINMOD,
@@ -263,11 +264,11 @@ from astronomix.option_classes.simulation_config import (
 
 SINGLE_INTERFACE = 0
 SLAB = 1
-interface_mode = SLAB
+interface_mode = SINGLE_INTERFACE
 
 ROEDIGER = 0
 TIRSO = 1
-paper_mode = ROEDIGER
+paper_mode = TIRSO
 
 VELOCITY_PERTURBATION = 0
 PRESSURE_PERTURBATION = 1
@@ -278,10 +279,11 @@ y_center = 0.5
 background_density = 1.0
 pressure = 1.0 # uniform pressure everywhere
 background_velocity = 0.0
+# box_size = 1.0
 box_size = 1.0
 gamma = 5/3
 
-num_cells = 512
+num_cells = 300
 
 @dataclass
 class PerturbationSetup:
@@ -384,7 +386,7 @@ def simulate_khi(setup: KHISetup, return_snapshots = False):
 		box_size = box_size,
 		num_cells = setup.num_cells,
 		diffusion = setup.diffusion,
-		viscosity_type = KINEMATIC_VISCOSITY,
+		viscosity_type = DYNAMIC_VISCOSITY, # KINEMATIC_VISCOSITY,
 		boundary_settings = BoundarySettings(
 			x = BoundarySettings1D(PERIODIC_BOUNDARY, PERIODIC_BOUNDARY),   # flow dir
 			y = BoundarySettings1D(OPEN_BOUNDARY, OPEN_BOUNDARY),           # transverse
@@ -595,7 +597,8 @@ def example_setup_run(
 
 		if paper_mode == TIRSO:
 			# Tirso
-			simulation_time = 2.0 * t_kh
+			# simulation_time = 2.0 * t_kh
+			simulation_time = 1.0 * t_kh
 
 		print(f"Adapting simulation time to {simulation_time:.3f} to capture KHI growth.")
 
@@ -780,10 +783,12 @@ def khi_growth_over_time():
 	"""
 
 	density_contrast = 10.0
-	reynolds_number = float("inf")
+	# reynolds_number = float("inf")
+	# reynolds_number = 4000
+	nu = 0.0138 * 0.3
 
 	# Mach numbers from 0.1 to 1.8 in steps of 0.1 (matching the paper's sweep)
-	mach_numbers = jnp.arange(0.1, 1.9, 0.1)
+	mach_numbers = jnp.arange(0.1, 1.8, 0.1)
 	# mach_numbers = [0.5, 2.5]
 
 	# Critical Mach number for χ = 10 (Eq. 27 in Mandelker et al. 2016)
@@ -819,10 +824,11 @@ def khi_growth_over_time():
 
 		result, registered_variables, helper_data, Re_crit, M_crit_val = example_setup_run(
 			density_contrast = density_contrast,
-			Re_or_nu = reynolds_number,
+			Re_or_nu = nu, # reynolds_number,
 			mach_number = M,
 			adapt_simulation_time = True,
 			return_snapshots = True,
+			nu_specified = True,
 		)
 
 		num_snapshots = len(result.states)
@@ -1045,6 +1051,6 @@ def parameter_sweep():
 
 
 if __name__ == "__main__":
-	side_by_side_comparison()
+	# side_by_side_comparison()
 	# parameter_sweep()
-	# khi_growth_over_time()
+	khi_growth_over_time()
