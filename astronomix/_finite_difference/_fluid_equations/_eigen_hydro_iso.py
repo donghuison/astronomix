@@ -38,7 +38,12 @@ def _eigenvalue_building_blocks(
     registered_variables: RegisteredVariables,
 ):
     density = conserved_state[registered_variables.density_index]
-    momentum_x = conserved_state[registered_variables.momentum_index.x]
+
+    if config.dimensionality == 1:
+        momentum_x = conserved_state[registered_variables.momentum_index]
+    else:
+        momentum_x = conserved_state[registered_variables.momentum_index.x]
+
 
     rho = jnp.maximum(density, rhomin)
     velocity_x = momentum_x / rho
@@ -139,7 +144,12 @@ def _eigen_R_col_hydro_iso(
     )
 
     density_index = registered_variables.density_index
-    momentum_index_x = registered_variables.momentum_index.x
+
+    if config.dimensionality == 1:
+        momentum_index_x = registered_variables.momentum_index
+    else:
+        momentum_index_x = registered_variables.momentum_index.x
+
     if config.dimensionality >= 2:
         momentum_index_y = registered_variables.momentum_index.y
     if config.dimensionality == 3:
@@ -220,7 +230,12 @@ def _eigen_L_row_hydro_iso(
     )
 
     density_index = registered_variables.density_index
-    momentum_index_x = registered_variables.momentum_index.x
+
+    if config.dimensionality == 1:
+        momentum_index_x = registered_variables.momentum_index
+    else:
+        momentum_index_x = registered_variables.momentum_index.x
+
     if config.dimensionality >= 2:
         momentum_index_y = registered_variables.momentum_index.y
     if config.dimensionality == 3:

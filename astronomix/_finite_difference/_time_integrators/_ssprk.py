@@ -29,7 +29,7 @@ from astronomix._geometry.boundaries import _boundary_handler
 from astronomix._physics_modules.run_physics_modules import _physics_sources
 from astronomix._stencil_operations._stencil_operations import _shift
 from astronomix.data_classes.simulation_helper_data import HelperData
-from astronomix.option_classes.simulation_config import CONSERVATIVE_GAS_STATE, GHOST_CELLS, SimulationConfig
+from astronomix.option_classes.simulation_config import CONSERVATIVE_GAS_STATE, GHOST_CELLS, MAGNETIC_FIELD_ONLY, SimulationConfig
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 
@@ -186,7 +186,17 @@ def _ssprk4_with_ct(
             )
 
         if config.boundary_handling == GHOST_CELLS:
-            raise NotImplementedError("Not implemented for FD MHD yet.")
+            q_curr = _boundary_handler(
+                q_curr, config, registered_variables, params, CONSERVATIVE_GAS_STATE
+            )
+            b_curr = _boundary_handler(
+                jnp.stack([bx_curr, by_curr, bz_curr], axis=0),
+                config,
+                registered_variables,
+                params,
+                MAGNETIC_FIELD_ONLY
+            )
+            bx_curr, by_curr, bz_curr = b_curr[0], b_curr[1], b_curr[2]
 
         k_rhs = k_rhs_s[stage_idx]
         k_0 = k_0_s[stage_idx]

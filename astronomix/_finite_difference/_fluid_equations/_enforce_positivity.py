@@ -39,7 +39,11 @@ def _enforce_positivity(
 
     # the energy only needs to be updated in the ideal gas case
     if config.equation_of_state == IDEAL_GAS:
-        v_x = conserved_state[registered_variables.momentum_index.x] / rho
+
+        if config.dimensionality == 1:
+            v_x = conserved_state[registered_variables.momentum_index] / rho
+        else:
+            v_x = conserved_state[registered_variables.momentum_index.x] / rho
 
         if config.dimensionality == 2:
             v_y = conserved_state[registered_variables.momentum_index.y] / rho
@@ -57,7 +61,12 @@ def _enforce_positivity(
 
             b2 = B_x**2 + B_y**2 + B_z**2
         
-        v2 = v_x**2 + v_y**2 + v_z**2
+        if config.dimensionality == 1:
+            v2 = v_x**2
+        elif config.dimensionality == 2:
+            v2 = v_x**2 + v_y**2
+        elif config.dimensionality == 3:
+            v2 = v_x**2 + v_y**2 + v_z**2
 
         # calculate pressure
         if config.mhd:

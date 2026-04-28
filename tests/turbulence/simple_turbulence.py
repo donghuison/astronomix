@@ -50,6 +50,7 @@ import jax.numpy as jnp
 
 # plotting
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib.colors import LogNorm
 
@@ -67,6 +68,7 @@ from astronomix.option_classes.simulation_config import (
     BoundarySettings,
     BoundarySettings1D,
     SimulationConfig,
+    SnapshotSettings,
     finalize_config
 )
 from astronomix.option_classes.simulation_params import SimulationParams
@@ -124,6 +126,11 @@ for M_A_aim in M_A_aim_list:
                 turbulent_forcing = True,
                 vacuum_protection = True, # this is only necessary for high Mach turbulence
             ),
+            return_snapshots = True,
+            num_snapshots = 100,
+            snapshot_settings = SnapshotSettings(
+                return_states = True,
+            )
         )
 
         t_cross = (config.box_size / 2) / 1.0 # assumes v_rms ≈ 1.0
@@ -172,7 +179,9 @@ for M_A_aim in M_A_aim_list:
         config = finalize_config(config, initial_state.shape)
 
         # Run the simulation
-        final_state = time_integration(initial_state, config, params, registered_variables)
+        result = time_integration(initial_state, config, params, registered_variables)
+        final_state = result.states[-1]
+        time_points = result.time_points
 
         # Calculate the rms velocity and the turbulent crossing time
         v = get_absolute_velocity(final_state, config, registered_variables)
@@ -205,52 +214,103 @@ for M_A_aim in M_A_aim_list:
         final_alfven_mach_number = v_rms / jnp.mean(final_alfven_speed)
         print(f"Final Alfvén Mach number: {final_alfven_mach_number:.3f}")
 
-        # Plot the final density, velocity magnitude, and magnetic field magnitude slices
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-
-        z_level = config.num_cells.x // 2
-        # take the z_level where the maximum density is located
-        # z_level = jnp.argmax(jnp.max(final_density, axis=(0, 1)))
-        print(f"Plotting z-level: {z_level}")
-
-        # Get final velocity components
+        # Build animated slices over the full simulation timespan
         final_velocity_x = final_state[registered_variables.velocity_index.x]
         final_velocity_y = final_state[registered_variables.velocity_index.y]
         final_velocity_z = final_state[registered_variables.velocity_index.z]
-        velocity_magnitude = jnp.sqrt(final_velocity_x**2 + final_velocity_y**2 + final_velocity_z**2)
-
-        # Get magnetic field magnitude
         magnetic_magnitude = jnp.sqrt(final_magnetic_field_x**2 + final_magnetic_field_y**2 + final_magnetic_field_z**2)
 
-        # Plot density
-        im0 = axes[0].imshow(final_density[:, :, z_level], origin="lower", cmap="viridis", norm = LogNorm())
-        axes[0].set_title("Final Density Slice")
+        states = result.states
+        density_snapshots = states[:, registered_variables.density_index]
+        velocity_x_snapshots = states[:, registered_variables.velocity_index.x]
+        velocity_y_snapshots = states[:, registered_variables.velocity_index.y]
+        velocity_z_snapshots = states[:, registered_variables.velocity_index.z]
+        velocity_magnitude_snapshots = jnp.sqrt(
+            velocity_x_snapshots**2 + velocity_y_snapshots**2 + velocity_z_snapshots**2
+        )
+        magnetic_x_snapshots = states[:, registered_variables.magnetic_index.x]
+        magnetic_y_snapshots = states[:, registered_variables.magnetic_index.y]
+        magnetic_z_snapshots = states[:, registered_variables.magnetic_index.z]
+        magnetic_magnitude_snapshots = jnp.sqrt(
+            magnetic_x_snapshots**2 + magnetic_y_snapshots**2 + magnetic_z_snapshots**2
+        )
+
+        z_level = config.num_cells.x // 2
+        print(f"Animating z-level: {z_level}")
+
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+        density_vmin = max(float(jnp.min(density_snapshots)), 1e-12)
+        density_vmax = float(jnp.max(density_snapshots))
+        velocity_vmin = float(jnp.min(velocity_magnitude_snapshots))
+        velocity_vmax = float(jnp.max(velocity_magnitude_snapshots))
+        magnetic_vmin = float(jnp.min(magnetic_magnitude_snapshots))
+        magnetic_vmax = float(jnp.max(magnetic_magnitude_snapshots))
+
+        im0 = axes[0].imshow(
+            density_snapshots[0, :, :, z_level],
+            origin="lower",
+            cmap="viridis",
+            norm=LogNorm(vmin=density_vmin, vmax=density_vmax),
+        )
+        axes[0].set_title("Density Slice")
         axes[0].set_xlabel("x")
         axes[0].set_ylabel("y")
         divider0 = make_axes_locatable(axes[0])
         cax0 = divider0.append_axes("right", size="5%", pad=0.05)
         fig.colorbar(im0, cax=cax0, label="Density")
 
-        # Plot velocity magnitude
-        im1 = axes[1].imshow(velocity_magnitude[:, :, z_level], origin="lower", cmap="viridis")
-        axes[1].set_title("Final Velocity Magnitude Slice")
+        im1 = axes[1].imshow(
+            velocity_magnitude_snapshots[0, :, :, z_level],
+            origin="lower",
+            cmap="viridis",
+            vmin=velocity_vmin,
+            vmax=velocity_vmax,
+        )
+        axes[1].set_title("Velocity Magnitude Slice")
         axes[1].set_xlabel("x")
         axes[1].set_ylabel("y")
         divider1 = make_axes_locatable(axes[1])
         cax1 = divider1.append_axes("right", size="5%", pad=0.05)
         fig.colorbar(im1, cax=cax1, label="Velocity")
 
-        # Plot magnetic field magnitude
-        im2 = axes[2].imshow(magnetic_magnitude[:, :, z_level], origin="lower", cmap="viridis")
-        axes[2].set_title("Final Magnetic Field Magnitude Slice")
+        im2 = axes[2].imshow(
+            magnetic_magnitude_snapshots[0, :, :, z_level],
+            origin="lower",
+            cmap="viridis",
+            vmin=magnetic_vmin,
+            vmax=magnetic_vmax,
+        )
+        axes[2].set_title("Magnetic Field Magnitude Slice")
         axes[2].set_xlabel("x")
         axes[2].set_ylabel("y")
         divider2 = make_axes_locatable(axes[2])
         cax2 = divider2.append_axes("right", size="5%", pad=0.05)
         fig.colorbar(im2, cax=cax2, label="Magnetic Field")
 
+        suptitle = fig.suptitle(f"t = {float(time_points[0]):.3f}")
+
+        def update(frame_idx):
+            im0.set_data(density_snapshots[frame_idx, :, :, z_level])
+            im1.set_data(velocity_magnitude_snapshots[frame_idx, :, :, z_level])
+            im2.set_data(magnetic_magnitude_snapshots[frame_idx, :, :, z_level])
+            suptitle.set_text(f"t = {float(time_points[frame_idx]):.3f}")
+            return im0, im1, im2, suptitle
+
+        animation = FuncAnimation(
+            fig,
+            update,
+            frames=len(time_points),
+            interval=100,
+            blit=False,
+        )
         plt.tight_layout()
-        plt.savefig(f"figures/slices_M_s{M_s_aim}_MA{M_A_aim}.png", dpi=400)
+        animation.save(
+            f"figures/animations/slices_M_s{M_s_aim}_MA{M_A_aim}.gif",
+            writer=PillowWriter(fps=10),
+            dpi=200,
+        )
+        plt.close(fig)
 
         # also plot the final kinetic and magnetic power spectra
         k, kinetic_spectrum = get_kinetic_energy_spectrum(

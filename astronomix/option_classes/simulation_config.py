@@ -598,3 +598,43 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
         print("Consider using RIEMANN_SPLIT as the self_gravity_version.")
 
     return config
+
+def riemann_solver_to_string(riemann_solver: int) -> str:
+    if riemann_solver == HLL:
+        return "HLL"
+    elif riemann_solver == HLLC:
+        return "HLLC"
+    elif riemann_solver == HLLC_LM:
+        return "HLLC_LM"
+    elif riemann_solver == LAX_FRIEDRICHS:
+        return "Lax-Friedrichs"
+    elif riemann_solver == HYBRID_HLLC:
+        return "Hybrid HLLC"
+    elif riemann_solver == AM_HLLC:
+        return "AM HLLC"
+
+def limiter_to_string(limiter: int) -> str:
+    if limiter == MINMOD:
+        return "Minmod"
+    elif limiter == SUPERBEE:
+        return "Superbee"
+    elif limiter == OSHER:
+        return "Osher"
+    elif limiter == DOUBLE_MINMOD:
+        return "Double Minmod"
+    elif limiter == VAN_ALBADA:
+        return "Van Albada"
+    elif limiter == VAN_ALBADA_PP:
+        return "Van Albada PP"
+    
+def solver_mode_to_string(solver_mode: int) -> str:
+    if solver_mode == FINITE_VOLUME:
+        return "FV"
+    elif solver_mode == FINITE_DIFFERENCE:
+        return "FD"
+    
+def config_to_string(config: SimulationConfig) -> str:
+    if config.solver_mode == FINITE_VOLUME:
+        return f"FV, {riemann_solver_to_string(config.riemann_solver)}, {limiter_to_string(config.limiter)}, {config.num_cells.x} cells"
+    elif config.solver_mode == FINITE_DIFFERENCE:
+        return f"FD, {config.num_cells.x} cells"

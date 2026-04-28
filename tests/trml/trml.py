@@ -32,12 +32,21 @@ Cooling function: TODO
 
 """
 
+multi_gpu = False
+
 if __name__ == "__main__":
-    # ==== GPU selection ====
-    from autocvd import autocvd
-    autocvd(num_gpus=1)
-    # ruff: noqa: E402
-    # =======================
+    if multi_gpu:
+        # ==== GPU selection ====
+        from autocvd import autocvd
+        autocvd(num_gpus=2)
+        # ruff: noqa: E402
+        # =======================
+    else:
+        # ==== GPU selection ====
+        from autocvd import autocvd
+        autocvd(num_gpus=1)
+        # ruff: noqa: E402
+        # =======================
 
 # typing
 from dataclasses import dataclass
@@ -74,6 +83,10 @@ from astronomix.option_classes.simulation_config import (
     OPEN_BOUNDARY,
     SPLIT,
     UNSPLIT,
+    VARAXIS,
+    XAXIS,
+    YAXIS,
+    ZAXIS,
     SnapshotSettings,
     StaticFloatVector,
     StaticIntVector,
@@ -84,6 +97,20 @@ from astronomix.option_classes.simulation_config import (
     BoundarySettings1D,
 )
 from astronomix._physics_modules._cooling.cooling_options import EXPLICIT_COOLING, IMPLICIT_COOLING, SIMPLE_MIXING_LAYER_COOLING, CoolingConfig, CoolingCurveConfig, CoolingParams, MixingCoolingParams
+
+from jax.sharding import PartitionSpec as P
+
+if multi_gpu:
+
+    # mesh with variable axis
+    split = (1, 1, 1, 2)
+    sharding_mesh = jax.make_mesh(split, (VARAXIS, XAXIS, YAXIS, ZAXIS))
+    named_sharding = jax.NamedSharding(sharding_mesh, P(VARAXIS, XAXIS, YAXIS, ZAXIS))
+
+    # mesh no variable axis
+    split = (1, 1, 2)
+    sharding_mesh_no_var = jax.make_mesh(split, (XAXIS, YAXIS, ZAXIS))
+    named_sharding_no_var = jax.NamedSharding(sharding_mesh_no_var, P(XAXIS, YAXIS, ZAXIS))
 
 # Box setup
 num_cells_x = 64
@@ -118,6 +145,7 @@ t_coolmin = t_sh / xi
 # Simulation config
 config = SimulationConfig(
     solver_mode = FINITE_DIFFERENCE,
+    memory_analysis = True,
     progress_bar = True,
     dimensionality = 3,
     box_size = StaticFloatVector(L_x, L_y, L_z),
@@ -148,7 +176,7 @@ def single_interface(f_l, f_u, Z, z_center, smoothing_length):
 	)
 
 # helper data
-helper_data = get_helper_data(config)
+helper_data = get_helper_data(config, sharding=named_sharding if multi_gpu else None)
 registered_variables = get_registered_variables(config)
 
 # construct the initial state
@@ -211,6 +239,9 @@ initial_state = construct_primitive_state(
     gas_pressure         = pressure,
 )
 
+if multi_gpu:
+    initial_state = jax.device_put(initial_state, named_sharding)
+
 mixing_cooling_params = MixingCoolingParams(
     xi = xi,
     mach_number = mach_number,
@@ -246,7 +277,8 @@ if __name__ == "__main__":
         initial_state,
         config,
         params,
-        registered_variables
+        registered_variables,
+        sharding = named_sharding if multi_gpu else None
     )
 
     # save the final state for later analysis

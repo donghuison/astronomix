@@ -185,6 +185,7 @@ def get_absolute_velocity(
         return jnp.sqrt(
             primitive_state[registered_variables.velocity_index.x] ** 2
             + primitive_state[registered_variables.velocity_index.y] ** 2
+            + 1e-20
         )
     elif config.dimensionality == 3:
         return jnp.sqrt(
