@@ -11,10 +11,12 @@ autocvd(num_gpus=1)
 import jax
 
 # Enable double precision for better accuracy in convergence tests
-jax.config.update("jax_enable_x64", False)
+jax.config.update("jax_enable_x64", True)
 
+import matplotlib
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 import numpy as np
 
 from astronomix.data_classes.simulation_helper_data import get_helper_data
@@ -22,6 +24,7 @@ from astronomix.option_classes.simulation_config import (
     FINITE_VOLUME,
     FINITE_DIFFERENCE,
     SimulationConfig,
+    SnapshotSettings,
     StaticFloatVector,
     StaticIntVector,
     config_to_string,
@@ -38,17 +41,29 @@ from astronomix.test_setups.mhd.alfven_wave3D import setup_cp_alfven_wave, cp_al
 config_list = [
     SimulationConfig(
         solver_mode = FINITE_VOLUME,
+        memory_analysis = True,
+        print_elapsed_time = True,
         box_size = StaticFloatVector(3.0, 1.5, 1.5),
         mhd = True,
         dimensionality = 3,
-        progress_bar = True,
+        progress_bar = False,
+        return_snapshots = True,
+        snapshot_settings = SnapshotSettings(
+            return_final_state = True
+        )
     ),
     SimulationConfig(
         solver_mode = FINITE_DIFFERENCE,
+        memory_analysis = True,
+        print_elapsed_time = True,
         box_size = StaticFloatVector(3.0, 1.5, 1.5),
         mhd = True,
         dimensionality = 3,
-        progress_bar = True,
+        progress_bar = False,
+        return_snapshots = True,
+        snapshot_settings = SnapshotSettings(
+            return_final_state = True
+        )
     ),
 ]
 
@@ -58,11 +73,23 @@ def test_alfven_wave_convergence():
     # Resolutions to test: N (where the grid is 2N x N x N)
     N_values = [8, 16, 32, 64, 128]
     
-    # Create figure
-    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    # error figure
+    fig_err, ax_err = plt.subplots(1, 1, figsize=(8, 6))
+
+    # runtime figure
+    fig_runtime, ax_runtime = plt.subplots(3, 1, figsize=(8, 12))
+    # first row: error vs runtime
+    # second row: runtime vs N
+    # third row: time per iteration vs N
     
     # Dictionary to store L1 errors
     errors_dict = {solver_mode_to_string(config.solver_mode): [] for config in config_list}
+
+    # Dictionary to store runtimes
+    runtimes_dict = {solver_mode_to_string(config.solver_mode): [] for config in config_list}
+
+    # Dictionary to store num_iterations
+    iterations_dict = {solver_mode_to_string(config.solver_mode): [] for config in config_list}
 
     for base_config in config_list:
         
@@ -84,12 +111,17 @@ def test_alfven_wave_convergence():
             helper_data = get_helper_data(config)
 
             # run the simulation
-            final_state = time_integration(
+            result = time_integration(
                 initial_state,
                 config,
                 params,
                 registered_variables
             )
+            final_state = result.final_state
+            runtime = result.runtime
+            num_iterations = result.num_iterations
+
+            print(f"Completed {solver_mode_to_string(config.solver_mode)} with N={N} in {runtime:.2f} seconds over {num_iterations} iterations.")
 
             # get the reference analytic solution
             true_final_state = cp_alfven_wave_solution(
@@ -117,7 +149,10 @@ def test_alfven_wave_convergence():
             # Average over the 8 primitives
             total_l1_error = (err_rho + err_vx + err_vy + err_vz + err_p + err_bx + err_by + err_bz) / 8.0
             
+            # store results
             errors_dict[solver_mode_to_string(base_config.solver_mode)].append(total_l1_error)
+            runtimes_dict[solver_mode_to_string(base_config.solver_mode)].append(runtime)
+            iterations_dict[solver_mode_to_string(base_config.solver_mode)].append(num_iterations)
             
             # Basic assertion: ensures error strictly decreases as resolution increases
             # if len(errors_dict[solver_mode_to_string(base_config.solver_mode)]) > 1:
@@ -125,7 +160,7 @@ def test_alfven_wave_convergence():
             #         f"Error did not decrease for {solver_mode_to_string(base_config.solver_mode)} at N={N}"
 
         # Plot the L1 errors for the current config
-        ax.loglog(
+        ax_err.loglog(
             N_values,
             errors_dict[solver_mode_to_string(base_config.solver_mode)],
             marker='o',
@@ -133,9 +168,32 @@ def test_alfven_wave_convergence():
             label=solver_mode_to_string(base_config.solver_mode)
         )
 
-    # ==========================================
-    # Plot mathematical reference slopes
-    # ==========================================
+        # Plot runtime
+        ax_runtime[0].loglog(
+            runtimes_dict[solver_mode_to_string(base_config.solver_mode)],
+            errors_dict[solver_mode_to_string(base_config.solver_mode)],
+            marker='o',
+            linewidth=2,
+            label=solver_mode_to_string(base_config.solver_mode)
+        )
+        ax_runtime[1].loglog(
+            N_values,
+            runtimes_dict[solver_mode_to_string(base_config.solver_mode)],
+            marker='o',
+            linewidth=2,
+            label=solver_mode_to_string(base_config.solver_mode)
+        )
+        ax_runtime[2].loglog(
+            N_values,
+            [runtime / num_iter for runtime, num_iter in zip(runtimes_dict[solver_mode_to_string(base_config.solver_mode)], iterations_dict[solver_mode_to_string(base_config.solver_mode)])],
+            marker='o',
+            linewidth=2,
+            label=solver_mode_to_string(base_config.solver_mode)
+        )
+
+
+
+    # reference slopes
     N_arr = np.array(N_values)
     ref_2nd_order = (N_arr / N_arr[0]) ** (-2.0)
     ref_5th_order = (N_arr / N_arr[0]) ** (-5.0)
@@ -144,20 +202,48 @@ def test_alfven_wave_convergence():
     max_err_start = max([errs[0] for errs in errors_dict.values()])
     min_err_start = min([errs[0] for errs in errors_dict.values()])
     
-    ax.loglog(N_arr, max_err_start * ref_2nd_order, 'k--', alpha=0.7, label='$O(N^{-2})$ reference')
-    ax.loglog(N_arr, min_err_start * ref_5th_order, 'k:',  alpha=0.7, label='$O(N^{-5})$ reference')
+    ax_err.loglog(N_arr, max_err_start * ref_2nd_order, 'k--', alpha=0.7, label='$O(N^{-2})$ reference')
+    ax_err.loglog(N_arr, min_err_start * ref_5th_order, 'k:',  alpha=0.7, label='$O(N^{-5})$ reference')
 
     # Formatting
-    ax.set_xlabel('N (Grid size: 2N x N x N)', fontsize=12)
-    ax.set_ylabel('Average $L_1$ Error (Primitive Variables)', fontsize=12)
-    ax.set_title('3D CP Alfvén Wave Convergence', fontsize=14)
-    ax.set_xticks(N_values)
-    ax.set_xticklabels([str(n) for n in N_values])
-    ax.legend(loc='lower left', fontsize=9)
-    ax.grid(True, which="both", ls="-", alpha=0.2)
+    ax_err.set_xlabel('N (Grid size: 2N x N x N)', fontsize=12)
+    ax_err.set_ylabel('Average $L_1$ Error (Primitive Variables)', fontsize=12)
+    ax_err.set_title('3D CP Alfvén Wave Convergence', fontsize=14)
+    ax_err.set_xscale('log')
+    ax_err.xaxis.set_major_locator(ticker.FixedLocator(N_values))
+    ax_err.xaxis.set_major_formatter(ticker.FixedFormatter([str(n) for n in N_values]))
+    ax_err.xaxis.set_minor_locator(ticker.NullLocator())
+    ax_err.legend(loc='lower left', fontsize=9)
+    ax_err.grid(True, which="major", ls="-", alpha=0.2)
 
-    fig.tight_layout()
-    fig.savefig("figures/alfven_wave_convergence_test.svg")
+    fig_err.tight_layout()
+    fig_err.savefig("figures/alfven_wave_convergence_test.svg")
+
+    # runtime plots
+    ax_runtime[0].set_xlabel('Runtime (seconds)', fontsize=12)
+    ax_runtime[0].set_ylabel('Average $L_1$ Error', fontsize=12)
+    ax_runtime[0].set_title('Error vs Runtime', fontsize=14)
+    ax_runtime[0].legend(loc='upper right', fontsize=9)
+    ax_runtime[0].grid(True, which="major", ls="-", alpha=0.2)
+    ax_runtime[1].set_xlabel('N (Grid size: 2N x N x N)', fontsize=12)
+    ax_runtime[1].set_ylabel('Runtime (seconds)', fontsize=12)
+    ax_runtime[1].set_title('Runtime vs N', fontsize=14)
+    ax_runtime[1].legend(loc='upper left', fontsize=9)
+    ax_runtime[1].grid(True, which="major", ls="-", alpha=0.2)
+    ax_runtime[2].set_xlabel('N (Grid size: 2N x N x N)', fontsize=12)
+    ax_runtime[2].set_ylabel('Time per Iteration (seconds)', fontsize=12)
+    ax_runtime[2].set_title('Time per Iteration vs N', fontsize=14)
+    ax_runtime[2].legend(loc='upper left', fontsize=9)
+    ax_runtime[2].grid(True, which="major", ls="-", alpha=0.2)
+
+    for ax in [ax_runtime[1], ax_runtime[2]]:
+        ax.set_xscale('log')
+        ax.xaxis.set_major_locator(ticker.FixedLocator(N_values))
+        ax.xaxis.set_major_formatter(ticker.FixedFormatter([str(n) for n in N_values]))
+        ax.xaxis.set_minor_locator(ticker.NullLocator())
+
+    fig_runtime.tight_layout()
+    fig_runtime.savefig("figures/alfven_wave_runtime_analysis.svg")
 
 if __name__ == "__main__":
     test_alfven_wave_convergence()

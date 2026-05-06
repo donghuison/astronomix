@@ -45,8 +45,7 @@ num_bins = 400
 # the bin widths will still be in linear space
 temperature_bins = np.logspace(np.log10(T_cold), np.log10(T_hot), num_bins)
 
-# either this produces dV/dT and not dV/dlogT
-# or something is up with the data
+# produces dV/dT
 ax_pdf.hist(
     temp_flat,
     bins=temperature_bins,

@@ -191,6 +191,12 @@ class SnapshotSettings(NamedTuple):
     #: NOTE: currently only implemented for finite difference MHD
     return_magnetic_divergence: bool = False
 
+    #: Whether to return the temperature PDF (dV/dlogT)
+    return_temperature_pdf: bool = False
+    num_temperature_bins: int = 100
+    temperature_pdf_min: float = 1e-10
+    temperature_pdf_max: float = 1e10
+
 
 class BoundarySettings1D(NamedTuple):
     left_boundary: int = OPEN_BOUNDARY

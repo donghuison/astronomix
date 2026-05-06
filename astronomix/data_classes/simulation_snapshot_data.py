@@ -49,6 +49,9 @@ class SnapshotData(NamedTuple):
     #: (same for each time snapshot and each spectrum).
     k_spectra: jnp.ndarray = None
 
+    #: The temperature PDF (dV/dlogT) at the times the snapshots were taken.
+    temperature_pdf: jnp.ndarray = None
+
     # The runtime of the simulation-loop.
     runtime: float = 0.0
 

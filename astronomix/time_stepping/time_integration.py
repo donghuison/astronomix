@@ -236,6 +236,7 @@ def time_integration(
                 print(
                     f"⏱️ / 🔄 time per iteration: {(end_time - start_time) / num_iterations} seconds"
                 )
+                final_state = final_state._replace(runtime=end_time - start_time)
 
     return final_state
 
@@ -383,6 +384,12 @@ def _time_integration(
         else:            
             helicity_spectrum = None
 
+        temperature_pdf = (
+            jnp.zeros((config.num_snapshots, config.snapshot_settings.num_temperature_bins))
+            if config.snapshot_settings.return_temperature_pdf
+            else None
+        )
+
         current_checkpoint = 0
 
         snapshot_data = SnapshotData(
@@ -400,6 +407,7 @@ def _time_integration(
             kinetic_energy_spectrum=kinetic_energy_spectrum,
             magnetic_energy_spectrum=magnetic_energy_spectrum,
             helicity_spectrum=helicity_spectrum,
+            temperature_pdf=temperature_pdf,
             final_state=None,
         )
 
@@ -415,6 +423,7 @@ def _time_integration(
             magnetic_energy_spectrum=None,
             helicity_spectrum=None,
             k_spectra=None,
+            temperature_pdf=None,
         )
 
     # -------------------------------------------------------------
@@ -611,6 +620,32 @@ def _time_integration(
                     ].set(helicity_spectrum_i)
                 else:
                     helicity_spectrum = None
+
+                if config.snapshot_settings.return_temperature_pdf:
+                    # calculate temperature from ideal gas law
+                    # ASSUMING T = P / rho HERE!
+
+                    # calculate the temperature
+                    temperature = (
+                        unpad_primitive_state[registered_variables.pressure_index] / 
+                        unpad_primitive_state[registered_variables.density_index]
+                    )
+                    logT = jnp.log10(temperature)
+
+                    # calculate the temperature PDF (dV/dlogT)
+                    dV_dlogT, _ = jnp.histogram(
+                        logT.flatten(),
+                        range=(
+                            jnp.log10(config.snapshot_settings.temperature_pdf_min),
+                            jnp.log10(config.snapshot_settings.temperature_pdf_max)
+                        ),
+                        bins=config.snapshot_settings.num_temperature_bins,
+                    )
+                    temperature_pdf = snapshot_data.temperature_pdf.at[
+                        snapshot_data.current_checkpoint
+                    ].set(dV_dlogT)
+                else:                    
+                    temperature_pdf = None
                 
                 current_checkpoint = snapshot_data.current_checkpoint + 1
                 snapshot_data = snapshot_data._replace(
@@ -626,7 +661,8 @@ def _time_integration(
                     magnetic_divergence=magnetic_divergence,
                     kinetic_energy_spectrum=kinetic_energy_spectrum,
                     magnetic_energy_spectrum=magnetic_energy_spectrum,
-                    helicity_spectrum=helicity_spectrum
+                    helicity_spectrum=helicity_spectrum,
+                    temperature_pdf=temperature_pdf
                 )
                 return snapshot_data
 

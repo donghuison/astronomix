@@ -38,7 +38,7 @@ if __name__ == "__main__":
     if multi_gpu:
         # ==== GPU selection ====
         from autocvd import autocvd
-        autocvd(num_gpus=2)
+        autocvd(num_gpus=4)
         # ruff: noqa: E402
         # =======================
     else:
@@ -103,12 +103,12 @@ from jax.sharding import PartitionSpec as P
 if multi_gpu:
 
     # mesh with variable axis
-    split = (1, 1, 1, 2)
+    split = (1, 1, 2, 2)
     sharding_mesh = jax.make_mesh(split, (VARAXIS, XAXIS, YAXIS, ZAXIS))
     named_sharding = jax.NamedSharding(sharding_mesh, P(VARAXIS, XAXIS, YAXIS, ZAXIS))
 
     # mesh no variable axis
-    split = (1, 1, 2)
+    split = (1, 2, 2)
     sharding_mesh_no_var = jax.make_mesh(split, (XAXIS, YAXIS, ZAXIS))
     named_sharding_no_var = jax.NamedSharding(sharding_mesh_no_var, P(XAXIS, YAXIS, ZAXIS))
 
@@ -146,6 +146,7 @@ t_coolmin = t_sh / xi
 config = SimulationConfig(
     solver_mode = FINITE_DIFFERENCE,
     memory_analysis = True,
+    print_elapsed_time = True,
     progress_bar = True,
     dimensionality = 3,
     box_size = StaticFloatVector(L_x, L_y, L_z),
@@ -165,7 +166,16 @@ config = SimulationConfig(
         )
     ),
 	frame_tracking = True,
-    return_snapshots = False
+    return_snapshots = True,
+    num_snapshots = 100,
+    snapshot_settings=SnapshotSettings(
+        return_final_state=True,
+        return_states=False,
+        return_temperature_pdf=True,
+        num_temperature_bins=100,
+        temperature_pdf_min=T_cold,
+        temperature_pdf_max=T_hot,
+    )
 )
 
 # tanh transition
@@ -273,7 +283,7 @@ config = finalize_config(config, initial_state.shape)
 if __name__ == "__main__":
 
     # run the simulation
-    final_state = time_integration(
+    result = time_integration(
         initial_state,
         config,
         params,
@@ -282,14 +292,14 @@ if __name__ == "__main__":
     )
 
     # save the final state for later analysis
-    jnp.savez("data/trml_final_state.npz", final_state=final_state)
+    jnp.savez("data/trml_final_state.npz", final_state=result.final_state)
 
     # retrieve the initial and final temperature
     initial_temperature = (
         initial_state[registered_variables.pressure_index] / initial_state[registered_variables.density_index]
     )
     final_temperature = (
-        final_state[registered_variables.pressure_index] / final_state[registered_variables.density_index]
+        result.final_state[registered_variables.pressure_index] / result.final_state[registered_variables.density_index]
     )
 
     # plot the results
@@ -325,3 +335,25 @@ if __name__ == "__main__":
 
     fig_temp.tight_layout()
     fig_temp.savefig("figures/trml_temperature.png", dpi=500)
+
+    # plot the average of the temperature PDF for t >= 10 t_sh
+    time_points = result.time_points
+    temperature_pdf = result.temperature_pdf
+    time_mask = time_points >= 10 * t_sh
+    print("Number of snapshots with t >= 10 t_sh:", time_mask.sum())
+    avg_dV_dlogT = temperature_pdf[time_mask].mean(axis=0)
+    logT_bin_edges = jnp.linspace(jnp.log10(T_cold), jnp.log10(T_hot), config.snapshot_settings.num_temperature_bins + 1)
+    logT_bin_centers = 0.5 * (logT_bin_edges[:-1] + logT_bin_edges[1:])
+    T_bin_centers = 10 ** logT_bin_centers
+    avg_dV_dT = avg_dV_dlogT / (T_bin_centers * jnp.log(10))  # convert from dV/dlogT to dV/dT
+    # normalize dV/dT so that its integral over T is 1 (i.e. it becomes a proper PDF)
+    V = jnp.sum(avg_dV_dT * (10 ** logT_bin_edges[1:] - 10 ** logT_bin_edges[:-1]))
+    avg_dV_dT = avg_dV_dT / V
+    fig_pdf, ax_pdf = plt.subplots()
+    ax_pdf.plot(T_bin_centers, avg_dV_dT)
+    ax_pdf.set_xlabel("log10(Temperature)")
+    ax_pdf.set_ylabel("dV/dT")
+    ax_pdf.set_title("Average Temperature PDF for t >= 10 t_sh")
+    ax_pdf.set_xscale("log")
+    ax_pdf.set_yscale("log")
+    fig_pdf.savefig("figures/trml_temperature_pdf.png", dpi=500)
