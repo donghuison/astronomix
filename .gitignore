@@ -6,6 +6,8 @@ package.json
 package-lock.json
 .firebase/
 
+CLAUDE.md
+
 arena/results/*/data
 
 tests/finite_difference/turb_frames

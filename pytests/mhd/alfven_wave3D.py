@@ -191,7 +191,53 @@ def test_alfven_wave_convergence():
             label=solver_mode_to_string(base_config.solver_mode)
         )
 
+    # save the astronomix results, FD
+    jnp.savez(
+        "data/astronomix/alfven_convergence_astronomix_FD.npz",
+        N_values=N_values,
+        l1_errors=errors_dict[solver_mode_to_string(FINITE_DIFFERENCE)],
+        runtimes=runtimes_dict[solver_mode_to_string(FINITE_DIFFERENCE)],
+        iterations=iterations_dict[solver_mode_to_string(FINITE_DIFFERENCE)],
+    )
+    # save the astronomix results, FV
+    jnp.savez(
+        "data/astronomix/alfven_convergence_astronomix_FV.npz",
+        N_values=N_values,
+        l1_errors=errors_dict[solver_mode_to_string(FINITE_VOLUME)],
+        runtimes=runtimes_dict[solver_mode_to_string(FINITE_VOLUME)],
+        iterations=iterations_dict[solver_mode_to_string(FINITE_VOLUME)],
+    )
 
+    # also plot athenaPK results
+    athena_results = jnp.load("data/athenapk/athenapk_alfven_convergence.npz")
+    ax_err.loglog(
+        athena_results['N_values'],
+        athena_results['l1_errors'],
+        marker='s',
+        linewidth=2,
+        label='AthenaPK'
+    )
+    ax_runtime[0].loglog(
+        athena_results['runtimes'],
+        athena_results['l1_errors'],
+        marker='s',
+        linewidth=2,
+        label='AthenaPK'
+    )
+    ax_runtime[1].loglog(
+        athena_results['N_values'],
+        athena_results['runtimes'],
+        marker='s',
+        linewidth=2,
+        label='AthenaPK'
+    )
+    ax_runtime[2].loglog(
+        athena_results['N_values'],
+        [time / iter for time, iter in zip(athena_results['runtimes'], athena_results['iterations'])],
+        marker='s',
+        linewidth=2,
+        label='AthenaPK'
+    )
 
     # reference slopes
     N_arr = np.array(N_values)
