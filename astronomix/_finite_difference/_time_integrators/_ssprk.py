@@ -221,6 +221,8 @@ def _ssprk4_with_ct(
             (q_final, bx_final, by_final, bz_final)
         )
 
+    # one could also write out everything (which is what I originally had),
+    # I used the fori_loop to possibly reduce the memory footprint
     (
         (q4, bx4, by4, bz4),
         (q_final, bx_final, by_final, bz_final)

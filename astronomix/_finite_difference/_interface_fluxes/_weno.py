@@ -349,6 +349,11 @@ def _weno_flux_x(
     if config.equation_of_state == ISOTHERMAL:
         num_modes -= 1
     
+    # I went for the for loop instead of one einsum
+    # because of memory considerations (the full projection
+    # matrix does not need to be materialized)
+    # But probably this (as I originally had it)
+    # would be faster (?).
     return jax.lax.fori_loop(
         0, num_modes,
         mode_flux,
