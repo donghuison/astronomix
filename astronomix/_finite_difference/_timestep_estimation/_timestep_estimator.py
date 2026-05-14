@@ -23,6 +23,7 @@ from astronomix.option_classes.simulation_config import (
     IDEAL_GAS,
     ISOTHERMAL,
     KINEMATIC_VISCOSITY,
+    PALLAS,
     STATE_TYPE,
     SimulationConfig,
 )
@@ -234,7 +235,7 @@ def _cfl_time_step_fd(
 
 
 @partial(jax.jit, static_argnames=["config", "registered_variables"])
-def _cfl_time_step_fd_hydro(
+def _cfl_time_step_fd_hydro_native(
     primitive_state: STATE_TYPE,
     grid_spacing: Union[float, Float[Array, ""]],
     dt_max: Union[float, Float[Array, ""]],
@@ -341,3 +342,142 @@ def _cfl_time_step_fd_hydro(
         dt_cfl = jnp.minimum(dt_cfl, dt_visc)
 
     return dt_cfl
+
+# -----------------------------------------------------------------------------
+# Backend-aware hydrodynamic CFL wrapper.
+# -----------------------------------------------------------------------------
+
+
+def _backend_name(config: SimulationConfig) -> str:
+    backend = getattr(config, "backend", "NATIVE_JAX")
+    name = getattr(backend, "name", None)
+    if name is not None:
+        return str(name).upper()
+    value = getattr(backend, "value", None)
+    if isinstance(value, str):
+        return value.upper()
+    return str(backend).upper()
+
+
+def _backend_is_pallas(config: SimulationConfig) -> bool:
+    return config.backend == PALLAS
+
+
+def _hydro_fast_cfl_supported(config: SimulationConfig, registered_variables: RegisteredVariables) -> bool:
+    if not _backend_is_pallas(config):
+        return False
+    if not hasattr(registered_variables, "velocity_index"):
+        return False
+    if config.equation_of_state == IDEAL_GAS and not hasattr(registered_variables, "pressure_index"):
+        return False
+    return True
+
+
+@partial(jax.jit, static_argnames=["config", "registered_variables"])
+def _cfl_time_step_fd_hydro_fast(
+    primitive_state: STATE_TYPE,
+    grid_spacing: Union[float, Float[Array, ""]],
+    dt_max: Union[float, Float[Array, ""]],
+    gamma: Union[float, Float[Array, ""]],
+    config: SimulationConfig,
+    params: SimulationParams,
+    registered_variables: RegisteredVariables,
+    C_CFL: Union[float, Float[Array, ""]] = 0.8,
+) -> Float[Array, ""]:
+    """Lower-storage hydro CFL estimator used by the Pallas backend.
+
+    It computes max(|v_d| + c) directly from primitive variables rather than
+    materialising all characteristic eigenvalue arrays.  The formula is
+    equivalent for Euler hydro.
+    """
+    rho = primitive_state[registered_variables.density_index]
+
+    if config.dimensionality == 1:
+        vx = primitive_state[registered_variables.velocity_index]
+        vy = 0.0
+        vz = 0.0
+    else:
+        vx = primitive_state[registered_variables.velocity_index.x]
+        if config.dimensionality >= 2:
+            vy = primitive_state[registered_variables.velocity_index.y]
+        else:
+            vy = 0.0
+        if config.dimensionality == 3:
+            vz = primitive_state[registered_variables.velocity_index.z]
+        else:
+            vz = 0.0
+
+    if config.equation_of_state == IDEAL_GAS:
+        pressure = primitive_state[registered_variables.pressure_index]
+        if config.enforce_positivity:
+            rho = jnp.maximum(rho, params.minimum_density)
+            pressure = jnp.maximum(pressure, params.minimum_pressure)
+        sound_speed = jnp.sqrt(jnp.maximum(gamma * pressure / rho, 1e-12))
+    elif config.equation_of_state == ISOTHERMAL:
+        sound_speed = params.isothermal_sound_speed
+
+    lambda_x = jnp.max(jnp.abs(vx) + sound_speed)
+    if config.dimensionality >= 2:
+        lambda_y = jnp.max(jnp.abs(vy) + sound_speed)
+    else:
+        lambda_y = 0.0
+    if config.dimensionality == 3:
+        lambda_z = jnp.max(jnp.abs(vz) + sound_speed)
+    else:
+        lambda_z = 0.0
+
+    dt_cfl = C_CFL * grid_spacing / (lambda_x + lambda_y + lambda_z)
+    dt_cfl = jnp.minimum(dt_cfl, dt_max)
+
+    if config.diffusion:
+        if config.enforce_positivity:
+            rho_min = jnp.maximum(
+                jnp.min(primitive_state[registered_variables.density_index]),
+                params.minimum_density,
+            )
+        else:
+            rho_min = jnp.min(primitive_state[registered_variables.density_index])
+
+        if config.viscosity_type == DYNAMIC_VISCOSITY:
+            nu_max = params.viscosity / rho_min
+        elif config.viscosity_type == KINEMATIC_VISCOSITY:
+            nu_max = params.viscosity
+
+        dt_visc = C_CFL * grid_spacing**2 / (2.0 * config.dimensionality * nu_max)
+        dt_cfl = jnp.minimum(dt_cfl, dt_visc)
+
+    return dt_cfl
+
+
+@partial(jax.jit, static_argnames=["config", "registered_variables"])
+def _cfl_time_step_fd_hydro(
+    primitive_state: STATE_TYPE,
+    grid_spacing: Union[float, Float[Array, ""]],
+    dt_max: Union[float, Float[Array, ""]],
+    gamma: Union[float, Float[Array, ""]],
+    config: SimulationConfig,
+    params: SimulationParams,
+    registered_variables: RegisteredVariables,
+    C_CFL: Union[float, Float[Array, ""]] = 0.8,
+) -> Float[Array, ""]:
+    if _hydro_fast_cfl_supported(config, registered_variables):
+        return _cfl_time_step_fd_hydro_fast(
+            primitive_state,
+            grid_spacing,
+            dt_max,
+            gamma,
+            config,
+            params,
+            registered_variables,
+            C_CFL,
+        )
+    return _cfl_time_step_fd_hydro_native(
+        primitive_state,
+        grid_spacing,
+        dt_max,
+        gamma,
+        config,
+        params,
+        registered_variables,
+        C_CFL,
+    )

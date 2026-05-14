@@ -1,6 +1,6 @@
 import math
 from types import NoneType
-from typing import NamedTuple, Union
+from typing import NamedTuple, Tuple, Union
 
 import jax
 
@@ -19,6 +19,10 @@ from jaxtyping import Array, Float
 from astronomix._physics_modules._turbulent_forcing._turbulent_forcing_options import TurbulentForcingConfig
 
 # ===================== constant definition =====================
+
+# backends (very limited support currently)
+NATIVE_JAX = 0
+PALLAS = 1
 
 # solver modes
 FINITE_VOLUME = 0
@@ -55,6 +59,7 @@ MIDPOINT_OPTIM = 10 # experiment
 MUSCL = 1
 # currently only for finite difference
 RK4_SSP = 2
+RK4_LSRK = 3
 
 # boundary conditions
 OPEN_BOUNDARY = 0
@@ -215,6 +220,12 @@ class SimulationConfig(NamedTuple):
     """
 
     # Static simulation parameters
+
+    #: Backend
+    backend: int = NATIVE_JAX
+    pallas_block_shape: Tuple[int, int, int] = (4, 4, 8)
+    pallas_use_triton: bool = True
+    pallas_interpret: bool = False
 
     #: Basic solver mode, either finite volume or finite difference.
     #: FINITE_DIFFERENCE is for now only planned for the HOW_MHD

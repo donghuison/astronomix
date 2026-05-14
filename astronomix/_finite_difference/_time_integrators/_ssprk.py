@@ -29,9 +29,184 @@ from astronomix._geometry.boundaries import _boundary_handler
 from astronomix._physics_modules.run_physics_modules import _physics_sources
 from astronomix._stencil_operations._stencil_operations import _shift
 from astronomix.data_classes.simulation_helper_data import HelperData
-from astronomix.option_classes.simulation_config import CONSERVATIVE_GAS_STATE, GHOST_CELLS, MAGNETIC_FIELD_ONLY, SimulationConfig
+from astronomix.option_classes.simulation_config import CONSERVATIVE_GAS_STATE, GHOST_CELLS, MAGNETIC_FIELD_ONLY, PALLAS, SimulationConfig
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.variable_registry.registered_variables import RegisteredVariables
+
+try:
+    from jax.experimental import pallas as pl
+except Exception:  # pragma: no cover - optional backend
+    pl = None
+
+try:
+    from jax.experimental.pallas import triton as pltriton
+except Exception:  # pragma: no cover - optional backend
+    pltriton = None
+
+
+
+# -----------------------------------------------------------------------------
+# Optional Pallas backend helpers for hydro-only flux divergence.
+# -----------------------------------------------------------------------------
+
+
+def _backend_name(config: SimulationConfig) -> str:
+    backend = getattr(config, "backend", "NATIVE_JAX")
+    name = getattr(backend, "name", None)
+    if name is not None:
+        return str(name).upper()
+    value = getattr(backend, "value", None)
+    if isinstance(value, str):
+        return value.upper()
+    return str(backend).upper()
+
+
+def _backend_is_pallas(config: SimulationConfig) -> bool:
+    return config.backend == PALLAS
+
+
+def _default_pallas_block_shape(ndim: int) -> tuple[int, int, int]:
+    if ndim == 1:
+        return (128, 1, 1)
+    if ndim == 2:
+        return (16, 16, 1)
+    return (4, 4, 8)
+
+
+def _as_3tuple_block_shape(block_shape, ndim: int) -> tuple[int, int, int]:
+    if block_shape is None:
+        return _default_pallas_block_shape(ndim)
+    if isinstance(block_shape, str):
+        parts = tuple(int(part.strip()) for part in block_shape.split(",") if part.strip())
+    else:
+        parts = tuple(int(x) for x in block_shape)
+    if len(parts) == 1:
+        parts = (parts[0], 1, 1)
+    elif len(parts) == 2:
+        parts = (parts[0], parts[1], 1)
+    elif len(parts) >= 3:
+        parts = parts[:3]
+    else:
+        parts = _default_pallas_block_shape(ndim)
+    if ndim == 1:
+        return (parts[0], 1, 1)
+    if ndim == 2:
+        return (parts[0], parts[1], 1)
+    return parts
+
+
+def _pallas_compiler_params(config: SimulationConfig):
+    use_triton = bool(getattr(config, "pallas_use_triton", True))
+    if use_triton and pltriton is not None:
+        return pltriton.CompilerParams(num_warps=int(getattr(config, "pallas_num_warps", 4)))
+    return None
+
+
+def _hydro_pallas_divergence_supported(state, config: SimulationConfig) -> bool:
+    if pl is None:
+        return False
+    if not _backend_is_pallas(config):
+        return False
+    if bool(getattr(config, "mhd", False)):
+        return False
+    ndim = int(config.dimensionality)
+    if ndim not in (1, 2, 3):
+        return False
+    if state.ndim != ndim + 1:
+        return False
+    block_shape = _as_3tuple_block_shape(getattr(config, "pallas_block_shape", None), ndim)
+    for n, b in zip(state.shape[1:], block_shape[:ndim], strict=True):
+        if int(n) % int(b) != 0:
+            return False
+    return True
+
+
+def _hydro_flux_divergence_pallas(dF_x, dF_y, dF_z, dtdx, config: SimulationConfig):
+    """Pallas flux divergence for hydro RHS after WENO flux reconstruction.
+
+    This replaces the full-array shifted flux differences in the hydro SSPRK RHS.
+    MHD/CT does not call this helper.
+    """
+    ndim = int(config.dimensionality)
+    nvars = int(dF_x.shape[0])
+    spatial_shape = tuple(int(x) for x in dF_x.shape[1:])
+    nx = spatial_shape[0]
+    ny = spatial_shape[1] if ndim >= 2 else 1
+    nz = spatial_shape[2] if ndim == 3 else 1
+    bx, by, bz = _as_3tuple_block_shape(getattr(config, "pallas_block_shape", None), ndim)
+    grid = (nx // bx, ny // by, nz // bz)
+
+    if ndim == 1:
+        block_shape = (nvars, bx)
+        out_spec = pl.BlockSpec(block_shape, lambda bi, bj, bk: (0, bi))
+        flux_spec = pl.BlockSpec(dF_x.shape, lambda bi, bj, bk: (0, 0))
+    elif ndim == 2:
+        block_shape = (nvars, bx, by)
+        out_spec = pl.BlockSpec(block_shape, lambda bi, bj, bk: (0, bi, bj))
+        flux_spec = pl.BlockSpec(dF_x.shape, lambda bi, bj, bk: (0, 0, 0))
+    else:
+        block_shape = (nvars, bx, by, bz)
+        out_spec = pl.BlockSpec(block_shape, lambda bi, bj, bk: (0, bi, bj, bk))
+        flux_spec = pl.BlockSpec(dF_x.shape, lambda bi, bj, bk: (0, 0, 0, 0))
+
+    scalar_spec = pl.BlockSpec((), lambda bi, bj, bk: ())
+
+    def kernel(fx_ref, fy_ref, fz_ref, dtdx_ref, rhs_ref):
+        bi = pl.program_id(0)
+        bj = pl.program_id(1)
+        bk = pl.program_id(2)
+
+        if ndim == 1:
+            ii = (bi * bx + jnp.arange(bx)) % nx
+        elif ndim == 2:
+            ii = (bi * bx + jnp.arange(bx)[:, None]) % nx
+            jj = (bj * by + jnp.arange(by)[None, :]) % ny
+        else:
+            ii = (bi * bx + jnp.arange(bx)[:, None, None]) % nx
+            jj = (bj * by + jnp.arange(by)[None, :, None]) % ny
+            kk = (bk * bz + jnp.arange(bz)[None, None, :]) % nz
+
+        def fx(var):
+            if ndim == 1:
+                return fx_ref[var, ii] - fx_ref[var, (ii - 1) % nx]
+            if ndim == 2:
+                return fx_ref[var, ii, jj] - fx_ref[var, (ii - 1) % nx, jj]
+            return fx_ref[var, ii, jj, kk] - fx_ref[var, (ii - 1) % nx, jj, kk]
+
+        def fy(var):
+            if ndim == 1:
+                return 0.0
+            if ndim == 2:
+                return fy_ref[var, ii, jj] - fy_ref[var, ii, (jj - 1) % ny]
+            return fy_ref[var, ii, jj, kk] - fy_ref[var, ii, (jj - 1) % ny, kk]
+
+        def fz(var):
+            if ndim < 3:
+                return 0.0
+            return fz_ref[var, ii, jj, kk] - fz_ref[var, ii, jj, (kk - 1) % nz]
+
+        for var in range(nvars):
+            rhs_ref[var, ...] = -dtdx_ref[()] * (fx(var) + fy(var) + fz(var))
+
+    kwargs = {}
+    compiler_params = _pallas_compiler_params(config)
+    if compiler_params is not None:
+        kwargs["compiler_params"] = compiler_params
+
+    dummy_y = dF_x if dF_y is None else dF_y
+    dummy_z = dF_x if dF_z is None else dF_z
+
+    return pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(dF_x.shape, dF_x.dtype),
+        grid=grid,
+        in_specs=[flux_spec, flux_spec, flux_spec, scalar_spec],
+        out_specs=out_spec,
+        interpret=bool(getattr(config, "pallas_interpret", False)),
+        name="hydro_flux_divergence",
+        **kwargs,
+    )(dF_x, dummy_y, dummy_z, jnp.asarray(dtdx, dtype=dF_x.dtype))
+
 
 @partial(jax.jit, static_argnames=["registered_variables", "config"], donate_argnames=["conserved_state", "bx_interface", "by_interface", "bz_interface"])
 def _ssprk4_with_ct(
@@ -302,8 +477,18 @@ def _ssprk4_hydro(
         if config.dimensionality == 3:
             dF_z = _weno_flux_z(current_q, params, config, registered_variables)
 
-        # Calculate RHS for conserved fluid variables
-        if config.dimensionality == 1:
+        # Calculate RHS for conserved fluid variables.  In hydro/Pallas mode,
+        # avoid materialising shifted flux arrays for the divergence.  The MHD/CT
+        # integrator above keeps using the original native-JAX path.
+        if _hydro_pallas_divergence_supported(current_q, config):
+            rhs_q = _hydro_flux_divergence_pallas(
+                dF_x,
+                dF_y if config.dimensionality >= 2 else None,
+                dF_z if config.dimensionality == 3 else None,
+                dtdx,
+                config,
+            )
+        elif config.dimensionality == 1:
             rhs_q = -dtdx * (
                 (dF_x - _shift(dF_x, 1, axis=1))
             )
