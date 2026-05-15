@@ -14,6 +14,7 @@ from astronomix._finite_difference._fluid_equations._equations import conserved_
 from astronomix._finite_difference._magnetic_update._constrained_transport import update_cell_center_fields
 from astronomix._finite_difference._time_integrators._ssprk import (
     _lsrk4_hydro,
+    _lsrk4_with_ct,
     _ssprk4_hydro,
     _ssprk4_with_ct,
 )
@@ -61,8 +62,15 @@ def _evolve_state_fd(
         byb = primitive_state[registered_variables.interface_magnetic_field_index.y]
         bzb = primitive_state[registered_variables.interface_magnetic_field_index.z]
 
-        # update conserved state and interface magnetic fields
-        conserved_state, bxb, byb, bzb = _ssprk4_with_ct(
+        # update conserved state and interface magnetic fields — RK4_LSRK
+        # selects the 2N-storage Carpenter-Kennedy LSRK4 variant (saves one
+        # conserved + three interface-B carry registers vs SSPRK4).
+        if config.time_integrator == RK4_LSRK:
+            mhd_integrator = _lsrk4_with_ct
+        else:
+            mhd_integrator = _ssprk4_with_ct
+
+        conserved_state, bxb, byb, bzb = mhd_integrator(
             conserved_state,
             bxb,
             byb,

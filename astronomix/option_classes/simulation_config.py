@@ -159,8 +159,14 @@ FIELD_TYPE = Union[
 class SnapshotSettings(NamedTuple):
     """Settings for the snapshot output of the simulation."""
 
-    #: Whether to return states during the simulation.
-    return_states: bool = True
+    #: Whether to record the full primitive state at every checkpoint.
+    #: This is the single biggest snapshot allocation
+    #: (``num_snapshots × num_vars × num_cells^d``); it is **opt-in**.
+    #: Set to ``True`` if you actually need the per-snapshot states; for
+    #: the common case of only wanting a final state plus integrated
+    #: diagnostics (energies, total mass, runtime, num_iterations), the
+    #: default ``False`` skips the per-snapshot state allocation entirely.
+    return_states: bool = False
 
     #: Whether to return the final state of the simulation.
     return_final_state: bool = False
@@ -227,6 +233,15 @@ class SimulationConfig(NamedTuple):
     pallas_use_triton: bool = True
     pallas_interpret: bool = False
     pallas_num_warps: int = 4
+    #: Toggle for the Pallas constrained-transport helpers
+    #: (``update_cell_center_fields``, ``constrained_transport_rhs``).
+    #: Disabled by default: the staged Pallas-CT pipeline gives a clear
+    #: memory win at small grids (~65% temp at N=16 on alfven_wave3D)
+    #: but only marginal savings at production scale (~2% temp at N=64)
+    #: while adding ~25s of one-time compile cost.  Flip to True if the
+    #: small-N memory profile matters; the rest of the Pallas backend
+    #: stays on regardless.
+    pallas_ct: bool = False
 
     #: Basic solver mode, either finite volume or finite difference.
     #: FINITE_DIFFERENCE is for now only planned for the HOW_MHD

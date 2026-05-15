@@ -552,6 +552,50 @@ regression), plus any shock-tube test under `tests/hydro_tests/`.
    buffer count dropped before chasing performance.
 6. Benchmark wall-clock on a representative grid (128³ for 3D).
 
+### 4.5 Hot-path leaf ops — DONE
+
+After the main WENO + LSRK + CT pipeline was on Pallas, three leaf ops
+were still going through native JAX every stage and showing up as
+identifiable temp-buffer allocations.
+
+**`_enforce_positivity` (per-cell floor on ρ and p).** Ported to a
+pointwise Pallas kernel with `input_output_aliases={0: 0}` so the
+floored conserved state is written back into the input buffer
+in-place. Supports 1/2/3D, IDEAL_GAS and ISOTHERMAL, with or without
+MHD. Files:
+`astronomix/_finite_difference/_fluid_equations/_enforce_positivity.py`
+(dispatch + native fallback) and `_enforce_positivity_pallas.py`
+(kernel).
+
+**MHD CFL fast path.** `_cfl_time_step_fd` used to materialise the full
+seven-mode characteristic eigenvalue array for every cell at every
+step. Mirroring the hydro fast path, `_cfl_time_step_fd_mhd_fast` (in
+`_timestep_estimator.py`) computes the fast magnetosonic speed
+``c_fast_d² = ½·(b²/ρ + c_s² + √((b²/ρ + c_s²)² − 4·B_d²/ρ·c_s²))``
+pointwise per cell and reduces ``max(|v_d| + c_fast_d)`` per axis.
+Pure-JAX, no Pallas kernel — what matters is that no full-state
+eigenvalue intermediate is allocated. Gated by
+`_mhd_fast_cfl_supported`, active whenever `backend == PALLAS`.
+
+**`pallas_ct` toggle.** Switching CT itself to Pallas (`pallas_ct=True`
+in `SimulationConfig`) replaces the four native CT stages with three
+bounded-halo Pallas kernels (`_constrained_transport_pallas.py`). The
+toggle defaults to **False** because compile cost dominates at
+production-scale resolutions — measured on the
+`pytests/mhd/alfven_wave3D.py` N=32 setup (245 timesteps, x64):
+
+| Config | Temp | Warm runtime | Compile | µs/iter | L1 vs native |
+|---|---|---|---|---|---|
+| Native | 49.6 MB | 4.35 s | 25 s | 17753 | — |
+| Pallas, `pallas_ct=False` | 32.5 MB | **0.98 s** | 57 s | **4008** | 3.6e-15 |
+| Pallas, `pallas_ct=True` | 30.5 MB | 1.18 s | 68 s | 4836 | 3.6e-15 |
+
+`pallas_ct=False` is the right default: 4.4× warm speedup over native
+at 1.3× compile cost, with only 2 MB more temp than the fully-on
+variant. `pallas_ct=True` saves the extra 2 MB and is the right
+choice when working memory is the binding constraint, at the cost of
+~11 s extra compile.
+
 ---
 
 ## 4.4 The x64 / Triton fix (was a real bug, now resolved)
@@ -665,8 +709,10 @@ happens.  The ``pallasify`` skill must enforce this — see its
 | `astronomix/_finite_difference/_interface_fluxes/_weno.py` | Hydro WENO kernels (Pallas + native), block-shape helpers, supported-predicate, eigenstructure-projection inlined in Pallas form. |
 | `astronomix/_finite_difference/_time_integrators/_ssprk.py` | SSPRK4 (native), LSRK4 (Pallas-friendly 2N-storage), per-axis Pallas divergence kernel with `scale_in` + `input_output_aliases`, shared `_hydro_step_rhs`. |
 | `astronomix/_finite_difference/_state_evolution/_evolve_state.py` | Top-level FD dispatch; picks SSPRK4 vs LSRK4 based on `config.time_integrator`. |
-| `astronomix/_finite_difference/_timestep_estimation/_timestep_estimator.py` | Backend-aware CFL estimator; Pallas mode skips the full-state characteristic eigenvalue arrays and just reads primitive `|v| + c`. |
-| `astronomix/option_classes/simulation_config.py` | `backend`, `pallas_block_shape`, `pallas_use_triton`, `pallas_interpret`, `pallas_num_warps`, `donate_state`, `time_integrator` knobs. |
+| `astronomix/_finite_difference/_timestep_estimation/_timestep_estimator.py` | Backend-aware CFL estimator; Pallas mode skips the full-state characteristic eigenvalue arrays. Hydro path reads primitive `|v| + c`; MHD path uses `_cfl_time_step_fd_mhd_fast` for the per-cell fast-magnetosonic speed. |
+| `astronomix/_finite_difference/_fluid_equations/_enforce_positivity.py` + `_enforce_positivity_pallas.py` | Pointwise floor on ρ and p; Pallas kernel writes back in-place via `input_output_aliases={0:0}`. |
+| `astronomix/_finite_difference/_magnetic_update/_constrained_transport_pallas.py` | Optional Pallas CT (3 bounded-halo kernels). Gated by `config.pallas_ct` (default False — see §4.5 for the compile/runtime tradeoff). |
+| `astronomix/option_classes/simulation_config.py` | `backend`, `pallas_block_shape`, `pallas_use_triton`, `pallas_interpret`, `pallas_num_warps`, `pallas_ct`, `donate_state`, `time_integrator` knobs. |
 | `tests/pallas/sedov3D.py` | The canonical hydro Pallas benchmark — produces the figure + memory/runtime printout. |
 | `pytests/mhd/alfven_wave3D.py` | MHD convergence test (3D CP Alfvén wave, N=8..128, both FV and FD).  Acceptance gate for MHD Pallas changes — L1 error must match the NATIVE backend to machine precision. |
 

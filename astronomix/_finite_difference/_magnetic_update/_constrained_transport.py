@@ -49,33 +49,79 @@ def constrained_transport_rhs(
     weno_flux_x,
     weno_flux_y,
     weno_flux_z,
-    dtdx, 
+    dtdx,
     dtdy,
     dtdz,
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ):
+    """Public entry point — accepts the full 8-var WENO flux arrays and
+    delegates to ``_constrained_transport_rhs_from_slices``.  Kept
+    backwards-compatible with the original signature; new memory-aware
+    callers should pre-extract the six magnetic-flux slices and call the
+    private helper directly so the full ``dF_x/y/z`` arrays can be freed
+    before CT runs.
     """
-    Here we compute the RHS updates for the interface magnetic fields.
-    """
-
-    # Step 0: retrieve variables
-
-    # at index i, the fluxes are at interfaces i+1/2
-    By_flux_x_interface = weno_flux_x[registered_variables.magnetic_index.y]
-    Bz_flux_x_interface = weno_flux_x[registered_variables.magnetic_index.z]
+    By_flux_x = weno_flux_x[registered_variables.magnetic_index.y]
+    Bz_flux_x = weno_flux_x[registered_variables.magnetic_index.z]
     if config.dimensionality >= 2:
-        Bx_flux_y_interface = weno_flux_y[registered_variables.magnetic_index.x]
-        Bz_flux_y_interface = weno_flux_y[registered_variables.magnetic_index.z]
+        Bx_flux_y = weno_flux_y[registered_variables.magnetic_index.x]
+        Bz_flux_y = weno_flux_y[registered_variables.magnetic_index.z]
+    else:
+        Bx_flux_y = 0.0
+        Bz_flux_y = 0.0
     if config.dimensionality == 3:
-        Bx_flux_z_interface = weno_flux_z[registered_variables.magnetic_index.x]
-        By_flux_z_interface = weno_flux_z[registered_variables.magnetic_index.y]
-    if config.dimensionality < 3:
-        Bx_flux_z_interface = 0.0
-        By_flux_z_interface = 0.0
-    if config.dimensionality < 2:
-        Bx_flux_y_interface = 0.0
-        Bz_flux_y_interface = 0.0
+        Bx_flux_z = weno_flux_z[registered_variables.magnetic_index.x]
+        By_flux_z = weno_flux_z[registered_variables.magnetic_index.y]
+    else:
+        Bx_flux_z = 0.0
+        By_flux_z = 0.0
+    return _constrained_transport_rhs_from_slices(
+        conserved_state,
+        By_flux_x, Bz_flux_x,
+        Bx_flux_y, Bz_flux_y,
+        Bx_flux_z, By_flux_z,
+        dtdx, dtdy, dtdz,
+        config, registered_variables,
+    )
+
+
+@partial(jax.jit, static_argnames=["registered_variables", "config"])
+def _constrained_transport_rhs_from_slices(
+    conserved_state,
+    By_flux_x_interface,
+    Bz_flux_x_interface,
+    Bx_flux_y_interface,
+    Bz_flux_y_interface,
+    Bx_flux_z_interface,
+    By_flux_z_interface,
+    dtdx,
+    dtdy,
+    dtdz,
+    config: SimulationConfig,
+    registered_variables: RegisteredVariables,
+):
+    """Compute the CT magnetic-field RHS from the six single-channel
+    magnetic-flux slices CT actually needs (instead of the three 8-var
+    ``dF_x/y/z`` arrays).  This is the body of the original
+    ``constrained_transport_rhs``; the only change is the input signature
+    — letting callers free the full ``dF_x/y/z`` buffers as soon as the
+    fluid-flux divergence step is done and keep only ~6× state/8 worth of
+    magnetic flux around for the EMF computation.
+
+    The Pallas implementation in ``_constrained_transport_pallas`` runs
+    a three-stage split pipeline (modified flux → edge EMF → smoothed
+    curl) so each Pallas kernel has bounded halo and compiles fast.
+    """
+    if _ct_rhs_pallas_supported(conserved_state, config):
+        return _ct_rhs_pallas(
+            conserved_state,
+            By_flux_x_interface, Bz_flux_x_interface,
+            Bx_flux_y_interface, Bz_flux_y_interface,
+            Bx_flux_z_interface, By_flux_z_interface,
+            dtdx, dtdy, dtdz,
+            config, registered_variables,
+        )
 
     # cell-centered variables
     rho = conserved_state[registered_variables.density_index]
@@ -557,7 +603,17 @@ def update_cell_center_fields(
     Update cell-centered B field from interface values
     using 6th order interpolation. Update the total energy
     accordingly to conserve total energy.
+
+    The Pallas implementation in ``_constrained_transport_pallas`` is
+    used transparently when the Pallas backend is active and the
+    predicate applies (3D ideal-gas MHD).
     """
+    if _ct_update_cell_center_fields_pallas_supported(conserved_state, config):
+        return _ct_update_cell_center_fields_pallas(
+            conserved_state,
+            bx_interface, by_interface, bz_interface,
+            config, registered_variables,
+        )
 
     BX = registered_variables.magnetic_index.x
     BY = registered_variables.magnetic_index.y
@@ -620,3 +676,41 @@ def initialize_interface_fields(
         bz_interface = interp_center_to_face(magnetic_field_z, ZAXIS)
 
     return bx_interface, by_interface, bz_interface
+
+# -----------------------------------------------------------------------------
+# Pallas backend symbols (full implementation in ``_constrained_transport_pallas.py``).
+# Bottom-of-file import to avoid the circular-import trap; callers should hit
+# these predicates first and fall through to the native versions above.
+# -----------------------------------------------------------------------------
+from astronomix._finite_difference._magnetic_update._constrained_transport_pallas import (  # noqa: E402
+    _ct_rhs_pallas,
+    _ct_rhs_pallas_supported,
+    _ct_update_cell_center_fields_pallas,
+    _ct_update_cell_center_fields_pallas_supported,
+)
+
+
+# -----------------------------------------------------------------------------
+# Note on the Pallas CT port
+# -----------------------------------------------------------------------------
+# An initial single-kernel Pallas port of these helpers
+# (``_constrained_transport_pallas.py``) was written but trips a Triton
+# compile-time issue: the fused EMF kernel chains four stencil stages —
+# modified-flux interpolation (halo 2) → edge EMF interpolation (halo 2)
+# → point-values-to-averages smoothing (halo 1) → 6th-order curl (halo 3).
+# At small block shapes the worst-case combined halo is ~8 cells per
+# axis, and Triton's lowering of the deeply nested closure-call graph
+# produces enough IR that compilation exceeds reasonable budgets.  Both
+# Pallas helpers are therefore gated off by default (see the early
+# ``return False`` in their ``_*_pallas_supported`` predicates).
+#
+# The pallasify skill recipe handles this by splitting a deeply-chained
+# stencil into multiple smaller kernels, each with bounded halo:
+#   1. ``modified_flux_pallas``      — 6 outputs, halo 2/axis
+#   2. ``edge_emf_pallas``           — 3 outputs, halo 2/axis
+#   3. ``edge_average_pallas``       — 3 outputs, halo 1/axis (or fused with 4)
+#   4. ``curl_pallas`` (rhs_b{x,y,z}) — halo 3/axis
+# Each stage materialises one tile-of-output worth of data, so the
+# stages chain via JAX arrays at full state shape (still smaller than
+# the current native intermediates because there are fewer of them).
+# This split is what the skill currently documents in §4.4 of the guide.

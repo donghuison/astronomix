@@ -28,6 +28,7 @@ from astronomix._finite_difference._time_integrators._ssprk_pallas import (
 from astronomix._pallas_helpers import _backend_is_pallas, pl
 
 from astronomix._finite_difference._magnetic_update._constrained_transport import (
+    _constrained_transport_rhs_from_slices,
     constrained_transport_rhs,
     update_cell_center_fields,
 )
@@ -95,65 +96,80 @@ def _ssprk4_with_ct(
         dtdy = dt_tilde / grid_spacing
         dtdz = dt_tilde / grid_spacing
 
-        # Calculate fluxes based on the state of the current stage.  All three
-        # dF arrays must be retained here because constrained_transport_rhs
-        # needs them simultaneously to compute the edge-centered EMFs.  The
-        # divergence step further down is the only place where we can save
-        # memory — see below.
+        # Axis-incremental flow: build each axis's full dF, extract the
+        # two magnetic-flux slices CT needs (plus the density-flux slice
+        # for any physics modules that consume it), consume dF for the
+        # divergence step, then free dF.  CT runs at the end on the six
+        # small single-channel slices instead of the three full 8-var dF
+        # arrays — saves ~7/8 × 3 = 2.6× state-shape buffers at peak.
+        my = registered_variables.magnetic_index.y
+        mz = registered_variables.magnetic_index.z
+        di = registered_variables.density_index
+
+        # x-axis
         dF_x = _weno_flux_x(current_q, params, config, registered_variables)
-
-        if config.dimensionality == 1:
-            dF_y = 0.0
-            dF_z = 0.0
-
-        if config.dimensionality == 2:
-            dF_y = _weno_flux_y(current_q, params, config, registered_variables)
-            dF_z = 0.0
-
-        if config.dimensionality == 3:
-            dF_y = _weno_flux_y(current_q, params, config, registered_variables)
-            dF_z = _weno_flux_z(current_q, params, config, registered_variables)
-
-        # Calculate RHS for interface magnetic fields using Constrained Transport
-        rhs_bx, rhs_by, rhs_bz = constrained_transport_rhs(
-            current_q, dF_x, dF_y, dF_z, dtdx, dtdy, dtdz, config, registered_variables
-        )
-
-        # Calculate RHS for conserved fluid variables.  Under Pallas mode we
-        # use the per-axis div+accumulator kernel so the single physical RHS
-        # buffer is reused across axes (matches the hydro Pallas path).
+        By_flux_x = dF_x[my]
+        Bz_flux_x = dF_x[mz]
+        density_flux_x = dF_x[di]
         if use_pallas_div:
             rhs_q = _hydro_flux_div_axis_pallas(dF_x, dtdx, config, axis=0)
-            if config.dimensionality >= 2:
+        else:
+            rhs_q = -dtdx * (dF_x - _shift(dF_x, 1, axis=1))
+        del dF_x
+
+        # y-axis
+        if config.dimensionality >= 2:
+            mx = registered_variables.magnetic_index.x
+            dF_y = _weno_flux_y(current_q, params, config, registered_variables)
+            Bx_flux_y = dF_y[mx]
+            Bz_flux_y = dF_y[mz]
+            density_flux_y = dF_y[di]
+            if use_pallas_div:
                 rhs_q = _hydro_flux_div_axis_pallas(
                     dF_y, dtdy, config, axis=1, rhs_accumulator=rhs_q
                 )
-            if config.dimensionality == 3:
+            else:
+                rhs_q = rhs_q - dtdy * (dF_y - _shift(dF_y, 1, axis=2))
+            del dF_y
+        else:
+            Bx_flux_y = 0.0
+            Bz_flux_y = 0.0
+
+        # z-axis
+        if config.dimensionality == 3:
+            mx = registered_variables.magnetic_index.x
+            dF_z = _weno_flux_z(current_q, params, config, registered_variables)
+            Bx_flux_z = dF_z[mx]
+            By_flux_z = dF_z[my]
+            density_flux_z = dF_z[di]
+            if use_pallas_div:
                 rhs_q = _hydro_flux_div_axis_pallas(
                     dF_z, dtdz, config, axis=2, rhs_accumulator=rhs_q
                 )
-        elif config.dimensionality == 1:
-            rhs_q = -dtdx * (
-                (dF_x - _shift(dF_x, 1, axis=1))
-            )
-        elif config.dimensionality == 2:
-            rhs_q = -dtdx * (
-                (dF_x - _shift(dF_x, 1, axis=1))
-                + (dF_y - _shift(dF_y, 1, axis=2))
-            )
-        elif config.dimensionality == 3:
-            rhs_q = -dtdx * (
-                (dF_x - _shift(dF_x, 1, axis=1))
-                + (dF_y - _shift(dF_y, 1, axis=2))
-                + (dF_z - _shift(dF_z, 1, axis=3))
-            )
+            else:
+                rhs_q = rhs_q - dtdz * (dF_z - _shift(dF_z, 1, axis=3))
+            del dF_z
+        else:
+            Bx_flux_z = 0.0
+            By_flux_z = 0.0
+
+        # CT now runs on the six single-channel B-flux slices only — the
+        # three 8-var dF arrays have all been freed by this point.
+        rhs_bx, rhs_by, rhs_bz = _constrained_transport_rhs_from_slices(
+            current_q,
+            By_flux_x, Bz_flux_x,
+            Bx_flux_y, Bz_flux_y,
+            Bx_flux_z, By_flux_z,
+            dtdx, dtdy, dtdz,
+            config, registered_variables,
+        )
 
         if config.dimensionality == 1:
-            density_fluxes = (dF_x[registered_variables.density_index],)
+            density_fluxes = (density_flux_x,)
         elif config.dimensionality == 2:
-            density_fluxes = (dF_x[registered_variables.density_index], dF_y[registered_variables.density_index])
-        elif config.dimensionality == 3:
-            density_fluxes = (dF_x[registered_variables.density_index], dF_y[registered_variables.density_index], dF_z[registered_variables.density_index])
+            density_fluxes = (density_flux_x, density_flux_y)
+        else:
+            density_fluxes = (density_flux_x, density_flux_y, density_flux_z)
 
 
         # Add physics source terms
@@ -709,3 +725,245 @@ def _lsrk4_hydro(
         )
 
     return q_final
+
+
+@partial(
+    jax.jit,
+    static_argnames=["registered_variables", "config"],
+    donate_argnames=["conserved_state", "bx_interface", "by_interface", "bz_interface"],
+)
+def _lsrk4_with_ct(
+    conserved_state,
+    bx_interface,
+    by_interface,
+    bz_interface,
+    gamma: Union[float, jnp.ndarray],
+    grid_spacing: Union[float, jnp.ndarray],
+    dt: Union[float, jnp.ndarray],
+    params: SimulationParams,
+    helper_data: HelperData,
+    config: SimulationConfig,
+    registered_variables: RegisteredVariables,
+):
+    """Carpenter-Kennedy 2N-storage 5-stage 4th-order LSRK4 for MHD-CT.
+
+    Mirrors ``_lsrk4_hydro`` but carries the four MHD register pairs that
+    ``_ssprk4_with_ct``'s Spiteri-Ruuth scheme used as three-register triples:
+
+      * ``(q, dq)`` for the conserved state (8 vars),
+      * ``(bx, dbx)``, ``(by, dby)``, ``(bz, dbz)`` for the three interface
+        magnetic-field components.
+
+    Compared to the SSPRK4 carry ``(q0, q_curr, q_final)`` plus the three
+    ``(bx0, bx_curr, bx_final)`` triples this saves one full conserved
+    register plus three interface-B registers.
+
+    Trade-off: linear-stability CFL drops from SSPRK4's ~1.5 to roughly 1.4
+    and LSRK4 has no SSP property — same caveats as ``_lsrk4_hydro``.
+    Selected via ``config.time_integrator == RK4_LSRK``.
+    """
+
+    use_pallas_div = (
+        _backend_is_pallas(config) and pl is not None
+        and _div_axis_pallas_shape_ok(conserved_state, config)
+    )
+
+    a_coeffs = jnp.asarray(_LSRK4_A, dtype=conserved_state.dtype)
+    b_coeffs = jnp.asarray(_LSRK4_B, dtype=conserved_state.dtype)
+
+    dtdx = dt / grid_spacing
+    dtdy = dt / grid_spacing
+    dtdz = dt / grid_spacing
+
+    def compute_lqs(current_q, bx, by, bz, dq, a_coef):
+        """Compute ``dq_new = a_coef * dq + dt * L_q`` (in-place via the
+        Pallas div-axis accumulator when available) and the three
+        interface-B ``dt * L_b{x,y,z}`` increments.
+
+        The fused conserved-state path matches ``_lsrk4_hydro``: each
+        axis's divergence kernel folds ``a_coef * dq + (-dt/dx) * div``
+        directly into the ``dq`` register, so the LSRK4 update never
+        materialises a separate ``rhs_q``.  When Pallas is unavailable
+        we fall back to the explicit
+        ``rhs_q`` → ``dq = a_coef * dq + rhs_q`` pattern.
+        """
+        current_q = update_cell_center_fields(
+            current_q, bx, by, bz, config, registered_variables
+        )
+
+        # Axis-incremental flow — see the matching SSPRK4-with-CT path
+        # above for the rationale.  Each axis's full dF is built, the
+        # two magnetic-flux slices CT needs are extracted, dF is consumed
+        # for the divergence step (folding ``a_coef * dq`` in for the
+        # first axis), then freed.  CT runs on the six small slices only.
+        my = registered_variables.magnetic_index.y
+        mz = registered_variables.magnetic_index.z
+        di = registered_variables.density_index
+
+        # x-axis: fold the LSRK4 ``a_coef * dq + ...`` step into the
+        # first axis's div kernel via ``scale_in`` so ``rhs_q`` is never
+        # materialised; subsequent axes accumulate (scale_in = 1.0).  The
+        # native fallback path keeps the explicit ``rhs_q`` register.
+        dF_x = _weno_flux_x(current_q, params, config, registered_variables)
+        By_flux_x = dF_x[my]
+        Bz_flux_x = dF_x[mz]
+        density_flux_x = dF_x[di]
+        if use_pallas_div:
+            dq = _hydro_flux_div_axis_pallas(
+                dF_x, dtdx, config, axis=0,
+                rhs_accumulator=dq, scale_in=a_coef,
+            )
+            rhs_q_for_phys = None
+        else:
+            rhs_q_for_phys = -dtdx * (dF_x - _shift(dF_x, 1, axis=1))
+        del dF_x
+
+        if config.dimensionality >= 2:
+            mx = registered_variables.magnetic_index.x
+            dF_y = _weno_flux_y(current_q, params, config, registered_variables)
+            Bx_flux_y = dF_y[mx]
+            Bz_flux_y = dF_y[mz]
+            density_flux_y = dF_y[di]
+            if use_pallas_div:
+                dq = _hydro_flux_div_axis_pallas(
+                    dF_y, dtdy, config, axis=1, rhs_accumulator=dq,
+                )
+            else:
+                rhs_q_for_phys = rhs_q_for_phys - dtdy * (dF_y - _shift(dF_y, 1, axis=2))
+            del dF_y
+        else:
+            Bx_flux_y = 0.0
+            Bz_flux_y = 0.0
+
+        if config.dimensionality == 3:
+            mx = registered_variables.magnetic_index.x
+            dF_z = _weno_flux_z(current_q, params, config, registered_variables)
+            Bx_flux_z = dF_z[mx]
+            By_flux_z = dF_z[my]
+            density_flux_z = dF_z[di]
+            if use_pallas_div:
+                dq = _hydro_flux_div_axis_pallas(
+                    dF_z, dtdz, config, axis=2, rhs_accumulator=dq,
+                )
+            else:
+                rhs_q_for_phys = rhs_q_for_phys - dtdz * (dF_z - _shift(dF_z, 1, axis=3))
+            del dF_z
+        else:
+            Bx_flux_z = 0.0
+            By_flux_z = 0.0
+
+        rhs_bx, rhs_by, rhs_bz = _constrained_transport_rhs_from_slices(
+            current_q,
+            By_flux_x, Bz_flux_x,
+            Bx_flux_y, Bz_flux_y,
+            Bx_flux_z, By_flux_z,
+            dtdx, dtdy, dtdz,
+            config, registered_variables,
+        )
+
+        if config.dimensionality == 1:
+            density_fluxes = (density_flux_x,)
+        elif config.dimensionality == 2:
+            density_fluxes = (density_flux_x, density_flux_y)
+        else:
+            density_fluxes = (density_flux_x, density_flux_y, density_flux_z)
+
+        # Physics source terms.  On the Pallas-fused path the divergence
+        # has already been folded into ``dq``; we add ``dt * S`` on top.
+        # On the native fallback we still have a standalone ``rhs_q_for_phys``
+        # and fold the full LSRK4 update at the end.
+        if use_pallas_div:
+            sources = _physics_sources(
+                current_q,
+                density_fluxes,
+                dq[registered_variables.density_index],
+                dt,
+                gamma,
+                config,
+                params,
+                helper_data,
+                registered_variables,
+            )
+            if sources is not None:
+                dq = dq + sources
+        else:
+            rhs_q_for_phys += _physics_sources(
+                current_q,
+                density_fluxes,
+                rhs_q_for_phys[registered_variables.density_index],
+                dt,
+                gamma,
+                config,
+                params,
+                helper_data,
+                registered_variables,
+            )
+            dq = a_coef * dq + rhs_q_for_phys
+
+        return dq, rhs_bx, rhs_by, rhs_bz
+
+    def stage(stage_idx, carry):
+        q, dq, bx, dbx, by, dby, bz, dbz = carry
+
+        if config.enforce_positivity:
+            q = _enforce_positivity(
+                q, config, gamma,
+                params.minimum_density, params.minimum_pressure,
+                registered_variables,
+            )
+
+        if config.boundary_handling == GHOST_CELLS:
+            q = _boundary_handler(
+                q, config, registered_variables, params, CONSERVATIVE_GAS_STATE,
+            )
+            b_curr = _boundary_handler(
+                jnp.stack([bx, by, bz], axis=0),
+                config, registered_variables, params, MAGNETIC_FIELD_ONLY,
+            )
+            bx, by, bz = b_curr[0], b_curr[1], b_curr[2]
+
+        a_coef = a_coeffs[stage_idx]
+        b_coef = b_coeffs[stage_idx]
+
+        # ``compute_lqs`` returns the new ``dq`` already in LSRK4 form
+        # (``a_coef * dq_old + dt * L_q``) so no separate
+        # ``rhs_q + dq = a_coef * dq + rhs_q`` step is needed for the
+        # conserved-state register.  The interface-B deltas are small so
+        # they stay on the explicit LSRK4 update path.
+        dq, rhs_bx, rhs_by, rhs_bz = compute_lqs(q, bx, by, bz, dq, a_coef)
+
+        dbx = a_coef * dbx + rhs_bx
+        dby = a_coef * dby + rhs_by
+        dbz = a_coef * dbz + rhs_bz
+
+        q = q + b_coef * dq
+        bx = bx + b_coef * dbx
+        by = by + b_coef * dby
+        bz = bz + b_coef * dbz
+
+        return (q, dq, bx, dbx, by, dby, bz, dbz)
+
+    init = (
+        conserved_state,
+        jnp.zeros_like(conserved_state),
+        bx_interface, jnp.zeros_like(bx_interface),
+        by_interface, jnp.zeros_like(by_interface),
+        bz_interface, jnp.zeros_like(bz_interface),
+    )
+
+    q_final, _, bx_final, _, by_final, _, bz_final, _ = jax.lax.fori_loop(
+        0, 5, stage, init,
+    )
+
+    q_final = update_cell_center_fields(
+        q_final, bx_final, by_final, bz_final, config, registered_variables,
+    )
+
+    if config.enforce_positivity:
+        q_final = _enforce_positivity(
+            q_final, config, gamma,
+            params.minimum_density, params.minimum_pressure,
+            registered_variables,
+        )
+
+    return q_final, bx_final, by_final, bz_final

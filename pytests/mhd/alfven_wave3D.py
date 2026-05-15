@@ -23,7 +23,9 @@ from astronomix.data_classes.simulation_helper_data import get_helper_data
 from astronomix.option_classes.simulation_config import (
     FINITE_VOLUME,
     FINITE_DIFFERENCE,
+    NATIVE_JAX,
     PALLAS,
+    RK4_LSRK,
     SimulationConfig,
     SnapshotSettings,
     StaticFloatVector,
@@ -63,6 +65,7 @@ config_list = [
         pallas_use_triton = True,
         pallas_interpret = False,
         solver_mode = FINITE_DIFFERENCE,
+        # time_integrator = RK4_LSRK,
         memory_analysis = True,
         print_elapsed_time = True,
         box_size = StaticFloatVector(3.0, 1.5, 1.5),

@@ -31,7 +31,12 @@ def _enforce_positivity(
     minimum_pressure: Union[float, Float[Array, ""]],
     registered_variables: RegisteredVariables,
 ) -> STATE_TYPE:
-    
+    if _enforce_positivity_pallas_supported(conserved_state, config):
+        return _enforce_positivity_pallas(
+            conserved_state, config, gamma,
+            minimum_density, minimum_pressure, registered_variables,
+        )
+
     rho = conserved_state[registered_variables.density_index]
 
     # enforce minimum density
@@ -89,3 +94,9 @@ def _enforce_positivity(
     conserved_state = conserved_state.at[registered_variables.density_index].set(rho)
 
     return conserved_state
+
+# Bottom-of-file Pallas import (avoids circular import — see guide §2.4).
+from astronomix._finite_difference._fluid_equations._enforce_positivity_pallas import (  # noqa: E402
+    _enforce_positivity_pallas,
+    _enforce_positivity_pallas_supported,
+)

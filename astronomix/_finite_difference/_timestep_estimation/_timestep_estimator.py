@@ -31,6 +31,97 @@ from astronomix.option_classes.simulation_config import (
 from astronomix.option_classes.simulation_params import SimulationParams
 
 
+def _mhd_fast_cfl_supported(config: SimulationConfig, registered_variables: RegisteredVariables) -> bool:
+    """The MHD fast-CFL helper below skips the full 7-eigenvalue stack
+    and computes ``max(|v_d| + c_fast_d)`` per cell directly from
+    primitives.  Same arithmetic as ``_cfl_time_step_fd`` but no
+    full-state characteristic-eigenvalue intermediate.  Available
+    whenever the Pallas backend is on and the registry exposes the
+    velocity/magnetic indices."""
+    if config.backend != PALLAS:
+        return False
+    if not config.mhd:
+        return False
+    if not hasattr(registered_variables, "velocity_index"):
+        return False
+    if not hasattr(registered_variables, "magnetic_index"):
+        return False
+    if config.equation_of_state == IDEAL_GAS and not hasattr(registered_variables, "pressure_index"):
+        return False
+    return True
+
+
+@partial(jax.jit, static_argnames=["config", "registered_variables"])
+def _cfl_time_step_fd_mhd_fast(
+    primitive_state: STATE_TYPE,
+    grid_spacing: Union[float, Float[Array, ""]],
+    dt_max: Union[float, Float[Array, ""]],
+    gamma: Union[float, Float[Array, ""]],
+    config: SimulationConfig,
+    params: SimulationParams,
+    registered_variables: RegisteredVariables,
+    C_CFL: Union[float, Float[Array, ""]] = 0.8,
+) -> Float[Array, ""]:
+    """Per-cell fast-magnetosonic CFL for MHD, mirroring the hydro fast
+    path.  ``c_fast_d² = 0.5·(b²/ρ + c_s² + √((b²/ρ + c_s²)² − 4·(B_d²/ρ)·c_s²))``
+    is computed pointwise; the reduction is then ``max(|v_d| + c_fast_d)``
+    per axis.  No full-state characteristic-eigenvalue array is ever
+    materialised.
+    """
+    rho = primitive_state[registered_variables.density_index]
+    vx = primitive_state[registered_variables.velocity_index.x]
+    vy = primitive_state[registered_variables.velocity_index.y] if config.dimensionality >= 2 else 0.0
+    vz = primitive_state[registered_variables.velocity_index.z] if config.dimensionality == 3 else 0.0
+    Bx = primitive_state[registered_variables.magnetic_index.x]
+    By = primitive_state[registered_variables.magnetic_index.y]
+    Bz = primitive_state[registered_variables.magnetic_index.z]
+
+    if config.equation_of_state == IDEAL_GAS:
+        pressure = primitive_state[registered_variables.pressure_index]
+        if config.enforce_positivity:
+            rho = jnp.maximum(rho, params.minimum_density)
+            pressure = jnp.maximum(pressure, params.minimum_pressure)
+        cs2 = jnp.maximum(gamma * pressure / rho, 1e-12)
+    else:  # ISOTHERMAL
+        if config.enforce_positivity:
+            rho = jnp.maximum(rho, params.minimum_density)
+        cs2 = jnp.full_like(rho, params.isothermal_sound_speed ** 2)
+
+    b2 = Bx * Bx + By * By + Bz * Bz
+    b2_over_rho = b2 / rho
+
+    def cfast(B_axis):
+        bn2_over_rho = (B_axis * B_axis) / rho
+        disc = jnp.maximum(
+            (b2_over_rho + cs2) ** 2 - 4.0 * bn2_over_rho * cs2,
+            0.0,
+        )
+        return jnp.sqrt(jnp.maximum(0.5 * (b2_over_rho + cs2 + jnp.sqrt(disc)), 0.0))
+
+    lambda_x = jnp.max(jnp.abs(vx) + cfast(Bx))
+    lambda_y = jnp.max(jnp.abs(vy) + cfast(By)) if config.dimensionality >= 2 else 0.0
+    lambda_z = jnp.max(jnp.abs(vz) + cfast(Bz)) if config.dimensionality == 3 else 0.0
+
+    dt_cfl = C_CFL * grid_spacing / (lambda_x + lambda_y + lambda_z)
+
+    if config.diffusion:
+        if config.enforce_positivity:
+            rho_min = jnp.maximum(
+                jnp.min(primitive_state[registered_variables.density_index]),
+                params.minimum_density,
+            )
+        else:
+            rho_min = jnp.min(primitive_state[registered_variables.density_index])
+        if config.viscosity_type == DYNAMIC_VISCOSITY:
+            nu_max = params.viscosity / rho_min
+        elif config.viscosity_type == KINEMATIC_VISCOSITY:
+            nu_max = params.viscosity
+        dt_visc = C_CFL * grid_spacing ** 2 / (2.0 * config.dimensionality * nu_max)
+        dt_cfl = jnp.minimum(dt_cfl, dt_visc)
+
+    return jnp.minimum(dt_cfl, dt_max)
+
+
 @partial(jax.jit, static_argnames=["config", "registered_variables"])
 def _cfl_time_step_fd(
     primitive_state: STATE_TYPE,
@@ -42,7 +133,12 @@ def _cfl_time_step_fd(
     registered_variables: RegisteredVariables,
     C_CFL: Union[float, Float[Array, ""]] = 0.8,
 ) -> Float[Array, ""]:
-    
+    if _mhd_fast_cfl_supported(config, registered_variables):
+        return _cfl_time_step_fd_mhd_fast(
+            primitive_state, grid_spacing, dt_max, gamma,
+            config, params, registered_variables, C_CFL,
+        )
+
     if config.equation_of_state == IDEAL_GAS:
         conserved_state = conserved_state_from_primitive_mhd(
             primitive_state, gamma, registered_variables

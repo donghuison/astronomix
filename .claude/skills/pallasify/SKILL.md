@@ -85,6 +85,42 @@ A `_pallas` module must:
 
 ---
 
+## Decide first: pallasify, rewrite, or leave alone
+
+Not every native op should become a Pallas kernel. Before opening the
+recipe, classify the target:
+
+- **Heavy stencil with characteristic projection** (WENO flux, FV
+  reconstruct+Riemann, CT stages) → pallasify with the recipe below.
+- **Pure pointwise op** (positivity floor, EOS conversion, source
+  term) → pallasify, but use the *pointwise leaf-op* shape in §4b: no
+  halo, `input_output_aliases={0:0}`, pass-through + selective
+  overwrite. Cheap to compile, removes one full-state intermediate per
+  call.
+- **Op whose cost is a temp buffer, not arithmetic** (e.g. the MHD CFL
+  estimator allocating a full-state 7-eigenvalue array) → **do not
+  pallasify**. Rewrite it in pure JAX without the intermediate. The
+  hot example here is `_cfl_time_step_fd_mhd_fast` —
+  `max(|v_d| + c_fast_d)` per cell, no Pallas needed.
+- **Multi-stage native pipeline with halo > ~6 if fused** (e.g.
+  CT: modified flux → edge EMF → curl → cell-center update) → split
+  into one Pallas kernel per stage with bounded halo each. A single
+  fused kernel with halo ~8 made Triton lowering hang for >5 min;
+  three kernels with halo ≤2 each compile in <1 s apiece.
+- **Optional / opt-in Pallas variants**: if the pallasified version
+  saves <5% runtime at production scale but costs >5 s extra
+  compile (the CT case at production-N), expose a `config.<flag>`
+  and have `_supported(...)` short-circuit on `if not config.<flag>:
+  return False`. Predicate machinery is the right place to make a
+  Pallas backend "available but off by default", not just to gate on
+  hardware capability. See `pallas_ct` in `simulation_config.py`.
+
+If the decision is "leave alone", stop here. Document the reasoning in
+a one-line comment in the dispatcher so the next pass doesn't re-open
+the question.
+
+---
+
 ## Translation recipe
 
 For each native function being pallasified:
@@ -237,6 +273,57 @@ When provided:
 `_hydro_flux_div_axis_pallas` in `_ssprk_pallas.py` is the canonical
 example; `_fv_evolve_axis_pallas` shows the same trick on the FV side.
 
+### 4b. Pointwise leaf-op shape (no halo, in-place)
+
+For per-cell ops with no spatial dependence (positivity floor, EOS
+conversion, source-term application), use this simpler shape rather
+than the stencil+accumulator pattern in §4:
+
+- Single `in_spec` for the conserved state, single `out_spec`, plus
+  scalar specs for typed parameters (`gamma`, `minimum_density`, …).
+- `kwargs["input_output_aliases"] = {0: 0}` so XLA reuses the input
+  buffer for the output — one full-state buffer saved per call,
+  every stage.
+- Inside the kernel, close `ii, jj, kk` over the program ID and write a
+  small `read(var)` helper. Then **pass every variable through, and
+  selectively overwrite the ones the op touches**:
+  ```python
+  for var in range(nvars):
+      if var == DENSITY:
+          out_ref[var, ...] = rho_floored
+      elif is_ideal and var == E:
+          out_ref[var, ...] = energy_floored
+      else:
+          out_ref[var, ...] = read(var)
+  ```
+- Same `_as_3tuple_block_shape` / `_pallas_compiler_params` plumbing
+  as the stencil case. The predicate is shorter — no per-axis halo
+  check, just `state.ndim == ndim + 1` and block-divisibility.
+
+`_enforce_positivity_pallas` in
+`_finite_difference/_fluid_equations/` is the canonical example;
+copy its skeleton for new leaf ops.
+
+### 4c. Multi-stage pipeline: split, don't fuse
+
+If a native pipeline computes A → B → C → D where each arrow is a
+stencil of radius r, fusing the whole pipeline into one Pallas kernel
+makes the effective halo `3r`. With `r=2` (typical WENO/CT spacing)
+that pushes halo to 6–8, and Triton's lowering pass grinds to a halt
+trying to schedule the closure graph (observed: >5 min stuck on a
+single kernel).
+
+Split at every natural intermediate. For CT we now have **three**
+bounded-halo Pallas kernels in `_constrained_transport_pallas.py`
+(`_ct_modified_flux_pallas`, `_ct_edge_emf_pallas`,
+`_ct_curl_pallas`); each has halo ≤ 2 and compiles in well under a
+second. The intermediates between kernels are real allocations, but
+they're each 1/4 the size of the full state, and the alternative was
+a kernel that never finished compiling.
+
+Heuristic: target halo ≤ 4 per kernel. If your native pipeline has
+more than two consecutive stencil stages, split.
+
 ### 5. Wire the dispatcher in the native file
 
 At the **bottom** of the native file (after all native function
@@ -277,6 +364,17 @@ Pick the cheapest meaningful regression test for the flavour:
   fine).
 - **Anything else** → handcraft a 16³ or 32³ smoke test that exercises
   the path.
+
+For *optional* Pallas variants (anything gated by a config flag like
+`pallas_ct`) run an A/B/C harness — native baseline, flag off, flag
+on — and report compile / warm runtime / temp memory / L1 diff vs
+native side-by-side. The standalone scaffold in
+`/tmp/compare_pallas_ct.py` is the working template: build three
+configs from one base, run each twice (cold+warm) so compile time
+falls out of the diff, then print compile/warm/iters/µs-per-iter and
+L1 diff vs the baseline. Always reinstall (`python -m pip install .`)
+before running — predicates are evaluated at module load and
+monkey-patching them in a notebook is silently ineffective.
 
 Acceptance criteria:
 
@@ -331,6 +429,16 @@ add a short subsection in `pallas_backend_implementation_guide.md`
 - **Don't change the native function's signature when pallasifying** —
   the Pallas kernel mirrors the signature so the dispatcher in the
   native file can call either path interchangeably.
+- **Don't fuse a multi-stage pipeline into one Pallas kernel if the
+  effective halo exceeds ~4–6.** Triton's lowering pass scales badly
+  with closure graph depth × halo. Split at intermediates (see §4c)
+  instead — three sub-second kernels beat one that never finishes.
+- **Don't pallasify just because it's possible.** If the runtime gain
+  on a production-scale benchmark is <5% and the compile-time hit is
+  >5 s, either gate it behind a config flag (`pallas_ct` is the
+  precedent) or skip the port and rewrite the native op to avoid the
+  intermediate buffer that motivated it (`_cfl_time_step_fd_mhd_fast`
+  is the precedent — same goal, pure JAX, zero compile cost).
 
 ---
 
