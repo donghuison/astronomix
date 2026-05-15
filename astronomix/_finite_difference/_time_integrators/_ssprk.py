@@ -21,6 +21,11 @@ from astronomix._finite_difference._interface_fluxes._weno import (
     _weno_flux_y,
     _weno_flux_z,
 )
+from astronomix._finite_difference._time_integrators._ssprk_pallas import (
+    _div_axis_pallas_shape_ok,
+    _hydro_flux_div_axis_pallas,
+)
+from astronomix._pallas_helpers import _backend_is_pallas, pl
 
 from astronomix._finite_difference._magnetic_update._constrained_transport import (
     constrained_transport_rhs,
@@ -34,221 +39,7 @@ from astronomix.option_classes.simulation_config import CONSERVATIVE_GAS_STATE, 
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 
-try:
-    from jax.experimental import pallas as pl
-except Exception:  # pragma: no cover - optional backend
-    pl = None
 
-try:
-    from jax.experimental.pallas import triton as pltriton
-except Exception:  # pragma: no cover - optional backend
-    pltriton = None
-
-
-
-# -----------------------------------------------------------------------------
-# Optional Pallas backend helpers for hydro-only flux divergence.
-# -----------------------------------------------------------------------------
-
-
-def _backend_name(config: SimulationConfig) -> str:
-    backend = getattr(config, "backend", "NATIVE_JAX")
-    name = getattr(backend, "name", None)
-    if name is not None:
-        return str(name).upper()
-    value = getattr(backend, "value", None)
-    if isinstance(value, str):
-        return value.upper()
-    return str(backend).upper()
-
-
-def _backend_is_pallas(config: SimulationConfig) -> bool:
-    return config.backend == PALLAS
-
-
-def _default_pallas_block_shape(ndim: int) -> tuple[int, int, int]:
-    if ndim == 1:
-        return (128, 1, 1)
-    if ndim == 2:
-        return (16, 16, 1)
-    return (4, 4, 8)
-
-
-def _as_3tuple_block_shape(block_shape, ndim: int) -> tuple[int, int, int]:
-    if block_shape is None:
-        return _default_pallas_block_shape(ndim)
-    if isinstance(block_shape, str):
-        parts = tuple(int(part.strip()) for part in block_shape.split(",") if part.strip())
-    else:
-        parts = tuple(int(x) for x in block_shape)
-    if len(parts) == 1:
-        parts = (parts[0], 1, 1)
-    elif len(parts) == 2:
-        parts = (parts[0], parts[1], 1)
-    elif len(parts) >= 3:
-        parts = parts[:3]
-    else:
-        parts = _default_pallas_block_shape(ndim)
-    if ndim == 1:
-        return (parts[0], 1, 1)
-    if ndim == 2:
-        return (parts[0], parts[1], 1)
-    return parts
-
-
-def _pallas_compiler_params(config: SimulationConfig):
-    use_triton = bool(getattr(config, "pallas_use_triton", True))
-    if use_triton and pltriton is not None:
-        return pltriton.CompilerParams(num_warps=int(getattr(config, "pallas_num_warps", 4)))
-    return None
-
-
-def _div_axis_pallas_shape_ok(state, config: SimulationConfig) -> bool:
-    """Lightweight predicate used by callers (e.g. the MHD CT integrator) that
-    want the per-axis divergence Pallas kernel but cannot rely on the
-    full hydro-WENO support predicate (which excludes MHD on its WENO step).
-
-    The divergence kernel itself is mhd-agnostic — it just walks every
-    variable channel — so this only checks the spatial block-divisibility
-    constraint required by ``pl.pallas_call``.
-    """
-    if pl is None:
-        return False
-    ndim = int(config.dimensionality)
-    if ndim not in (1, 2, 3):
-        return False
-    if state.ndim != ndim + 1:
-        return False
-    bx, by, bz = _as_3tuple_block_shape(getattr(config, "pallas_block_shape", None), ndim)
-    for n, b in zip(state.shape[1:], (bx, by, bz)[:ndim], strict=True):
-        if int(n) % int(b) != 0:
-            return False
-    return True
-
-
-def _hydro_flux_div_axis_pallas(
-    dF,
-    dt_over_dx,
-    config: SimulationConfig,
-    *,
-    axis: int,
-    rhs_accumulator=None,
-    scale_in: Union[float, jnp.ndarray] = 1.0,
-):
-    """Per-axis Pallas divergence kernel with optional in-place accumulation.
-
-    Computes ``rhs_out = scale_in * (rhs_accumulator if provided else 0) +
-    (-dt_over_dx) * (dF[..., i+1/2] - dF[..., (i+1/2)-1])`` along ``axis``.
-    Calling it sequentially for each axis with ``rhs_accumulator=rhs_q`` lets
-    XLA keep a single physical RHS buffer (via ``input_output_aliases``) across
-    all three axes, eliminating both the chained ``rhs + ...`` adds and the
-    transient buffers they would otherwise need.
-
-    ``scale_in`` is folded into the kernel so the LSRK4 first-stage update
-    ``dq = A[i] * dq + (-dt/dx) * div_0(F_0)`` can be done in place on the
-    ``dq`` buffer without materialising a separate ``rhs`` register.
-
-    This keeps the original 1-flux-per-cell WENO kernel (so peak compute is
-    unchanged) while still consuming each ``dF_axis`` immediately after it is
-    produced, instead of holding all three live for the original
-    three-input divergence helper.
-    """
-    ndim = int(config.dimensionality)
-    nvars = int(dF.shape[0])
-    spatial_shape = tuple(int(x) for x in dF.shape[1:])
-    nx = spatial_shape[0]
-    ny = spatial_shape[1] if ndim >= 2 else 1
-    nz = spatial_shape[2] if ndim == 3 else 1
-    bx, by, bz = _as_3tuple_block_shape(getattr(config, "pallas_block_shape", None), ndim)
-    grid = (nx // bx, ny // by, nz // bz)
-
-    accumulate = rhs_accumulator is not None
-
-    if ndim == 1:
-        block_shape = (nvars, bx)
-        out_spec = pl.BlockSpec(block_shape, lambda bi, bj, bk: (0, bi))
-        flux_spec = pl.BlockSpec(dF.shape, lambda bi, bj, bk: (0, 0))
-    elif ndim == 2:
-        block_shape = (nvars, bx, by)
-        out_spec = pl.BlockSpec(block_shape, lambda bi, bj, bk: (0, bi, bj))
-        flux_spec = pl.BlockSpec(dF.shape, lambda bi, bj, bk: (0, 0, 0))
-    else:
-        block_shape = (nvars, bx, by, bz)
-        out_spec = pl.BlockSpec(block_shape, lambda bi, bj, bk: (0, bi, bj, bk))
-        flux_spec = pl.BlockSpec(dF.shape, lambda bi, bj, bk: (0, 0, 0, 0))
-
-    scalar_spec = pl.BlockSpec((), lambda bi, bj, bk: ())
-
-    def kernel(*refs):
-        if accumulate:
-            rhs_in_ref, f_ref, dtdx_ref, scale_in_ref, rhs_out_ref = refs
-        else:
-            f_ref, dtdx_ref, rhs_out_ref = refs
-        bi = pl.program_id(0)
-        bj = pl.program_id(1)
-        bk = pl.program_id(2)
-
-        if ndim == 1:
-            ii = (bi * bx + jnp.arange(bx)) % nx
-        elif ndim == 2:
-            ii = (bi * bx + jnp.arange(bx)[:, None]) % nx
-            jj = (bj * by + jnp.arange(by)[None, :]) % ny
-        else:
-            ii = (bi * bx + jnp.arange(bx)[:, None, None]) % nx
-            jj = (bj * by + jnp.arange(by)[None, :, None]) % ny
-            kk = (bk * bz + jnp.arange(bz)[None, None, :]) % nz
-
-        dtdx = dtdx_ref[()]
-
-        def flux_diff(var):
-            if axis == 0:
-                if ndim == 1:
-                    return f_ref[var, ii] - f_ref[var, (ii - 1) % nx]
-                if ndim == 2:
-                    return f_ref[var, ii, jj] - f_ref[var, (ii - 1) % nx, jj]
-                return f_ref[var, ii, jj, kk] - f_ref[var, (ii - 1) % nx, jj, kk]
-            if axis == 1:
-                if ndim == 2:
-                    return f_ref[var, ii, jj] - f_ref[var, ii, (jj - 1) % ny]
-                return f_ref[var, ii, jj, kk] - f_ref[var, ii, (jj - 1) % ny, kk]
-            return f_ref[var, ii, jj, kk] - f_ref[var, ii, jj, (kk - 1) % nz]
-
-        if accumulate:
-            scale = scale_in_ref[()]
-            for var in range(nvars):
-                rhs_out_ref[var, ...] = scale * rhs_in_ref[var, ...] + (-dtdx) * flux_diff(var)
-        else:
-            for var in range(nvars):
-                rhs_out_ref[var, ...] = -dtdx * flux_diff(var)
-
-    kwargs = {}
-    compiler_params = _pallas_compiler_params(config)
-    if compiler_params is not None:
-        kwargs["compiler_params"] = compiler_params
-
-    if accumulate:
-        in_specs = [out_spec, flux_spec, scalar_spec, scalar_spec]
-        kernel_args = (
-            rhs_accumulator,
-            dF,
-            jnp.asarray(dt_over_dx, dtype=dF.dtype),
-            jnp.asarray(scale_in, dtype=dF.dtype),
-        )
-        kwargs["input_output_aliases"] = {0: 0}
-    else:
-        in_specs = [flux_spec, scalar_spec]
-        kernel_args = (dF, jnp.asarray(dt_over_dx, dtype=dF.dtype))
-
-    return pl.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct(dF.shape, dF.dtype),
-        grid=grid,
-        in_specs=in_specs,
-        out_specs=out_spec,
-        interpret=bool(getattr(config, "pallas_interpret", False)),
-        name=f"hydro_flux_div_axis_{axis}{'_acc' if accumulate else ''}",
-        **kwargs,
-    )(*kernel_args)
 
 
 @partial(jax.jit, static_argnames=["registered_variables", "config"], donate_argnames=["conserved_state", "bx_interface", "by_interface", "bz_interface"])
@@ -510,8 +301,8 @@ def _hydro_density_fluxes_needed(config) -> bool:
     so for typical setups (hydrodynamics only / wind / cooling without
     flux-coupled gravity) the standalone density flux arrays can be skipped
     and the fused Pallas WENO+divergence path is safe."""
-    return bool(getattr(config, "self_gravity", False)) and (
-        int(getattr(config, "self_gravity_version", SIMPLE_SOURCE_TERM)) != SIMPLE_SOURCE_TERM
+    return config.self_gravity and (
+        config.self_gravity_version != SIMPLE_SOURCE_TERM
     )
 
 

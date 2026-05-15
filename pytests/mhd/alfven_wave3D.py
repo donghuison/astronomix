@@ -11,7 +11,7 @@ autocvd(num_gpus=1)
 import jax
 
 # Enable double precision for better accuracy in convergence tests
-jax.config.update("jax_enable_x64", False)
+jax.config.update("jax_enable_x64", True)
 
 import matplotlib
 import jax.numpy as jnp

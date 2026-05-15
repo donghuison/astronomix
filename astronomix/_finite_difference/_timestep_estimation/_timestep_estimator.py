@@ -349,7 +349,7 @@ def _cfl_time_step_fd_hydro_native(
 
 
 def _backend_name(config: SimulationConfig) -> str:
-    backend = getattr(config, "backend", "NATIVE_JAX")
+    backend = config.backend
     name = getattr(backend, "name", None)
     if name is not None:
         return str(name).upper()

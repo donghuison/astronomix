@@ -28,16 +28,14 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 
-try:
-    from jax.experimental import pallas as pl
-except Exception:  # pragma: no cover
-    pl = None
-
-try:
-    from jax.experimental.pallas import triton as pltriton
-except Exception:  # pragma: no cover
-    pltriton = None
-
+from astronomix._pallas_helpers import (
+    _as_3tuple_block_shape,
+    _backend_is_pallas,
+    _default_pallas_block_shape,
+    _pallas_compiler_params,
+    pl,
+    pltriton,
+)
 from astronomix.option_classes.simulation_config import (
     HLL,
     IDEAL_GAS,
@@ -51,52 +49,6 @@ from astronomix.option_classes.simulation_config import (
 )
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.variable_registry.registered_variables import RegisteredVariables
-
-
-# -----------------------------------------------------------------------------
-# Helpers (mirror the FD-side helpers so the FV path can reuse the same knobs).
-# -----------------------------------------------------------------------------
-
-
-def _backend_is_pallas(config: SimulationConfig) -> bool:
-    return config.backend == PALLAS
-
-
-def _default_pallas_block_shape(ndim: int):
-    if ndim == 1:
-        return (128, 1, 1)
-    if ndim == 2:
-        return (16, 16, 1)
-    return (4, 4, 8)
-
-
-def _as_3tuple_block_shape(block_shape, ndim: int):
-    if block_shape is None:
-        return _default_pallas_block_shape(ndim)
-    if isinstance(block_shape, str):
-        parts = tuple(int(p.strip()) for p in block_shape.split(",") if p.strip())
-    else:
-        parts = tuple(int(x) for x in block_shape)
-    if len(parts) == 1:
-        parts = (parts[0], 1, 1)
-    elif len(parts) == 2:
-        parts = (parts[0], parts[1], 1)
-    elif len(parts) >= 3:
-        parts = parts[:3]
-    else:
-        parts = _default_pallas_block_shape(ndim)
-    if ndim == 1:
-        return (parts[0], 1, 1)
-    if ndim == 2:
-        return (parts[0], parts[1], 1)
-    return parts
-
-
-def _pallas_compiler_params(config: SimulationConfig):
-    use_triton = bool(getattr(config, "pallas_use_triton", True))
-    if use_triton and pltriton is not None:
-        return pltriton.CompilerParams(num_warps=int(getattr(config, "pallas_num_warps", 4)))
-    return None
 
 
 # -----------------------------------------------------------------------------
@@ -167,19 +119,17 @@ def _fv_pallas_evolve_supported(state, config: SimulationConfig) -> bool:
         return False
     if config.limiter not in (MINMOD, VAN_ALBADA, VAN_ALBADA_PP, OSHER):
         return False
-    if bool(getattr(config, "self_gravity", False)):
+    if config.self_gravity:
         # The MUSCL-based reconstruction in the split path is paired with
         # several gravity variants; we keep the native path on for now.
         return False
-    if bool(getattr(config, "cosmic_ray_config", None)) and bool(
-        getattr(config.cosmic_ray_config, "cosmic_rays", False)
-    ):
+    if config.cosmic_ray_config.cosmic_rays:
         return False
-    if bool(getattr(config, "diffusion", False)):
+    if config.diffusion:
         return False
-    if int(getattr(config, "geometry", 0)) != 0:  # CARTESIAN == 0
+    if config.geometry != 0:  # CARTESIAN == 0
         return False
-    if bool(getattr(config, "mhd", False)) and state.shape[0] != 8:
+    if config.mhd and state.shape[0] != 8:
         # The FV MHD pipeline strips magnetics first and calls the gas
         # update on a (5, N, N, N) sub-state; in that nested context Triton
         # produces NaN even though the same kernel passes in pallas_interpret
@@ -194,10 +144,9 @@ def _fv_pallas_evolve_supported(state, config: SimulationConfig) -> bool:
         return False
     if state.ndim != ndim + 1:
         return False
-    # Same x64 caveat as the FD MHD Pallas path.
-    if jax.config.jax_enable_x64 and not bool(getattr(config, "pallas_interpret", False)):
+    if jax.config.jax_enable_x64 and not config.pallas_interpret:
         return False
-    block_shape = _as_3tuple_block_shape(getattr(config, "pallas_block_shape", None), ndim)
+    block_shape = _as_3tuple_block_shape(config.pallas_block_shape, ndim)
     for n, b in zip(state.shape[1:], block_shape[:ndim], strict=True):
         if int(n) % int(b) != 0:
             return False
@@ -232,14 +181,14 @@ def _fv_evolve_axis_pallas(
     """
     assert _fv_pallas_evolve_supported(primitive_state, config)
 
-    is_mhd = bool(getattr(config, "mhd", False))
+    is_mhd = config.mhd
     ndim = int(config.dimensionality)
     nvars = int(primitive_state.shape[0])
     spatial_shape = tuple(int(x) for x in primitive_state.shape[1:])
     nx = spatial_shape[0]
     ny = spatial_shape[1] if ndim >= 2 else 1
     nz = spatial_shape[2] if ndim == 3 else 1
-    bx, by, bz = _as_3tuple_block_shape(getattr(config, "pallas_block_shape", None), ndim)
+    bx, by, bz = _as_3tuple_block_shape(config.pallas_block_shape, ndim)
     grid = (nx // bx, ny // by, nz // bz)
 
     if is_mhd:
@@ -254,10 +203,9 @@ def _fv_evolve_axis_pallas(
     use_hll = (config.riemann_solver == HLL)
     use_lf = (config.riemann_solver == LAX_FRIEDRICHS)
     limiter = int(config.limiter)
-    first_order = bool(getattr(config, "first_order_fallback", False))
+    first_order = config.first_order_fallback
     epsilon = 1e-11
-    grid_spacing_for_limiter = float(getattr(config, "grid_spacing", 1.0)) \
-        if not hasattr(config.grid_spacing, "_replace") else float(config.grid_spacing)
+    grid_spacing_for_limiter = float(config.grid_spacing)
 
     # ---- BlockSpecs ----
     if ndim == 1:
@@ -544,7 +492,7 @@ def _fv_evolve_axis_pallas(
         grid=grid,
         in_specs=in_specs,
         out_specs=out_spec,
-        interpret=bool(getattr(config, "pallas_interpret", False)),
+        interpret=config.pallas_interpret,
         name=f"fv_evolve_axis_{axis_index}{'_acc' if accumulate else ''}",
         **kwargs,
     )(*kernel_args)

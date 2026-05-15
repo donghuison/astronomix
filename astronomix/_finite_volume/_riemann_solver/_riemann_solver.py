@@ -32,16 +32,15 @@ from astronomix.option_classes.simulation_config import (
 
 
 def _fv_pallas_supported(state, config: SimulationConfig) -> bool:
-    """Whether the Pallas FV backend can run the current configuration.
-
-    Currently always False — the FV path requires a fused
-    (reconstruction + Riemann + conservative update) Pallas kernel that
-    has not yet been written.  See ``pallas_backend_implementation_guide.md``
-    §4.3 for the porting plan.  This predicate is the dispatch hook that
-    keeps the codebase Pallas-aware at the FV level so swapping in a real
-    kernel is a one-line change here.
+    """Back-compat shim.  The real FV-Pallas predicate now lives in
+    ``astronomix._finite_volume._state_evolution._pallas_evolve`` as
+    ``_fv_pallas_evolve_supported``; this function just re-exports it so
+    older external callers still resolve.
     """
-    return False
+    from astronomix._finite_volume._state_evolution._pallas_evolve import (
+        _fv_pallas_evolve_supported,
+    )
+    return _fv_pallas_evolve_supported(state, config)
 
 
 # @jaxtyped(typechecker=typechecker)

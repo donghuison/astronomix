@@ -372,7 +372,8 @@ N=32); 5th-order convergence is preserved; PALLAS gives
   axes 1 and 2 put `mom_y`/`mom_z` (and `B_y`/`B_z`) in the normal
   slot.  The B-normal flux is identically zero, matching `_mhd_flux_x`.
 - `_mhd_pallas_flux_supported` — predicate (PALLAS backend, 3D, MHD,
-  IDEAL_GAS, block divides spatial dim, x32 only — see caveat below).
+  IDEAL_GAS, block divides spatial dim).  Works in both x32 and x64
+  modes (see x64 fix in §5).
 - `_ssprk4_with_ct::compute_rhs` uses `_hydro_flux_div_axis_pallas` for
   the divergence step under PALLAS, sharing a single physical RHS
   buffer across axes via `input_output_aliases`.  CT magnetic field
@@ -385,11 +386,10 @@ N=32); 5th-order convergence is preserved; PALLAS gives
 
 - **x64 falls back to native.**  In `pallas_interpret=True` mode the
   kernel runs cleanly in x64 (kernel math is correct), but the Triton
-  GPU lowering triggers a downstream dtype assertion in
-  `interp_center_to_face` ("AssertionError: ('f64', 'f32')").  The
-  predicate disables Pallas when `jax.config.jax_enable_x64 == True`.
-  Tracking down which Triton op silently downcasts only when the
-  kernel is sufficiently complex (hydro at x64 works) is a TODO.
+  GPU lowering used to trigger an ``('f64','f32')`` assertion deep in
+  ``_truediv_lowering_rule`` (the assertion appeared in
+  ``interp_center_to_face`` because that's the first downstream
+  consumer of the kernel's output).  **Fixed in §5.**
 - **CT helpers themselves are still native.**  If they show up as a
   dominant bottleneck after the rest is ported, the same per-tile +
   modular-index pattern in `_div_axis_pallas_shape_ok` ports trivially.
@@ -408,8 +408,7 @@ Validation: small 32³ iso-MHD periodic setup (uniform Bx + 1% density
 perturbation), `max|PALLAS − NATIVE| = 1.0e-17` (machine epsilon),
 ~3.5× speedup, ~37% temp reduction.
 
-Same x64 limitation as 4.1 (gates on `jax.config.jax_enable_x64 ==
-False`, otherwise falls back to native).
+x64 limitation fixed by the same typed-constant trick as 4.1 (see §5).
 
 ### 4.2 *(legacy)* FD MHD isothermal — porting recipe
 
@@ -552,6 +551,82 @@ regression), plus any shock-tube test under `tests/hydro_tests/`.
 5. Memory-analyze: `lower().compile().memory_analysis()`.  Confirm the
    buffer count dropped before chasing performance.
 6. Benchmark wall-clock on a representative grid (128³ for 3D).
+
+---
+
+## 4.4 The x64 / Triton fix (was a real bug, now resolved)
+
+The MHD kernels used to bail out with
+``AssertionError: ('f64', 'f32')`` deep inside
+``jax._src.pallas.triton.lowering._truediv_lowering_rule`` whenever
+``jax.config.jax_enable_x64 == True``.  The math was correct under
+``pallas_interpret=True``, so it was purely a Triton lowering issue:
+some operand entered the lowering pass as **f32** while every other
+operand around it was **f64**.
+
+Root cause:  Python-float literals inside ``jnp.where(cond, A, B)``
+arms (and other contexts the lowering treats as scalar constants) are
+emitted to Triton as ``f32`` regardless of the surrounding tile dtype.
+The MHD kernel had several such patterns that the hydro kernel did
+not:
+
+```python
+sgn_bn = jnp.where(Bn_face >= 0.0, 1.0, -1.0)              # 1.0, -1.0 → f32
+bt_n1  = jnp.where(bt_sq >= b_eps,
+                   Bt1_face / jnp.sqrt(bt_sq_safe),
+                   1.0 / jnp.sqrt(2.0))                    # constant → f32
+bt_sq_safe = jnp.maximum(bt_sq, 1e-20)                     # 1e-20    → f32
+```
+
+Once these f32 constants flowed into the divisions further down
+(``Bt1_face / jnp.sqrt(bt_sq_safe)``,
+``Bt1_face_f64 / inv_sqrt_two_f32``), Triton tripped the assertion.
+
+**Fix (applied in `_weno_pallas.py`):**
+
+1. Derive typed-as-the-working-dtype literal tiles from an existing
+   typed scalar (``gamma``, ``cs``, …):
+
+   ```python
+   zero_typed = gamma - gamma
+   one_typed = zero_typed + 1.0
+   neg_one_typed = zero_typed - 1.0
+   inv_sqrt_two_typed = zero_typed + (1.0 / 2.0 ** 0.5)
+   ```
+
+   ``zero_typed`` is a tile of zeros whose dtype follows ``gamma``;
+   ``+ 1.0`` promotes the Python literal to the tile's dtype before it
+   ever reaches Triton's lowering.  All ``jnp.where`` arms then use
+   these typed constants instead of bare Python literals.
+
+2. Pass ``b_eps`` and the ``sqrt`` floor as scalar kernel inputs
+   (``jnp.asarray(value, dtype=state.dtype)``), exactly like ``gamma``
+   was already being passed.  This guarantees the dtype matches the
+   kernel's working dtype rather than defaulting to f32.
+
+**Result.**  Production x64 MHD-WENO test on
+`pytests/mhd/alfven_wave3D.py` (no monkey-patches, fresh
+`pip install .`):
+
+| N | NATIVE L1 (x64) | PALLAS L1 (x64) | diff |
+|---|---|---|---|
+| 16 | 1.197484e-03 | 1.197484e-03 | 1.55e-16 |
+| 32 | 4.363055e-05 | 4.363055e-05 | 2.32e-17 |
+
+i.e. **machine epsilon** in x64 too.  The same fix was applied to
+``_weno_flux_mhd_iso_pallas``.  The FV kernel didn't need it (no
+sgn-style ``jnp.where`` patterns) and worked in x64 once the gate was
+removed.
+
+**Lesson for new Pallas kernels.**  Whenever you write
+``jnp.where(cond, X, Y)`` inside a Pallas kernel, make sure ``X``
+and ``Y`` are *tile* expressions (or arithmetic involving tiles),
+never bare Python ``1.0`` / ``2.0`` literals.  ``inv_X = 1.0 / tile``
+on its own is fine — it's only when the Python literal sits in a
+position that the Triton lowering reads as a scalar argument
+(e.g. the false-arm of ``jnp.where``) that the f32 contamination
+happens.  The ``pallasify`` skill must enforce this — see its
+``Translation recipe`` step 3 note.
 
 ---
 
