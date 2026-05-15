@@ -12,7 +12,11 @@ from typing import Union
 # general astronomix imports
 from astronomix._finite_difference._fluid_equations._equations import conserved_state_from_primitive_isothermal, conserved_state_from_primitive_mhd, primitive_state_from_conserved_isothermal, primitive_state_from_conserved_mhd
 from astronomix._finite_difference._magnetic_update._constrained_transport import update_cell_center_fields
-from astronomix._finite_difference._time_integrators._ssprk import _ssprk4_hydro, _ssprk4_with_ct
+from astronomix._finite_difference._time_integrators._ssprk import (
+    _lsrk4_hydro,
+    _ssprk4_hydro,
+    _ssprk4_with_ct,
+)
 from astronomix._fluid_equations._equations import conserved_state_from_primitive, primitive_state_from_conserved
 from astronomix._geometry.boundaries import _boundary_handler
 from astronomix.data_classes.simulation_helper_data import HelperData
@@ -21,6 +25,7 @@ from astronomix.option_classes.simulation_config import (
     GHOST_CELLS,
     IDEAL_GAS,
     ISOTHERMAL,
+    RK4_LSRK,
     STATE_TYPE,
     SimulationConfig,
 )
@@ -91,7 +96,15 @@ def _evolve_state_fd(
             primitive_state, gamma, config, registered_variables
         )
 
-        conserved_state = _ssprk4_hydro(
+        # Dispatch to the requested time integrator.  RK4_LSRK is the
+        # Carpenter-Kennedy 2N-storage low-storage RK4 (one fewer full-state
+        # register than SSPRK4, at the cost of a smaller stability CFL).
+        if int(config.time_integrator) == RK4_LSRK:
+            integrator = _lsrk4_hydro
+        else:
+            integrator = _ssprk4_hydro
+
+        conserved_state = integrator(
             conserved_state,
             gamma,
             config.grid_spacing,

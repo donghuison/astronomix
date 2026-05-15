@@ -11,7 +11,7 @@ autocvd(num_gpus=1)
 import jax
 
 # Enable double precision for better accuracy in convergence tests
-jax.config.update("jax_enable_x64", True)
+jax.config.update("jax_enable_x64", False)
 
 import matplotlib
 import jax.numpy as jnp
@@ -23,6 +23,7 @@ from astronomix.data_classes.simulation_helper_data import get_helper_data
 from astronomix.option_classes.simulation_config import (
     FINITE_VOLUME,
     FINITE_DIFFERENCE,
+    PALLAS,
     SimulationConfig,
     SnapshotSettings,
     StaticFloatVector,
@@ -40,6 +41,10 @@ from astronomix.test_setups.mhd.alfven_wave3D import setup_cp_alfven_wave, cp_al
 # Setup configurations without num_cells, which will be injected dynamically inside the loop
 config_list = [
     SimulationConfig(
+        backend = PALLAS,
+        pallas_block_shape = (4, 4, 8),
+        pallas_use_triton = True,
+        pallas_interpret = False,
         solver_mode = FINITE_VOLUME,
         memory_analysis = True,
         print_elapsed_time = True,
@@ -53,6 +58,10 @@ config_list = [
         )
     ),
     SimulationConfig(
+        backend = PALLAS,
+        pallas_block_shape = (4, 4, 8),
+        pallas_use_triton = True,
+        pallas_interpret = False,
         solver_mode = FINITE_DIFFERENCE,
         memory_analysis = True,
         print_elapsed_time = True,

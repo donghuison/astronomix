@@ -21,7 +21,7 @@ from astronomix import SimulationConfig
 from astronomix import SimulationParams
 
 # astronomix constants
-from astronomix.option_classes.simulation_config import AM_HLLC, CARTESIAN, FINITE_DIFFERENCE, FINITE_VOLUME, HLLC, HLLC_LM, HYBRID_HLLC, MUSCL, NATIVE_JAX, PALLAS, RK4_LSRK, RK4_SSP, SPHERICAL, HLL, MINMOD, SPLIT
+from astronomix.option_classes.simulation_config import AM_HLLC, BoundarySettings, BoundarySettings1D, CARTESIAN, FINITE_DIFFERENCE, FINITE_VOLUME, HLLC, HLLC_LM, HYBRID_HLLC, MUSCL, NATIVE_JAX, PALLAS, PERIODIC_BOUNDARY, RK4_LSRK, RK4_SSP, SPHERICAL, HLL, MINMOD, SPLIT
 
 
 # astronomix functions
@@ -41,22 +41,38 @@ from exactpack.solvers.sedov.sedov import Sedov
 
 config = SimulationConfig(
 
-    backend = NATIVE_JAX,
+    backend = PALLAS,
     pallas_block_shape = (4, 4, 8),
     pallas_use_triton = True,
     pallas_interpret = False,
 
-    time_integrator = RK4_SSP,
+    time_integrator = RK4_LSRK,
 
     solver_mode = FINITE_DIFFERENCE,
 
     print_elapsed_time = True,
     memory_analysis = True,
+
+    # Donate the input state so XLA can reuse its physical buffer for the
+    # main loop carry — eliminates one full-state allocation at peak.
+    donate_state = True,
     
     geometry = CARTESIAN,
+    # Periodic boundary settings keep boundary_handling=PERIODIC_ROLL (no
+    # ghost-cell padding) so every full-state buffer is the unpadded
+    # num_cells^3 instead of (num_cells + 2*num_ghost_cells)^3.  At
+    # 128^3/5th-order this drops every state buffer from ~50 MB to 40 MB and
+    # removes the per-stage boundary-handler temporaries.  The Pallas WENO
+    # kernel already implements periodic wrap via its ``% nx`` indexing, so
+    # no separate boundary kernel is needed.
+    boundary_settings = BoundarySettings(
+        x = BoundarySettings1D(left_boundary=PERIODIC_BOUNDARY, right_boundary=PERIODIC_BOUNDARY),
+        y = BoundarySettings1D(left_boundary=PERIODIC_BOUNDARY, right_boundary=PERIODIC_BOUNDARY),
+        z = BoundarySettings1D(left_boundary=PERIODIC_BOUNDARY, right_boundary=PERIODIC_BOUNDARY),
+    ),
     progress_bar = True,
     runtime_debugging = False,
-    
+
     dimensionality = 3,
 
     # ====== RESOLUTION =======
@@ -72,7 +88,7 @@ config = SimulationConfig(
 
 params = SimulationParams(
     t_end = 0.1,
-    C_cfl = 1.5 if config.solver_mode == FINITE_DIFFERENCE else 0.4,
+    C_cfl = (1.5 if config.time_integrator == RK4_SSP else 1.4) if config.solver_mode == FINITE_DIFFERENCE else 0.4,
 )
 
 helper_data = get_helper_data(config)

@@ -226,6 +226,7 @@ class SimulationConfig(NamedTuple):
     pallas_block_shape: Tuple[int, int, int] = (4, 4, 8)
     pallas_use_triton: bool = True
     pallas_interpret: bool = False
+    pallas_num_warps: int = 4
 
     #: Basic solver mode, either finite volume or finite difference.
     #: FINITE_DIFFERENCE is for now only planned for the HOW_MHD
@@ -567,7 +568,11 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
             if config.dimensionality == 2:
                 config = config._replace(boundary_handling=GHOST_CELLS, num_ghost_cells=4)
 
-        if config.time_integrator != RK4_SSP:
+        # The FD scheme has two supported time integrators: the SSPRK4
+        # Spiteri-Ruuth 3-register scheme (default) and the Carpenter-Kennedy
+        # 2N-storage LSRK4 ("RK4_LSRK") which trades CFL margin for one fewer
+        # full-state buffer.  Anything else falls back to SSPRK4.
+        if config.time_integrator not in (RK4_SSP, RK4_LSRK):
             print(
                 "Setting time integrator to RK4_SSP for finite difference solver mode."
             )

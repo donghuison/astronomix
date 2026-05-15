@@ -39,6 +39,10 @@ from astronomix._finite_volume._state_evolution.reconstruction import (
     _reconstruct_at_interface_unsplit,
     _reconstruct_at_interface_unsplit_single,
 )
+from astronomix._finite_volume._state_evolution._pallas_evolve import (
+    _fv_evolve_axis_pallas,
+    _fv_pallas_evolve_supported,
+)
 from astronomix._geometry.boundaries import _boundary_handler
 from astronomix._fluid_equations._equations import (
     primitive_state_from_conserved,
@@ -363,10 +367,43 @@ def _evolve_gas_state_unsplit_inner(
     
     if config.boundary_handling == GHOST_CELLS:
         primitive_state = _boundary_handler(primitive_state, config, registered_variables, params)
-    
+
     conservative_states = conserved_state_from_primitive(
         primitive_state, gamma, config, registered_variables
     )
+
+    # Pallas-fused per-axis recon+Riemann+divergence: each axis writes
+    # ``conservative_states += -(dt/dx) * (F[i+1/2] - F[i-1/2])`` directly
+    # into the conservative buffer via ``input_output_aliases``.  No
+    # full-state q_L, q_R, fluxes are materialised.  Falls back to the
+    # original native chain when ``_fv_pallas_evolve_supported`` says no.
+    if _fv_pallas_evolve_supported(primitive_state, config):
+        dt_over_dx = dt / config.grid_spacing
+        for axis in range(1, config.dimensionality + 1):
+            if config.boundary_handling == GHOST_CELLS:
+                primitive_state = _boundary_handler(
+                    primitive_state, config, registered_variables, params
+                )
+            conservative_states = _fv_evolve_axis_pallas(
+                primitive_state,
+                dt_over_dx,
+                params,
+                config,
+                registered_variables,
+                axis_index=axis,
+                conserved_accumulator=conservative_states,
+            )
+            # Re-derive primitives so the next-axis reconstruction uses an
+            # up-to-date state (the native pipeline does the same via the
+            # ``primitive_state = ...`` re-derivation each iteration).
+            primitive_state = primitive_state_from_conserved(
+                conservative_states, gamma, config, registered_variables
+            )
+        if config.boundary_handling == GHOST_CELLS:
+            primitive_state = _boundary_handler(
+                primitive_state, config, registered_variables, params
+            )
+        return primitive_state
 
     # in case of the van albada pp limiter, the limited
     # gradients along all dimensions are needed at once for

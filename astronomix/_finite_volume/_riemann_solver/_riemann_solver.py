@@ -24,10 +24,24 @@ from astronomix.option_classes.simulation_config import (
     HLLC_LM,
     HYBRID_HLLC,
     LAX_FRIEDRICHS,
+    PALLAS,
     STATE_TYPE,
     STATE_TYPE_ALTERED,
     SimulationConfig,
 )
+
+
+def _fv_pallas_supported(state, config: SimulationConfig) -> bool:
+    """Whether the Pallas FV backend can run the current configuration.
+
+    Currently always False — the FV path requires a fused
+    (reconstruction + Riemann + conservative update) Pallas kernel that
+    has not yet been written.  See ``pallas_backend_implementation_guide.md``
+    §4.3 for the porting plan.  This predicate is the dispatch hook that
+    keeps the codebase Pallas-aware at the FV level so swapping in a real
+    kernel is a one-line change here.
+    """
+    return False
 
 
 # @jaxtyped(typechecker=typechecker)
