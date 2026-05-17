@@ -19,6 +19,8 @@ the periodic box, so the exact final density profile coincides with the
 initial one.
 """
 
+from typing import NamedTuple
+
 import jax.numpy as jnp
 
 from astronomix import CARTESIAN
@@ -36,21 +38,41 @@ from astronomix.option_classes.simulation_config import (
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 
-# Problem constants
-_BOX_SIZE = 1.0
-_T_END = 2.0
-_GAMMA = 1.4
 
-_PULSE_CENTER = 0.5
-_PULSE_WIDTH = 0.0625
-_ADVECTION_VELOCITY = 1.0
-_PRESSURE = 10.0
+class GaussianPulseAdvection1DSettings(NamedTuple):
+    """Problem constants for the 1D Gaussian pulse advection test."""
 
-def _gaussian_pulse_density(r: jnp.ndarray, t: float) -> jnp.ndarray:
+    #: Length of the (periodic) simulation domain.
+    box_size: float = 1.0
+
+    #: Final time at which the solution is evaluated.
+    t_end: float = 2.0
+
+    #: Adiabatic index of the gas.
+    gamma: float = 1.4
+
+    #: Initial center of the Gaussian pulse.
+    pulse_center: float = 0.5
+
+    #: Standard deviation (width) of the Gaussian pulse.
+    pulse_width: float = 0.0625
+
+    #: Uniform advection velocity.
+    advection_velocity: float = 1.0
+
+    #: Uniform background pressure.
+    pressure: float = 10.0
+
+
+def _gaussian_pulse_density(
+    r: jnp.ndarray,
+    t: float,
+    settings: GaussianPulseAdvection1DSettings,
+) -> jnp.ndarray:
     """Exact density profile of the advected Gaussian pulse at time ``t``."""
-    center = (_PULSE_CENTER + _ADVECTION_VELOCITY * t) % _BOX_SIZE
+    center = (settings.pulse_center + settings.advection_velocity * t) % settings.box_size
     distance = jnp.abs(r - center)
-    return 1.0 + jnp.exp(-distance**2 / (2.0 * _PULSE_WIDTH**2))
+    return 1.0 + jnp.exp(-distance**2 / (2.0 * settings.pulse_width**2))
 
 
 def setup_gaussian_pulse_advection(
@@ -58,6 +80,7 @@ def setup_gaussian_pulse_advection(
     registered_variables: RegisteredVariables,
     params: SimulationParams,
     helper_data: HelperData,
+    settings: GaussianPulseAdvection1DSettings = GaussianPulseAdvection1DSettings(),
 ) -> tuple[STATE_TYPE, SimulationConfig, SimulationParams]:
     """
     Set up the Gaussian pulse advection test.
@@ -72,28 +95,31 @@ def setup_gaussian_pulse_advection(
         registered_variables: Registered variables in the simulation.
         params: Simulation parameters.
         helper_data: Helper data for the simulation.
+        settings: Problem constants (defaults to the standard pulse
+            advection values).
 
     Returns:
         state: Initial primitive state of the simulation.
         config: Updated simulation configuration (CARTESIAN geometry,
-            box_size = 1.0, periodic boundaries).
-        params: Updated simulation parameters (t_end = 2.0, gamma = 1.4).
+            box_size from ``settings``, periodic boundaries).
+        params: Updated simulation parameters (t_end and gamma from
+            ``settings``).
     """
     config = config._replace(
         geometry = CARTESIAN,
-        box_size = _BOX_SIZE,
+        box_size = settings.box_size,
         dimensionality = 1,
         boundary_settings = BoundarySettings1D(
             left_boundary = PERIODIC_BOUNDARY,
             right_boundary = PERIODIC_BOUNDARY,
         )
     )
-    params = params._replace(t_end = _T_END, gamma = _GAMMA)
+    params = params._replace(t_end = settings.t_end, gamma = settings.gamma)
 
     r = helper_data.geometric_centers
-    rho = _gaussian_pulse_density(r, t = 0.0)
-    u   = jnp.full_like(r, _ADVECTION_VELOCITY)
-    p   = jnp.full_like(r, _PRESSURE)
+    rho = _gaussian_pulse_density(r, t = 0.0, settings = settings)
+    u   = jnp.full_like(r, settings.advection_velocity)
+    p   = jnp.full_like(r, settings.pressure)
 
     state = construct_primitive_state(
         config = config,
@@ -112,6 +138,7 @@ def gaussian_pulse_advection_solution(
     registered_variables: RegisteredVariables,
     params: SimulationParams,
     helper_data: HelperData,
+    settings: GaussianPulseAdvection1DSettings = GaussianPulseAdvection1DSettings(),
 ) -> STATE_TYPE:
     """
     Exact solution for the Gaussian pulse advection test, evaluated on the
@@ -122,14 +149,16 @@ def gaussian_pulse_advection_solution(
         registered_variables: Registered variables in the simulation.
         params: Simulation parameters.
         helper_data: Helper data for the simulation.
+        settings: Problem constants (must match those used in
+            :func:`setup_gaussian_pulse_advection`).
 
     Returns:
         state: Exact primitive state at t = params.t_end.
     """
     r = helper_data.geometric_centers
-    rho = _gaussian_pulse_density(r, t = params.t_end)
-    u   = jnp.full_like(r, _ADVECTION_VELOCITY)
-    p   = jnp.full_like(r, _PRESSURE)
+    rho = _gaussian_pulse_density(r, t = params.t_end, settings = settings)
+    u   = jnp.full_like(r, settings.advection_velocity)
+    p   = jnp.full_like(r, settings.pressure)
 
     return construct_primitive_state(
         config = config,
