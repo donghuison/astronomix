@@ -720,6 +720,8 @@ def update_pressure_by_cooling(
     # return the updated primitive state
     return primitive_state
 
+# CURRENTLY NOT USED, THEREFORE WE DO NOT REQUIRE
+# HELPER_DATA FOR THE COOLING AT ALL
 @partial(jax.jit, static_argnames = ("config", "registered_variables"))
 def first_order_pressure_update(
     primitive_state: STATE_TYPE,

@@ -27,7 +27,12 @@ from astronomix.option_classes.simulation_config import BACKWARDS, FINITE_DIFFER
 
 # astronomix containers
 from astronomix.option_classes.simulation_config import SimulationConfig
-from astronomix.data_classes.simulation_helper_data import HelperData, get_helper_data
+from astronomix.data_classes.simulation_helper_data import (
+    HelperData,
+    _helper_data_requirements,
+    _unpad_helper_data,
+    get_helper_data,
+)
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.data_classes.simulation_snapshot_data import SnapshotData
@@ -109,18 +114,16 @@ def time_integration(
     # depending on the boundary handling, we might need to pad the state
     #  - for periodic boundaries implicitly enforced by only rolling arrays
     #    this is not necessary
+    # Only build the helper-data fields actually consumed by the
+    # active subsystems; the unpadded variant needed for snapshot
+    # diagnostics is recovered by slicing the padded one inside the
+    # update step (see _unpad_helper_data).
+    requirements = _helper_data_requirements(config)
     helper_data_pad = get_helper_data(
         config,
         sharding,
         padded = config.boundary_handling != PERIODIC_ROLL,
-        production = True
-    )
-    
-    helper_data = get_helper_data(
-        config,
-        sharding,
-        padded = False,
-        production = True
+        requirements = requirements,
     )
 
     if config.donate_state:
@@ -158,7 +161,6 @@ def time_integration(
             config,
             params,
             registered_variables,
-            helper_data,
             helper_data_pad,
             snapshot_callable,
         )
@@ -171,7 +173,6 @@ def time_integration(
                 config,
                 params,
                 registered_variables,
-                helper_data,
                 helper_data_pad,
                 snapshot_callable,
             ).compile()
@@ -203,7 +204,6 @@ def time_integration(
                     config,
                     params,
                     registered_variables,
-                    helper_data,
                     helper_data_pad,
                     snapshot_callable,
                 ).compile()
@@ -216,7 +216,6 @@ def time_integration(
             config,
             params,
             registered_variables,
-            helper_data,
             helper_data_pad,
             snapshot_callable,
         )
@@ -246,7 +245,6 @@ def _time_integration(
     config: SimulationConfig,
     params: SimulationParams,
     registered_variables: RegisteredVariables,
-    helper_data_unpad: Union[HelperData, NoneType],
     helper_data_pad: Union[HelperData, NoneType],
     snapshot_callable = None,
 ) -> Union[STATE_TYPE, StateStruct, SnapshotData]:
@@ -472,6 +470,10 @@ def _time_integration(
                     unpad_primitive_state = _unpad(primitive_state, config)
                 else:
                     unpad_primitive_state = primitive_state
+
+                # Recover the unpadded helper data by slicing — no
+                # extra device storage, free under jit.
+                helper_data_unpad = _unpad_helper_data(helper_data_pad, config)
 
                 if config.snapshot_settings.return_states:
                     states = snapshot_data.states.at[
@@ -862,7 +864,9 @@ def _time_integration(
             P0 = 1.0
             L_box = config.box_size.x
             box_size_z = config.box_size.z
-            Z = helper_data_pad.geometric_centers[:, :, :, 2]
+            # cell_centers_z is a 1D array along the z axis; jnp
+            # broadcasts it against the 3D pk_mask / Z-reduction below.
+            Z = helper_data_pad.cell_centers_z
             density_contrast = params.cooling_params.cooling_curve_params.density_contrast
             mach_number = params.cooling_params.cooling_curve_params.mach_number
             rho_cold = density_contrast * rho_hot

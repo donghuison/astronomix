@@ -266,6 +266,14 @@ class SimulationConfig(NamedTuple):
     #: function
     memory_analysis: bool = False
 
+    #: Build the simulation helper data on the host (CPU) and
+    #: only move the fields that are actually needed by the
+    #: enabled subsystems onto the accelerator. Useful in
+    #: production runs where a large meshgrid like
+    #: ``geometric_centers`` is not required on device and the
+    #: per-field memory footprint matters.
+    host_helper_data: bool = False
+
     #: Print the elapsed time of the simulation
     print_elapsed_time: bool = False
 
@@ -502,7 +510,10 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
         print(
             "For spherical geometry, only HLL is currently supported. Also, only the unsplit mode has been tested."
         )
-        config = config._replace(grid_spacing=config.box_size / config.num_cells)
+        # SPHERICAL is intrinsically 1D in this code; pick the x component
+        # so grid_spacing stays a scalar (otherwise CFL divisions blow up
+        # because StaticFloatVector can't be divided by a scalar wave speed).
+        config = config._replace(grid_spacing=(config.box_size / config.num_cells).x)
 
         if config.riemann_solver != HLL:
             print("Setting HLL Riemann solver for spherical geometry.")

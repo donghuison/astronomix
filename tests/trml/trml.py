@@ -81,6 +81,7 @@ from astronomix.option_classes.simulation_config import (
     MINMOD,
     MUSCL,
     OPEN_BOUNDARY,
+    PALLAS,
     SPLIT,
     UNSPLIT,
     VARAXIS,
@@ -113,7 +114,7 @@ if multi_gpu:
     named_sharding_no_var = jax.NamedSharding(sharding_mesh_no_var, P(XAXIS, YAXIS, ZAXIS))
 
 # Box setup
-num_cells_x = 64
+num_cells_x = 512
 num_cells_y = num_cells_x
 num_cells_z = int(1.5 * num_cells_x)
 box_size = 1.0
@@ -145,6 +146,10 @@ t_coolmin = t_sh / xi
 # Simulation config
 config = SimulationConfig(
     solver_mode = FINITE_DIFFERENCE,
+    backend = PALLAS,
+    pallas_block_shape = (4, 4, 8),
+    pallas_use_triton = True,
+    pallas_interpret = False,
     memory_analysis = True,
     print_elapsed_time = True,
     progress_bar = True,
@@ -185,69 +190,77 @@ def single_interface(f_l, f_u, Z, z_center, smoothing_length):
 		+ f_u * (1 + jnp.tanh((Z - z_center) / smoothing_length))
 	)
 
-# helper data
-helper_data = get_helper_data(config, sharding=named_sharding if multi_gpu else None)
 registered_variables = get_registered_variables(config)
 
-# construct the initial state
-cell_centers = helper_data.geometric_centers
-X = cell_centers[:, :, :, 0]
-Y = cell_centers[:, :, :, 1]
-Z = cell_centers[:, :, :, 2]
-z_center = L_z / 2
-smoothing_length = grid_spacing / 2
-density = single_interface(rho_cold, rho_hot, Z, z_center, smoothing_length)
-pressure = P0 * jnp.ones_like(density)
-velocity_x = single_interface(-v_rel / 2, v_rel / 2, Z, z_center, smoothing_length)
-velocity_y = jnp.zeros_like(density)
-velocity_z = jnp.zeros_like(density)
+setup_initial_state = False
+
+if setup_initial_state:
+    helper_data = get_helper_data(config, sharding=named_sharding if multi_gpu else None)
+    # construct the initial state
+    cell_centers = helper_data.geometric_centers
+    X = cell_centers[:, :, :, 0]
+    Y = cell_centers[:, :, :, 1]
+    Z = cell_centers[:, :, :, 2]
+    z_center = L_z / 2
+    smoothing_length = grid_spacing / 2
+    density = single_interface(rho_cold, rho_hot, Z, z_center, smoothing_length)
+    pressure = P0 * jnp.ones_like(density)
+    velocity_x = single_interface(-v_rel / 2, v_rel / 2, Z, z_center, smoothing_length)
+    velocity_y = jnp.zeros_like(density)
+    velocity_z = jnp.zeros_like(density)
 
 
-# --- Perturbation ----------------------------------------------------------
-# Envelope: peaks in the tanh tails (±2 * smoothing_length from z_center),
-# zero in the bulk phases and at the sharpest point of the interface itself
-# (where WENO's shock sensor would damp perturbations most aggressively).
-dz       = Z - z_center
-envelope = jnp.exp(-((jnp.abs(dz) - 2 * smoothing_length) / (3 * grid_spacing))**2)
+    # --- Perturbation ----------------------------------------------------------
+    # Envelope: peaks in the tanh tails (±2 * smoothing_length from z_center),
+    # zero in the bulk phases and at the sharpest point of the interface itself
+    # (where WENO's shock sensor would damp perturbations most aggressively).
+    dz       = Z - z_center
+    envelope = jnp.exp(-((jnp.abs(dz) - 2 * smoothing_length) / (3 * grid_spacing))**2)
 
-amp = 0.03 * v_rel  # 3% of shear velocity
+    amp = 0.03 * v_rel  # 3% of shear velocity
 
-# Deterministic KH modes: low-k, well-resolved at N_res = 64 (10-30 cells/wavelength)
-mode_numbers = jnp.array([2, 4, 6])
-kx = 2 * jnp.pi * mode_numbers / L_x
-ky = 2 * jnp.pi * mode_numbers / L_y
+    # Deterministic KH modes: low-k, well-resolved at N_res = 64 (10-30 cells/wavelength)
+    mode_numbers = jnp.array([2, 4, 6])
+    kx = 2 * jnp.pi * mode_numbers / L_x
+    ky = 2 * jnp.pi * mode_numbers / L_y
 
-key           = jax.random.PRNGKey(42)
-key_ph, key_n = jax.random.split(key, 2)
-phases        = jax.random.uniform(key_ph, (3, 3), minval=0.0, maxval=2 * jnp.pi)
+    key           = jax.random.PRNGKey(42)
+    key_ph, key_n = jax.random.split(key, 2)
+    phases        = jax.random.uniform(key_ph, (3, 3), minval=0.0, maxval=2 * jnp.pi)
 
-modes = jnp.zeros_like(density)
-for i in range(3):
-    for j in range(3):
-        modes = modes + jnp.sin(kx[i] * X + ky[j] * Y + phases[i, j])
-modes = modes / 9.0  # normalize to O(1)
+    modes = jnp.zeros_like(density)
+    for i in range(3):
+        for j in range(3):
+            modes = modes + jnp.sin(kx[i] * X + ky[j] * Y + phases[i, j])
+    modes = modes / 9.0  # normalize to O(1)
 
-# Broadband noise: low amplitude, fills the spectrum above the deterministic modes
-key_nx, key_ny, key_nz = jax.random.split(key_n, 3)
-noise_x = jax.random.normal(key_nx, density.shape)
-noise_y = jax.random.normal(key_ny, density.shape)
-noise_z = jax.random.normal(key_nz, density.shape)
+    # Broadband noise: low amplitude, fills the spectrum above the deterministic modes
+    key_nx, key_ny, key_nz = jax.random.split(key_n, 3)
+    noise_x = jax.random.normal(key_nx, density.shape)
+    noise_y = jax.random.normal(key_ny, density.shape)
+    noise_z = jax.random.normal(key_nz, density.shape)
 
-# v_z gets the full deterministic+noise treatment (this is the KH growth direction)
-# v_x and v_y get noise only (adding modes to v_x would fight the mean shear)
-velocity_x = velocity_x +       amp * envelope * 0.3 * noise_x
-velocity_y = velocity_y +       amp * envelope * 0.3 * noise_y
-velocity_z = velocity_z + amp * envelope * (modes + 0.3 * noise_z)
+    # v_z gets the full deterministic+noise treatment (this is the KH growth direction)
+    # v_x and v_y get noise only (adding modes to v_x would fight the mean shear)
+    velocity_x = velocity_x +       amp * envelope * 0.3 * noise_x
+    velocity_y = velocity_y +       amp * envelope * 0.3 * noise_y
+    velocity_z = velocity_z + amp * envelope * (modes + 0.3 * noise_z)
 
-initial_state = construct_primitive_state(
-    config               = config,
-    registered_variables = registered_variables,
-    density              = density,
-    velocity_x           = velocity_x,
-    velocity_y           = velocity_y,
-    velocity_z           = velocity_z,
-    gas_pressure         = pressure,
-)
+    initial_state = construct_primitive_state(
+        config               = config,
+        registered_variables = registered_variables,
+        density              = density,
+        velocity_x           = velocity_x,
+        velocity_y           = velocity_y,
+        velocity_z           = velocity_z,
+        gas_pressure         = pressure,
+    )
+
+    # save initial state
+    jnp.savez("data/trml_initial_state.npz", initial_state=initial_state)
+else:
+    # load initial state
+    initial_state = jnp.load("data/trml_initial_state.npz")["initial_state"]
 
 if multi_gpu:
     initial_state = jax.device_put(initial_state, named_sharding)
