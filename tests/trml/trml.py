@@ -192,7 +192,7 @@ def single_interface(f_l, f_u, Z, z_center, smoothing_length):
 
 registered_variables = get_registered_variables(config)
 
-setup_initial_state = False
+setup_initial_state = True
 
 if setup_initial_state:
     helper_data = get_helper_data(config, sharding=named_sharding if multi_gpu else None)
