@@ -326,3 +326,70 @@ def _pallas_call_sharded(
         check_rep=False,
     )
     return wrapped(*state_inputs, *other_args)
+
+
+# -----------------------------------------------------------------------------
+# Differentiability: pair every Pallas entry with a native-JAX backward.
+# -----------------------------------------------------------------------------
+#
+# Pallas kernels in this codebase use ``input_output_aliases`` for memory
+# efficiency. JAX cannot transpose an aliased ``pl.pallas_call`` (``JVP with
+# aliasing not supported``), so any path that hits a Pallas kernel is
+# non-differentiable by default. We bridge that gap with a ``jax.custom_jvp``
+# whose primal still calls the (aliased, fast) Pallas branch and whose
+# tangent rule delegates to the equivalent native-JAX branch — which is
+# already JVP-differentiable. Reverse-mode (``jax.grad``) is then derived by
+# JAX via transposition.
+#
+# Forward simulation perf is unaffected: outside of AD the custom_jvp
+# rule isn't invoked and the call collapses to the bare Pallas branch.
+#
+# Both branches must produce the same pytree-structured output. The Pallas
+# guide promises bit-identical primal outputs for the existing kernels, so
+# the gradient computed by transposing the native JVP at the Pallas-evaluated
+# inputs is the correct gradient of the Pallas operation.
+#
+# Hand-rolled Pallas adjoint kernels can later replace the native tangent
+# branch on a per-kernel basis without changing call sites.
+
+def diffable_pallas_call(state, params, *, pallas_branch, native_branch):
+    """Run ``pallas_branch(state, params)`` with a custom_jvp boundary that
+    routes tangent computation through ``native_branch``.
+
+    Both branches must accept the same positional ``(state, params)`` pair
+    and produce the same pytree structure. Anything static (config,
+    registered_variables, axis index, ...) should be closed over.
+
+    Outside of AD the call collapses to ``pallas_branch(state, params)``
+    directly — no overhead. Under ``jax.jvp`` / ``jax.jacfwd`` /
+    ``jax.grad`` / ``jax.vjp`` / ``jax.jacrev`` the custom rule fires and
+    the tangent goes through ``native_branch``.
+    """
+    @jax.custom_jvp
+    def _f(s, p):
+        return pallas_branch(s, p)
+
+    @_f.defjvp
+    def _f_jvp(primals, tangents):
+        primal_out = pallas_branch(*primals)
+        _, tangent_out = jax.jvp(native_branch, primals, tangents)
+        return primal_out, tangent_out
+
+    return _f(state, params)
+
+
+def diffable_pallas_call_n(primals, *, pallas_branch, native_branch):
+    """Same as :func:`diffable_pallas_call` but takes a tuple of arbitrary
+    differentiable primals (so callers with more than two diff args, e.g.
+    extra rhs/accumulator buffers, can still get a custom_jvp boundary)."""
+    @jax.custom_jvp
+    def _f(*args):
+        return pallas_branch(*args)
+
+    @_f.defjvp
+    def _f_jvp(args, tangents):
+        primal_out = pallas_branch(*args)
+        _, tangent_out = jax.jvp(native_branch, args, tangents)
+        return primal_out, tangent_out
+
+    return _f(*primals)

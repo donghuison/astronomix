@@ -22,7 +22,8 @@ from astronomix import CARTESIAN
 from astronomix import get_helper_data, time_integration, get_registered_variables
 from astronomix.initial_condition_generation.construct_primitive_state import construct_primitive_state
 from astronomix.option_classes.simulation_config import (
-    BACKWARDS, FINITE_DIFFERENCE, FINITE_VOLUME, PERIODIC_ROLL, SimulationConfig, finalize_config,
+    BACKWARDS, FINITE_DIFFERENCE, FINITE_VOLUME, NATIVE_JAX, PALLAS,
+    PERIODIC_ROLL, SimulationConfig, finalize_config,
     PERIODIC_BOUNDARY, BoundarySettings, BoundarySettings1D,
     StaticFloatVector, StaticIntVector
 )
@@ -473,64 +474,89 @@ def run_adjoint_test(dim, ic_type):
 # ==============================================================================
 def run_gradient_convergence_test():
     print(f"\n{'-'*50}\nRunning 1D Gradient AD Convergence Test\n{'-'*50}")
-    
+
     N_values = [16, 32, 64, 128, 256]
-    solvers = [FINITE_DIFFERENCE, FINITE_VOLUME]
-    solver_names = {FINITE_DIFFERENCE: "Finite Difference", FINITE_VOLUME: "Finite Volume"}
-    
-    errors_dict = {solver: [] for solver in solvers}
-    
+
+    # Each backend is (label, solver_mode, backend_id). Pallas backends are
+    # enabled by the custom_jvp wrappers in astronomix/_pallas_helpers.py;
+    # the tangent path runs through the native-JAX equivalent so AD gradients
+    # bit-match the native rows.
+    backends = [
+        ("Finite Difference (JAX)",  FINITE_DIFFERENCE, NATIVE_JAX),
+        ("Finite Volume (JAX)",      FINITE_VOLUME,     NATIVE_JAX),
+        ("Finite Difference (Pallas)", FINITE_DIFFERENCE, PALLAS),
+        ("Finite Volume (Pallas)",     FINITE_VOLUME,     PALLAS),
+    ]
+
+    errors_dict = {label: [] for (label, _, _) in backends}
+
     rho_B, c_s, gamma = 1.0, 2.0, 5/3
     P_B = (c_s**2) * rho_B / gamma
     eps = 1e-6
-    L, t_end = 1.0, 0.15 # Use standard simple wave parameters
+    L, t_end = 1.0, 0.15
     dim = 1
-    
-    for solver in solvers:
-        print(f"Testing Solver: {solver_names[solver]}...")
+
+    for label, solver_mode, backend in backends:
+        print(f"Testing Solver: {label}...")
         for N in N_values:
-            config, params = get_config_and_params(dim, N, L, t_end, solver_mode=solver)
+            config, params = get_config_and_params(dim, N, L, t_end, solver_mode=solver_mode)
+            if backend == PALLAS:
+                # Block shape must divide N. Use the largest power-of-two
+                # block that fits, capped at 128.
+                bx = 1
+                while bx * 2 <= min(N, 128) and N % (bx * 2) == 0:
+                    bx *= 2
+                config = config._replace(
+                    backend=PALLAS,
+                    pallas_block_shape=(bx, 1, 1),
+                    pallas_interpret=False,
+                    pallas_use_triton=True,
+                )
             helper_data = get_helper_data(config)
-            
-            # Use 'wave' for strong spectral comparison
+
             _, rho_P0, v_P0 = generate_ic(helper_data, dim, 'wave', eps, L)
-            
+
             ad_grad_rho, ad_grad_v = get_ad_gradients(rho_P0, v_P0, config, params, rho_B, c_s, P_B)
             ana_grad_rho, ana_grad_v = compute_analytic_gradients_fourier(rho_P0, v_P0, L, c_s, rho_B, params.t_end)
-            
-            # Normalize gradients structurally before computing error metric
+
             ad_norm_r, ana_norm_r = ad_grad_rho / eps, ana_grad_rho / eps
             ad_norm_v, ana_norm_v = ad_grad_v[0] / eps, ana_grad_v[0] / eps
-            
-            # Aggregate L1 Error across Density and Velocity gradients
+
             err_rho = jnp.mean(jnp.abs(ad_norm_r - ana_norm_r))
             err_vx = jnp.mean(jnp.abs(ad_norm_v - ana_norm_v))
             total_l1_error = (err_rho + err_vx) / 2.0
-            
-            errors_dict[solver].append(total_l1_error)
+
+            errors_dict[label].append(total_l1_error)
             print(f"  -> N={N:3d}: L1 Error = {total_l1_error:.2e}")
-            
-    # Convergence Plot
+
     fig_err, ax_err = plt.subplots(1, 1, figsize=(8, 6))
     N_arr = np.array(N_values)
-    
-    colors = ['blue', 'orange']
-    for idx, solver in enumerate(solvers):
-        ax_err.loglog(N_arr, errors_dict[solver], marker='o', linewidth=2, color=colors[idx], label=solver_names[solver])
+
+    styles = {
+        "Finite Difference (JAX)":    dict(color='tab:blue',   marker='o', linestyle='-'),
+        "Finite Volume (JAX)":        dict(color='tab:orange', marker='o', linestyle='-'),
+        "Finite Difference (Pallas)": dict(color='tab:blue',   marker='x', linestyle='--'),
+        "Finite Volume (Pallas)":     dict(color='tab:orange', marker='x', linestyle='--'),
+    }
+    for label, _, _ in backends:
+        ax_err.loglog(
+            N_arr, errors_dict[label], linewidth=2, label=label,
+            **styles[label],
+        )
 
     add_power_law_indicators(
         ax_err,
-        anchor = (64.0, 10.0),
+        anchor=(64.0, 10.0),
         exponents=[-2, -5],
-        x_span=32.0
+        x_span=32.0,
     )
-    
+
     ax_err.set_xlabel('Grid Resolution N', fontsize=12)
-    ax_err.set_ylabel('Average $L_1$ Error ($\partial J/\partial U_0$ vs Exact)', fontsize=12)
+    ax_err.set_ylabel(r'Average $L_1$ Error ($\partial J/\partial U_0$ vs Exact)', fontsize=12)
     ax_err.set_title('AD Gradient Convergence to Exact Analytical Fourier Operator', fontsize=14)
     ax_err.set_xticks(N_values)
     ax_err.set_xticklabels([str(n) for n in N_values])
-    ax_err.legend(loc='lower left', fontsize=10)
+    ax_err.legend(loc='lower left', fontsize=9)
     ax_err.grid(True, which="both", ls="-", alpha=0.2)
 
     os.makedirs("figures", exist_ok=True)

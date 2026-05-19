@@ -492,6 +492,63 @@ from astronomix._finite_difference._interface_fluxes._weno_pallas import (  # no
 )
 
 
+from astronomix._pallas_helpers import diffable_pallas_call  # noqa: E402
+
+
+def _weno_flux_native_for_axis(axis: int):
+    if axis == 0:
+        return _weno_flux_x_native
+    if axis == 1:
+        return _weno_flux_y_native
+    return _weno_flux_z_native
+
+
+def _weno_flux_axis_dispatch(
+    conserved_state,
+    params: SimulationParams,
+    config: SimulationConfig,
+    registered_variables: RegisteredVariables,
+    axis: int,
+):
+    """Pick the Pallas flux for the supported equation set, falling back to
+    the native per-axis JAX flux. AD wraps this through ``diffable_pallas_call``
+    so the tangent always goes through the native path."""
+    if _hydro_pallas_flux_supported(conserved_state, config):
+        if axis == 0 or (axis == 1 and int(config.dimensionality) >= 2) or (axis == 2 and int(config.dimensionality) == 3):
+            pallas = lambda s, p: _weno_flux_hydro_pallas(  # noqa: E731
+                s, p, config, registered_variables, axis=axis
+            )
+            native = lambda s, p: _weno_flux_native_for_axis(axis)(  # noqa: E731
+                s, p, config, registered_variables
+            )
+            return diffable_pallas_call(
+                conserved_state, params, pallas_branch=pallas, native_branch=native,
+            )
+    if _mhd_pallas_flux_supported(conserved_state, config):
+        pallas = lambda s, p: _weno_flux_mhd_pallas(  # noqa: E731
+            s, p, config, registered_variables, axis=axis
+        )
+        native = lambda s, p: _weno_flux_native_for_axis(axis)(  # noqa: E731
+            s, p, config, registered_variables
+        )
+        return diffable_pallas_call(
+            conserved_state, params, pallas_branch=pallas, native_branch=native,
+        )
+    if _mhd_iso_pallas_flux_supported(conserved_state, config):
+        pallas = lambda s, p: _weno_flux_mhd_iso_pallas(  # noqa: E731
+            s, p, config, registered_variables, axis=axis
+        )
+        native = lambda s, p: _weno_flux_native_for_axis(axis)(  # noqa: E731
+            s, p, config, registered_variables
+        )
+        return diffable_pallas_call(
+            conserved_state, params, pallas_branch=pallas, native_branch=native,
+        )
+    return _weno_flux_native_for_axis(axis)(
+        conserved_state, params, config, registered_variables
+    )
+
+
 @partial(jax.jit, static_argnames=["registered_variables", "config"])
 def _weno_flux_x(
     conserved_state,
@@ -499,19 +556,9 @@ def _weno_flux_x(
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ):
-    if _hydro_pallas_flux_supported(conserved_state, config):
-        return _weno_flux_hydro_pallas(
-            conserved_state, params, config, registered_variables, axis=0
-        )
-    if _mhd_pallas_flux_supported(conserved_state, config):
-        return _weno_flux_mhd_pallas(
-            conserved_state, params, config, registered_variables, axis=0
-        )
-    if _mhd_iso_pallas_flux_supported(conserved_state, config):
-        return _weno_flux_mhd_iso_pallas(
-            conserved_state, params, config, registered_variables, axis=0
-        )
-    return _weno_flux_x_native(conserved_state, params, config, registered_variables)
+    return _weno_flux_axis_dispatch(
+        conserved_state, params, config, registered_variables, axis=0,
+    )
 
 
 @partial(jax.jit, static_argnames=["registered_variables", "config"])
@@ -521,19 +568,9 @@ def _weno_flux_y(
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ):
-    if _hydro_pallas_flux_supported(conserved_state, config) and int(config.dimensionality) >= 2:
-        return _weno_flux_hydro_pallas(
-            conserved_state, params, config, registered_variables, axis=1
-        )
-    if _mhd_pallas_flux_supported(conserved_state, config):
-        return _weno_flux_mhd_pallas(
-            conserved_state, params, config, registered_variables, axis=1
-        )
-    if _mhd_iso_pallas_flux_supported(conserved_state, config):
-        return _weno_flux_mhd_iso_pallas(
-            conserved_state, params, config, registered_variables, axis=1
-        )
-    return _weno_flux_y_native(conserved_state, params, config, registered_variables)
+    return _weno_flux_axis_dispatch(
+        conserved_state, params, config, registered_variables, axis=1,
+    )
 
 
 @partial(jax.jit, static_argnames=["registered_variables", "config"])
@@ -543,16 +580,6 @@ def _weno_flux_z(
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ):
-    if _hydro_pallas_flux_supported(conserved_state, config) and int(config.dimensionality) == 3:
-        return _weno_flux_hydro_pallas(
-            conserved_state, params, config, registered_variables, axis=2
-        )
-    if _mhd_pallas_flux_supported(conserved_state, config):
-        return _weno_flux_mhd_pallas(
-            conserved_state, params, config, registered_variables, axis=2
-        )
-    if _mhd_iso_pallas_flux_supported(conserved_state, config):
-        return _weno_flux_mhd_iso_pallas(
-            conserved_state, params, config, registered_variables, axis=2
-        )
-    return _weno_flux_z_native(conserved_state, params, config, registered_variables)
+    return _weno_flux_axis_dispatch(
+        conserved_state, params, config, registered_variables, axis=2,
+    )

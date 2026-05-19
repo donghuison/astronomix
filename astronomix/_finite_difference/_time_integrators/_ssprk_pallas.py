@@ -22,9 +22,33 @@ from astronomix._pallas_helpers import (
     _as_3tuple_block_shape,
     _pallas_call_sharded,
     _pallas_compiler_params,
+    diffable_pallas_call,
+    diffable_pallas_call_n,
     pl,
 )
+from astronomix._stencil_operations._stencil_operations import _shift
 from astronomix.option_classes.simulation_config import SimulationConfig
+
+
+def _hydro_flux_div_axis_native(
+    dF,
+    dt_over_dx,
+    *,
+    axis: int,
+    rhs_accumulator=None,
+    scale_in: Union[float, jnp.ndarray] = 1.0,
+):
+    """Native-JAX equivalent of :func:`_hydro_flux_div_axis_pallas`.
+
+    Used as the tangent branch by ``diffable_pallas_call`` so that AD through
+    the Pallas kernel goes through a transposable JAX expression. Must match
+    the Pallas kernel's behaviour bit-for-bit on the primal output for the
+    gradient to equal the gradient of the Pallas op at the input.
+    """
+    div = -dt_over_dx * (dF - _shift(dF, 1, axis=axis + 1))
+    if rhs_accumulator is None:
+        return div
+    return scale_in * rhs_accumulator + div
 
 
 def _div_axis_pallas_shape_ok(state, config: SimulationConfig) -> bool:
@@ -100,27 +124,53 @@ def _hydro_flux_div_axis_pallas(
                 rhs_accumulator=None,
                 scale_in=scale_in,
             )
+
+        def _pallas_branch(dF_in, dt_over_dx_in):
+            return _pallas_call_sharded(
+                lambda d: _hydro_flux_div_axis_pallas_local(
+                    d, dt_over_dx_in, config,
+                    axis=axis, rhs_accumulator=None, scale_in=scale_in,
+                ),
+                state_inputs=(dF_in,),
+                halo=halo,
+                block_shape=block_shape[:ndim],
+            )
+
+        def _native_branch(dF_in, dt_over_dx_in):
+            return _hydro_flux_div_axis_native(
+                dF_in, dt_over_dx_in, axis=axis,
+                rhs_accumulator=None, scale_in=scale_in,
+            )
+
+        return diffable_pallas_call(
+            dF, dt_over_dx,
+            pallas_branch=_pallas_branch, native_branch=_native_branch,
+        )
+
+    def _pallas_branch_acc(dF_in, dt_over_dx_in, rhs_in, scale_in_arr):
         return _pallas_call_sharded(
-            _local,
-            state_inputs=(dF,),
+            lambda r, d: _hydro_flux_div_axis_pallas_local(
+                d, dt_over_dx_in, config,
+                axis=axis, rhs_accumulator=r, scale_in=scale_in_arr,
+            ),
+            state_inputs=(rhs_in, dF_in),
             halo=halo,
             block_shape=block_shape[:ndim],
         )
 
-    def _local(rhs_local, dF_local):
-        return _hydro_flux_div_axis_pallas_local(
-            dF_local,
-            dt_over_dx,
-            config,
-            axis=axis,
-            rhs_accumulator=rhs_local,
-            scale_in=scale_in,
+    def _native_branch_acc(dF_in, dt_over_dx_in, rhs_in, scale_in_arr):
+        return _hydro_flux_div_axis_native(
+            dF_in, dt_over_dx_in, axis=axis,
+            rhs_accumulator=rhs_in, scale_in=scale_in_arr,
         )
-    return _pallas_call_sharded(
-        _local,
-        state_inputs=(rhs_accumulator, dF),
-        halo=halo,
-        block_shape=block_shape[:ndim],
+
+    # ``scale_in`` may be a traced scalar (LSRK4 stage coefficient) so route
+    # it through the diffable primals tuple too.
+    scale_in_arr = jnp.asarray(scale_in)
+    return diffable_pallas_call_n(
+        (dF, dt_over_dx, rhs_accumulator, scale_in_arr),
+        pallas_branch=_pallas_branch_acc,
+        native_branch=_native_branch_acc,
     )
 
 

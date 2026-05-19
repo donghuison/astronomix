@@ -450,6 +450,143 @@ a kernel that never finished compiling.
 Heuristic: target halo ≤ 4 per kernel. If your native pipeline has
 more than two consecutive stencil stages, split.
 
+### 4d. Differentiability: route AD through the native fallback
+
+Pallas kernels in this codebase use ``input_output_aliases={0: 0}`` for
+the memory win documented in §4. JAX's autodiff machinery can't transpose
+an aliased ``pl.pallas_call`` — under ``jax.grad`` you get
+``NotImplementedError: JVP with aliasing not supported``. So **every
+Pallas dispatch site must be wrapped in a ``jax.custom_jvp`` whose
+tangent rule delegates to the equivalent native-JAX kernel**.
+
+Two helpers in ``astronomix/_pallas_helpers.py`` do the wrapping:
+
+- ``diffable_pallas_call(state, params, *, pallas_branch, native_branch)``
+  — the common case: two differentiable primals.
+- ``diffable_pallas_call_n(primals, *, pallas_branch, native_branch)``
+  — same idea for kernels with more than two diff primals (e.g. an extra
+  accumulator / scale arg).
+
+Both helpers:
+
+- run ``pallas_branch(*primals)`` as the primal, so forward simulation
+  performance is unchanged (no AD-time work outside ``jax.grad`` / etc.);
+- on JVP, compute the primal via Pallas and the tangent via
+  ``jax.jvp(native_branch, primals, tangents)``;
+- on VJP, JAX transposes the JVP rule — the cotangent flow goes through
+  the (transposable) native path with no aliasing.
+
+Two pieces are needed at each dispatch site:
+
+1. A **native fallback function** with the same positional signature
+   as the Pallas branch. Often it already exists (the dispatcher's
+   existing native arm); otherwise add one next to the Pallas kernel
+   (e.g. ``_hydro_flux_div_axis_native`` in ``_ssprk_pallas.py``).
+2. A **wrapped call** at the dispatcher level. Close over every static
+   arg (``config``, ``registered_variables``, ``axis``, etc.) in the
+   ``pallas_branch`` / ``native_branch`` lambdas — only differentiable
+   tensors should appear as positional primals.
+
+#### 4d.1 Dispatcher-level pattern (preferred)
+
+```python
+# In the native file (or the dispatcher entry point):
+
+from astronomix._pallas_helpers import diffable_pallas_call
+
+@partial(jax.jit, static_argnames=["registered_variables", "config"])
+def _flavour_flux_x(state, params, config, registered_variables):
+    if _flavour_pallas_supported(state, config):
+        pallas = lambda s, p: _flavour_pallas(
+            s, p, config, registered_variables, axis=0,
+        )
+        native = lambda s, p: _flavour_native_x(
+            s, p, config, registered_variables,
+        )
+        return diffable_pallas_call(
+            state, params,
+            pallas_branch=pallas, native_branch=native,
+        )
+    return _flavour_native_x(state, params, config, registered_variables)
+```
+
+#### 4d.2 Kernel-level pattern (when there is no dispatcher)
+
+For kernels called directly from native integrator code (e.g.
+``_hydro_flux_div_axis_pallas`` in ``_ssprk_pallas.py``), wrap inside
+the public Pallas function itself so every existing call site picks up
+differentiability automatically:
+
+```python
+# In _ssprk_pallas.py
+
+def _hydro_flux_div_axis_native(dF, dt_over_dx, *, axis, rhs_accumulator=None, scale_in=1.0):
+    """Native-JAX equivalent — used as the tangent branch."""
+    div = -dt_over_dx * (dF - _shift(dF, 1, axis=axis + 1))
+    if rhs_accumulator is None:
+        return div
+    return scale_in * rhs_accumulator + div
+
+
+def _hydro_flux_div_axis_pallas(dF, dt_over_dx, config, *, axis,
+                                 rhs_accumulator=None, scale_in=1.0):
+    # …existing block/halo setup…
+
+    if rhs_accumulator is None:
+        def _pallas_branch(dF_in, dt_in):
+            return _pallas_call_sharded(
+                lambda d: _hydro_flux_div_axis_pallas_local(
+                    d, dt_in, config, axis=axis,
+                    rhs_accumulator=None, scale_in=scale_in,
+                ),
+                state_inputs=(dF_in,), halo=halo,
+                block_shape=block_shape[:ndim],
+            )
+        def _native_branch(dF_in, dt_in):
+            return _hydro_flux_div_axis_native(
+                dF_in, dt_in, axis=axis,
+                rhs_accumulator=None, scale_in=scale_in,
+            )
+        return diffable_pallas_call(
+            dF, dt_over_dx,
+            pallas_branch=_pallas_branch, native_branch=_native_branch,
+        )
+
+    # Accumulator path: extra diff primals (rhs_accumulator, scale_in).
+    scale_in_arr = jnp.asarray(scale_in)
+    return diffable_pallas_call_n(
+        (dF, dt_over_dx, rhs_accumulator, scale_in_arr),
+        pallas_branch=_pallas_branch_acc,
+        native_branch=_native_branch_acc,
+    )
+```
+
+#### 4d.3 Validation
+
+For a new Pallas kernel, validate the gradient route alongside the
+primal:
+
+1. ``jax.grad`` of a scalar reduction of the kernel's output, with
+   both ``backend=NATIVE_JAX`` and ``backend=PALLAS``. They should
+   bit-match (because the JVP rule is the native path and the primal is
+   bit-identical per the Pallas memory-table promise).
+2. ``tests/sensitivity/sensitivity.py``'s
+   ``run_gradient_convergence_test()`` — adds Pallas FD / FV curves
+   beside native and checks that the AD gradient still converges to
+   the analytical Fourier gradient at the same rate as native.
+
+#### 4d.4 Limitations / when to hand-roll a Pallas adjoint instead
+
+The native-JAX fallback gives correct gradients with zero new kernel
+code, but the backward pass runs at native speed. Once a kernel's
+backward pass is on the hot path, replace its ``native_branch`` with a
+hand-rolled Pallas adjoint kernel paired through ``jax.custom_vjp``
+(forward calls the aliased Pallas kernel, backward calls a paired
+adjoint kernel). The call-site interface (``diffable_pallas_call`` /
+``diffable_pallas_call_n``) is the seam; nothing in the dispatchers
+changes when an individual kernel is later upgraded to a hand-rolled
+adjoint.
+
 ### 5. Wire the dispatcher in the native file
 
 At the **bottom** of the native file (after all native function
@@ -534,6 +671,14 @@ add a short subsection in `pallas_backend_implementation_guide.md`
 
 ## Known limitations / things to never do
 
+- **Don't forget to wrap the dispatch in `diffable_pallas_call` /
+  `diffable_pallas_call_n` (§4d).** Without the wrap, any user who
+  calls `jax.grad` / `jax.vjp` through `time_integration` with
+  `backend=PALLAS` gets `NotImplementedError: JVP with aliasing not
+  supported`. The wrap is cheap (one extra ``jax.custom_jvp`` boundary)
+  and zero-cost outside AD, so apply it at every Pallas dispatch site
+  by default. There is no scenario where Pallas + ``input_output_aliases``
+  is differentiable without it.
 - **Don't import `_*_pallas.py` symbols from the native file at the top
   of the file** — that re-introduces the circular import the
   bottom-of-file pattern fixes.  Always import Pallas symbols at the

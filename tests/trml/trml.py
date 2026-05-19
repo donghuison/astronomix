@@ -114,7 +114,7 @@ if multi_gpu:
     named_sharding_no_var = jax.NamedSharding(sharding_mesh_no_var, P(XAXIS, YAXIS, ZAXIS))
 
 # Box setup
-num_cells_x = 512
+num_cells_x = 64
 num_cells_y = num_cells_x
 num_cells_z = int(1.5 * num_cells_x)
 box_size = 1.0

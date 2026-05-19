@@ -13,12 +13,28 @@ from jaxtyping import Array, Float
 
 from typing import Union
 
+from astronomix._pallas_helpers import diffable_pallas_call_n
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 from astronomix.option_classes.simulation_config import (
     IDEAL_GAS,
     STATE_TYPE,
     SimulationConfig,
 )
+
+
+def _enforce_positivity_native(
+    conserved_state: STATE_TYPE,
+    gamma: Union[float, Float[Array, ""]],
+    minimum_density: Union[float, Float[Array, ""]],
+    minimum_pressure: Union[float, Float[Array, ""]],
+    config: SimulationConfig,
+    registered_variables: RegisteredVariables,
+) -> STATE_TYPE:
+    return _enforce_positivity_native_impl(
+        conserved_state, config, gamma,
+        minimum_density, minimum_pressure, registered_variables,
+    )
+
 
 @partial(
     jax.jit, static_argnames=["registered_variables", "config"]
@@ -32,11 +48,30 @@ def _enforce_positivity(
     registered_variables: RegisteredVariables,
 ) -> STATE_TYPE:
     if _enforce_positivity_pallas_supported(conserved_state, config):
-        return _enforce_positivity_pallas(
-            conserved_state, config, gamma,
-            minimum_density, minimum_pressure, registered_variables,
+        pallas = lambda s, g, mr, mp: _enforce_positivity_pallas(  # noqa: E731
+            s, config, g, mr, mp, registered_variables,
         )
+        native = lambda s, g, mr, mp: _enforce_positivity_native(  # noqa: E731
+            s, g, mr, mp, config, registered_variables,
+        )
+        return diffable_pallas_call_n(
+            (conserved_state, gamma, minimum_density, minimum_pressure),
+            pallas_branch=pallas, native_branch=native,
+        )
+    return _enforce_positivity_native(
+        conserved_state, gamma, minimum_density, minimum_pressure,
+        config, registered_variables,
+    )
 
+
+def _enforce_positivity_native_impl(
+    conserved_state: STATE_TYPE,
+    config: SimulationConfig,
+    gamma: Union[float, Float[Array, ""]],
+    minimum_density: Union[float, Float[Array, ""]],
+    minimum_pressure: Union[float, Float[Array, ""]],
+    registered_variables: RegisteredVariables,
+) -> STATE_TYPE:
     rho = conserved_state[registered_variables.density_index]
 
     # enforce minimum density

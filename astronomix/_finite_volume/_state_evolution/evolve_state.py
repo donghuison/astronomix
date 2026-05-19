@@ -39,6 +39,7 @@ from astronomix._finite_volume._state_evolution.reconstruction import (
     _reconstruct_at_interface_unsplit,
     _reconstruct_at_interface_unsplit_single,
 )
+from astronomix._pallas_helpers import diffable_pallas_call_n
 from astronomix._finite_volume._state_evolution._pallas_evolve import (
     _fv_evolve_axis_pallas,
     _fv_pallas_evolve_supported,
@@ -384,14 +385,38 @@ def _evolve_gas_state_unsplit_inner(
                 primitive_state = _boundary_handler(
                     primitive_state, config, registered_variables, params
                 )
-            conservative_states = _fv_evolve_axis_pallas(
-                primitive_state,
-                dt_over_dx,
-                params,
-                config,
-                registered_variables,
-                axis_index=axis,
-                conserved_accumulator=conservative_states,
+
+            axis_ = axis  # capture for the closures
+
+            def _pallas_branch(ps, dod, acc):
+                return _fv_evolve_axis_pallas(
+                    ps, dod, params, config, registered_variables,
+                    axis_index=axis_,
+                    conserved_accumulator=acc,
+                )
+
+            def _native_branch(ps, dod, acc):
+                # Per-axis native path matching the Pallas-fused kernel:
+                # reconstruct -> Riemann -> accumulate
+                # -(dt/dx) * (F_{i+1/2} - F_{i-1/2}). Used as the tangent
+                # path for diffable_pallas_call_n so AD through the Pallas
+                # backend produces the same gradient as native FV.
+                pl_iface, pr_iface = _reconstruct_at_interface_unsplit_single(
+                    ps, config, helper_data, axis_
+                )
+                fluxes = _riemann_solver(
+                    pl_iface, pr_iface, ps, gamma, config,
+                    registered_variables, axis_,
+                )
+                flux_diff = _stencil_add(
+                    fluxes, indices=(0, 1), factors=(1.0, -1.0), axis=axis_,
+                )
+                return acc + dod * flux_diff
+
+            conservative_states = diffable_pallas_call_n(
+                (primitive_state, dt_over_dx, conservative_states),
+                pallas_branch=_pallas_branch,
+                native_branch=_native_branch,
             )
             # Re-derive primitives so the next-axis reconstruction uses an
             # up-to-date state (the native pipeline does the same via the
