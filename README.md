@@ -156,7 +156,7 @@ the notebooks below and we have also prepared a more advanced use-case
 
 ## Performance
 
-TODO
+Methods paper incoming :)
 
 ## Frequently Asked Questions (FAQ)
 
