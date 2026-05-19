@@ -1,10 +1,10 @@
 """
-3D Jeans linear-wave benchmark (self-gravity methods-paper test).
+3D linear sound-wave benchmark (pure-hydro methods-paper test).
 
-Configurations: three FD self-gravity treatments
-    - simple source term
-    - flux-based source (FD)
-    - corrected flux-based source (WENO)
+Configurations:
+    - FV  (NATIVE_JAX)
+    - FD  (NATIVE_JAX)
+    - FD  (Pallas)
 
 Modes:
     Default (convergence): L1 error and runtime plots across a resolution
@@ -17,7 +17,7 @@ Modes:
 import os
 import sys
 
-NUM_GPUS_SCALING = 4
+NUM_GPUS_SCALING = 2
 
 RUN_SCALING = "--scaling" in sys.argv
 RUN_CONVERGENCE = "--convergence" in sys.argv or not RUN_SCALING
@@ -30,20 +30,21 @@ autocvd(num_gpus=NUM_GPUS_SCALING if RUN_SCALING else 1)
 
 import jax
 
-# Double precision: the perturbation amplitude is eps = 1e-6.
+# Double precision for tiny perturbation amplitudes.
 jax.config.update("jax_enable_x64", True)
 
 from astronomix.option_classes.simulation_config import (
-    FD_FLUX_GRAVITY,
     FINITE_DIFFERENCE,
-    SIMPLE_SOURCE_TERM,
-    WENO_FLUX_GRAVITY,
+    FINITE_VOLUME,
+    NATIVE_JAX,
+    PALLAS,
     SimulationConfig,
     SnapshotSettings,
+    StaticFloatVector,
 )
-from astronomix.test_setups.self_gravity.jeans_waves import (
-    jeans_wave_solution,
-    setup_jeans_wave,
+from astronomix.test_setups.hydrodynamics.sound_wave3D import (
+    setup_sound_wave,
+    sound_wave_solution,
 )
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -61,9 +62,8 @@ FIG_DIR = os.path.join(_HERE, "figures")
 
 
 _common_kwargs = dict(
-    solver_mode=FINITE_DIFFERENCE,
+    box_size=StaticFloatVector(3.0, 1.5, 1.5),
     mhd=False,
-    self_gravity=True,
     dimensionality=3,
     progress_bar=False,
     memory_analysis=True,
@@ -74,25 +74,31 @@ _common_kwargs = dict(
 
 BENCHMARKS = [
     BenchmarkSpec(
-        label="FD, simple source",
+        label="FV (JAX)",
         base_config=SimulationConfig(
-            self_gravity_version=SIMPLE_SOURCE_TERM,
+            backend=NATIVE_JAX,
+            solver_mode=FINITE_VOLUME,
+            **_common_kwargs,
+        ),
+        cfl=0.4,
+    ),
+    BenchmarkSpec(
+        label="FD (JAX)",
+        base_config=SimulationConfig(
+            backend=NATIVE_JAX,
+            solver_mode=FINITE_DIFFERENCE,
             **_common_kwargs,
         ),
         cfl=1.5,
     ),
     BenchmarkSpec(
-        label="FD, flux-based source",
+        label="FD (Pallas)",
         base_config=SimulationConfig(
-            self_gravity_version=FD_FLUX_GRAVITY,
-            **_common_kwargs,
-        ),
-        cfl=1.5,
-    ),
-    BenchmarkSpec(
-        label="FD, corrected flux-based source",
-        base_config=SimulationConfig(
-            self_gravity_version=WENO_FLUX_GRAVITY,
+            backend=PALLAS,
+            pallas_block_shape=(4, 4, 8),
+            pallas_use_triton=True,
+            pallas_interpret=False,
+            solver_mode=FINITE_DIFFERENCE,
             **_common_kwargs,
         ),
         cfl=1.5,
@@ -108,28 +114,28 @@ def _error_indices(rv):
     )
 
 
-def test_jeans_wave_convergence():
+def test_sound_wave_convergence():
     run_convergence_and_runtime(
         BENCHMARKS,
-        N_values=[8, 16, 32, 48],
-        setup_fn=setup_jeans_wave,
-        analytic_fn=jeans_wave_solution,
+        N_values=[8, 16, 32, 64, 128],
+        setup_fn=setup_sound_wave,
+        analytic_fn=sound_wave_solution,
         error_var_indices_fn=_error_indices,
-        name="jeans_waves3D",
-        title="3D Jeans linear wave",
+        name="sound_wave3D",
+        title="3D linear sound wave",
         data_dir=DATA_DIR,
         figure_dir=FIG_DIR,
     )
 
 
-def test_jeans_wave_strong_scaling():
+def test_sound_wave_strong_scaling():
     run_strong_scaling(
         BENCHMARKS,
-        N_values=[16, 32, 48],
-        setup_fn=setup_jeans_wave,
+        N_values=[16, 32, 64, 128],
+        setup_fn=setup_sound_wave,
         num_gpus=NUM_GPUS_SCALING,
-        name="jeans_waves3D",
-        title="3D Jeans linear wave",
+        name="sound_wave3D",
+        title="3D linear sound wave",
         data_dir=DATA_DIR,
         figure_dir=FIG_DIR,
     )
@@ -137,6 +143,6 @@ def test_jeans_wave_strong_scaling():
 
 if __name__ == "__main__":
     if RUN_CONVERGENCE:
-        test_jeans_wave_convergence()
+        test_sound_wave_convergence()
     if RUN_SCALING:
-        test_jeans_wave_strong_scaling()
+        test_sound_wave_strong_scaling()

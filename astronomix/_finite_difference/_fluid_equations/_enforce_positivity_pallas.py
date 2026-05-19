@@ -15,6 +15,7 @@ import jax.numpy as jnp
 from astronomix._pallas_helpers import (
     _as_3tuple_block_shape,
     _backend_is_pallas,
+    _pallas_call_sharded,
     _pallas_compiler_params,
     pl,
 )
@@ -58,6 +59,44 @@ def _enforce_positivity_pallas(
     the output (one full-state buffer saved per call).
     """
     assert _enforce_positivity_pallas_supported(conserved_state, config)
+
+    # Multi-GPU: pure pointwise op, so halo=0.  Still route through the
+    # shard_map wrapper so XLA does NOT all-gather the state before this
+    # opaque pallas_call — the wrapper just runs the kernel locally on
+    # each shard.
+    ndim = int(config.dimensionality)
+    block_shape = _as_3tuple_block_shape(config.pallas_block_shape, ndim)
+
+    def _local(state_local):
+        return _enforce_positivity_pallas_local(
+            state_local,
+            config,
+            gamma,
+            minimum_density,
+            minimum_pressure,
+            registered_variables,
+        )
+
+    return _pallas_call_sharded(
+        _local,
+        state_inputs=(conserved_state,),
+        halo=(0,) * ndim,
+        block_shape=block_shape[:ndim],
+    )
+
+
+def _enforce_positivity_pallas_local(
+    conserved_state,
+    config: SimulationConfig,
+    gamma,
+    minimum_density,
+    minimum_pressure,
+    registered_variables: RegisteredVariables,
+):
+    """Single-shard kernel build.  Called either directly (single device)
+    or once per device from inside ``shard_map`` (multi-device).  The
+    pallas_call's ``out_shape`` and ``grid`` are recomputed from the
+    *local* ``conserved_state.shape`` so this works for both."""
 
     is_mhd = config.mhd
     is_ideal = (config.equation_of_state == IDEAL_GAS)

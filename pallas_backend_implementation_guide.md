@@ -257,6 +257,95 @@ dq = _hydro_flux_div_axis_pallas(
 The dF buffers are produced one at a time and consumed immediately.
 The `dq` buffer is physically one allocation throughout.
 
+### 2.3a Multi-GPU: the `_pallas_call_sharded` wrap
+
+A bare ``pl.pallas_call`` is opaque to GSPMD.  Its ``BlockSpec`` index
+map is ``lambda bi, bj, bk: (0, 0, 0, 0)`` — every block program *can*
+read anywhere in the input, so GSPMD has to assume it *does* and
+``all-gather`` the full state on every device before each call.  On the
+FD Pallas sound-wave benchmark (`pytests/hydrodynamics/_extended_scaling.py`),
+that pinned multi-GPU speedup at ~0.95× across N=64..256 (2 GPUs cost
+the same as 1 GPU plus an all-gather every kernel).  Per-device temp
+memory was unchanged from the single-GPU baseline, confirming each
+device was materialising the full state.
+
+The fix is mechanical and lives entirely in
+``astronomix/_pallas_helpers.py``: ``_pallas_call_sharded(kernel_local,
+state_inputs, halo, block_shape)`` wraps the kernel build in a
+``jax.experimental.shard_map.shard_map`` body that:
+
+1. ``jax.lax.ppermute``s a halo of ``stencil_reach`` cells from each
+   neighbour shard along every sharded spatial axis (periodic ring).
+2. Concatenates ``[left_halo, local, right_halo]`` on each sharded
+   axis.
+3. Calls the existing per-shard kernel build on the padded local shard.
+   The kernel's modular indexing wraps within the padded shape, so
+   interior reads land on real neighbour values and only halo-cell
+   outputs (which get stripped) wrap around incorrectly.
+4. Strips the halo from each state-shape output.
+
+The user-facing knob is just ``pallas_mesh_context(mesh)`` around the
+JIT trace — ``time_integration`` enters it whenever ``sharding`` is
+non-None — plus a thin wrapper at each Pallas entry point that calls
+``_pallas_call_sharded`` instead of ``pl.pallas_call`` directly.
+
+```python
+def _flavour_pallas(state, …, *, axis):
+    if not _flavour_pallas_supported(state, config):
+        return _flavour_native_axis(state, …)        # native fallback
+    halo = [0, 0, 0]
+    halo[axis] = STENCIL_REACH    # 3 for WENO5, 2 for FV PLM, 1 for div, 0 for pointwise
+    return _pallas_call_sharded(
+        lambda s: _flavour_pallas_local(s, …, axis=axis),
+        state_inputs=(state,),
+        halo=tuple(halo[:ndim]),
+        block_shape=_as_3tuple_block_shape(config.pallas_block_shape, ndim)[:ndim],
+    )
+```
+
+Halo widths in use today:
+
+| Kernel | Stencil reach | Block-rounded halo (`bx=4`) |
+|---|---|---|
+| Hydro WENO5 / MHD WENO5 / iso-MHD WENO5 | 3 (offsets −2..+3) | 4 |
+| Fused WENO + divergence (`_weno_flux_hydro_pallas_rhs`) | 3 | 4 |
+| Per-axis flux divergence | 1 (offset −1) | 4 |
+| Pointwise positivity floor / EOS / source | 0 | 0 (shard_map only, no ppermute) |
+| CT modified-flux / edge-EMF / curl | 2–4 per kernel | 4 |
+
+Single-device runs (``mesh is None`` or ``mesh.size == 1``) get a
+transparent forward to the kernel build — no shard_map, no halo, no
+perf change.
+
+**Measured behaviour on `_extended_scaling.py` (sound_wave3D, 2 GPUs).**
+
+| N | 1 GPU | 2 GPUs | speedup before fix | speedup after fix | theoretical max (halo) |
+|---|---|---|---|---|---|
+| 64  | 1.75 s   | 15.50 s | 0.80× | 0.11× ¹ | 1.60× |
+| 128 | 24.53 s  | 14.06 s | 0.93× | **1.75×** | 1.78× |
+| 256 | 394.78 s | 213.59 s | 0.95× | **1.85×** | 1.88× |
+
+¹ N=64 is compile-cost dominated — the 14s on 2 GPUs is mostly the
+one-time Triton compile of the sharded path, not steady-state work.
+At N≥128 the wrap hits ~98 % of the halo-waste theoretical ceiling.
+
+Per-device temp memory at N=256 drops from 5120 MB (1 GPU) to
+2620 MB (per-device on 2 GPUs) — confirming each device materialises
+only its local shard.  Before the fix, both were 5120 MB (each device
+all-gathered the full state).
+
+**Future optimisation if needed.**  Each kernel call pays one
+``shard_map`` entry + per-axis ppermute; that overhead is already
+negligible at N≥128.  If it ever bites at smaller N the natural fix
+is to wrap an entire per-stage RHS (`_hydro_step_rhs` in `_ssprk.py`)
+in one ``shard_map`` so a single halo exchange covers all the
+WENO + divergence calls in that stage.  Hasn't been needed yet — the
+current per-call wrap hits the halo ceiling at production scale.
+
+The full design rationale (why this is needed, how the alternative
+threading-mesh-through-every-function design was rejected) is in the
+``pallasify`` skill, §4b'.
+
 ### 2.4 Backend-aware dispatch
 
 The wrapper for each direction stays small and JIT-able:
@@ -270,7 +359,7 @@ def _weno_flux_x(state, params, config, registered_variables):
     return _weno_flux_x_native(state, params, config, registered_variables)
 ```
 
-Two rules that paid off:
+Three rules that paid off:
 
 - `_hydro_pallas_flux_supported` is a **plain Python** predicate
   evaluated at jit-trace time.  It must NOT rely on traced values
@@ -278,6 +367,10 @@ Two rules that paid off:
 - Every Pallas helper must compile-time fall back to its native-JAX
   twin when `pl is None` or when the predicate returns False, so a
   build without Pallas / CUDA still works.
+- The dispatcher imports the **public** ``_*_pallas`` entry point, not
+  the ``_*_pallas_local`` body.  The public entry point does the
+  multi-GPU ``shard_map`` wrap (§2.3a); bypassing it silently disables
+  strong scaling.
 
 ### 2.5 Donating buffers from the top
 

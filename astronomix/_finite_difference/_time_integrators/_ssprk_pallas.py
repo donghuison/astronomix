@@ -20,6 +20,7 @@ import jax.numpy as jnp
 
 from astronomix._pallas_helpers import (
     _as_3tuple_block_shape,
+    _pallas_call_sharded,
     _pallas_compiler_params,
     pl,
 )
@@ -76,6 +77,66 @@ def _hydro_flux_div_axis_pallas(
     produced, instead of holding all three live for the original
     three-input divergence helper.
     """
+    # Multi-GPU: divergence reads ``dF[i] - dF[i-1]`` along ``axis``, so the
+    # only halo needed is 1 cell on the active axis (rounded up to the
+    # Pallas block size by ``_pallas_call_sharded``).  The accumulator is
+    # read at the local cell only — no halo — but we pass it through the
+    # same wrapper to keep the input_output_aliases trick intact inside
+    # each shard.
+    ndim = int(config.dimensionality)
+    block_shape = _as_3tuple_block_shape(config.pallas_block_shape, ndim)
+    halo_list = [0, 0, 0]
+    if 0 <= axis < ndim:
+        halo_list[axis] = 1
+    halo = tuple(halo_list[:ndim])
+
+    if rhs_accumulator is None:
+        def _local(dF_local):
+            return _hydro_flux_div_axis_pallas_local(
+                dF_local,
+                dt_over_dx,
+                config,
+                axis=axis,
+                rhs_accumulator=None,
+                scale_in=scale_in,
+            )
+        return _pallas_call_sharded(
+            _local,
+            state_inputs=(dF,),
+            halo=halo,
+            block_shape=block_shape[:ndim],
+        )
+
+    def _local(rhs_local, dF_local):
+        return _hydro_flux_div_axis_pallas_local(
+            dF_local,
+            dt_over_dx,
+            config,
+            axis=axis,
+            rhs_accumulator=rhs_local,
+            scale_in=scale_in,
+        )
+    return _pallas_call_sharded(
+        _local,
+        state_inputs=(rhs_accumulator, dF),
+        halo=halo,
+        block_shape=block_shape[:ndim],
+    )
+
+
+def _hydro_flux_div_axis_pallas_local(
+    dF,
+    dt_over_dx,
+    config: SimulationConfig,
+    *,
+    axis: int,
+    rhs_accumulator=None,
+    scale_in: Union[float, jnp.ndarray] = 1.0,
+):
+    """Single-shard ``pl.pallas_call`` build.  Called either directly or
+    inside a ``shard_map`` body; ``dF.shape`` is the *local* (halo-padded)
+    shape in the multi-device case so the kernel's grid/in-spec/out-spec
+    re-derive automatically."""
     ndim = int(config.dimensionality)
     nvars = int(dF.shape[0])
     spatial_shape = tuple(int(x) for x in dF.shape[1:])

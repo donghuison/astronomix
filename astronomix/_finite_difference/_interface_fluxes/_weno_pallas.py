@@ -29,10 +29,42 @@ from astronomix._pallas_helpers import (
     _as_3tuple_block_shape,
     _backend_is_pallas,
     _default_pallas_block_shape,
+    _pallas_call_sharded,
     _pallas_compiler_params,
     pl,
     pltriton,
 )
+
+
+def _weno5_shard_wrap(kernel_local, conserved_state, config, axis):
+    """Multi-GPU wrap for a per-axis 5th-order WENO Pallas kernel.
+
+    The WENO5 stencil reads offsets ``-2..+3`` along the *active* axis only —
+    so halo of 3 cells on that axis is enough.  Off-axis the kernel reads
+    only its own cell index (``ii``, ``jj``, or ``kk``), so no halo is
+    needed there even if those axes are sharded.
+
+    Every WENO kernel here (hydro / MHD / iso-MHD / hydro_rhs) shares the
+    same per-axis stencil reach, so all of them funnel through this single
+    helper.  When ``pallas_mesh_context`` is not active the helper just
+    forwards to ``kernel_local`` — single-device runs are unaffected.
+    """
+    ndim = int(config.dimensionality)
+    block_shape = _as_3tuple_block_shape(config.pallas_block_shape, ndim)
+    halo_list = [0, 0, 0]
+    if 0 <= int(axis) < ndim:
+        halo_list[int(axis)] = 3
+    halo = tuple(halo_list[:ndim])
+
+    def _call(state_local):
+        return kernel_local(state_local)
+
+    return _pallas_call_sharded(
+        _call,
+        state_inputs=(conserved_state,),
+        halo=halo,
+        block_shape=block_shape[:ndim],
+    )
 from astronomix.option_classes.simulation_config import IDEAL_GAS, ISOTHERMAL, PALLAS, SimulationConfig
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.variable_registry.registered_variables import RegisteredVariables
@@ -126,12 +158,11 @@ def _weno_flux_hydro_pallas(
 ):
     """Pallas implementation of the ideal-gas hydrodynamic WENO flux.
 
-    It computes the same characteristic WENO interface flux as
-    ``_weno_flux_x_native`` but evaluates one spatial block at a time and avoids
-    materialising shifted full-state arrays inside the reconstruction.  The
-    hydro eigenvectors and characteristic projections are evaluated locally in
-    the Pallas program, so no full-domain ``L_row``/``R_col`` eigen-projection
-    arrays are formed.  The MHD/isothermal paths never call this function.
+    Public entry point: dispatches the supported-predicate check and the
+    multi-GPU ``shard_map`` + halo wrap.  The arithmetic lives in
+    ``_weno_flux_hydro_pallas_local`` so the same kernel build runs on
+    either the global state (single device) or a local halo-padded shard
+    (multi device) without changes.
     """
     if not _hydro_pallas_flux_supported(conserved_state, config):
         # Lazy import to break the circular dependency with _weno.py.
@@ -144,6 +175,25 @@ def _weno_flux_hydro_pallas(
             return _weno_flux_y_native(conserved_state, params, config, registered_variables)
         return _weno_flux_z_native(conserved_state, params, config, registered_variables)
 
+    def _local(state_local):
+        return _weno_flux_hydro_pallas_local(
+            state_local, params, config, registered_variables, axis=axis
+        )
+    return _weno5_shard_wrap(_local, conserved_state, config, axis)
+
+
+def _weno_flux_hydro_pallas_local(
+    conserved_state,
+    params: SimulationParams,
+    config: SimulationConfig,
+    registered_variables: RegisteredVariables,
+    *,
+    axis: int,
+):
+    """Single-shard hydro-WENO kernel build.  When called from inside a
+    ``shard_map`` body, ``conserved_state.shape`` is the local halo-padded
+    shape and the kernel's grid / modular indexing wrap within that shape.
+    Outside ``shard_map`` (single-device path) the shape is global."""
     ndim = int(config.dimensionality)
     nvars = int(conserved_state.shape[0])
     spatial_shape = tuple(int(x) for x in conserved_state.shape[1:])
@@ -559,15 +609,9 @@ def _weno_flux_mhd_pallas(
 ):
     """Pallas implementation of the ideal-gas MHD WENO interface flux.
 
-    Mirrors ``_weno_flux_hydro_pallas`` but with 8 conserved variables and 7
-    characteristic waves (fast-, alfvén-, slow-, entropy, slow+, alfvén+,
-    fast+).  All face eigenstructure (the body of
-    ``_eigen_mhd._eigenvector_building_blocks``) is inlined as kernel-local
-    closures, and ``L_row``/``R_col``/``λ`` projections are dispatched at
-    compile time via Python ``if mode == k`` branches inside the per-mode
-    loop, matching the structure of the native ``_eigen_L_row`` /
-    ``_eigen_R_col`` functions.  No full-domain projection matrices are ever
-    materialised — every component is computed per-tile in registers.
+    Public entry point: dispatches the supported-predicate check and the
+    multi-GPU ``shard_map`` + halo wrap.  Kernel arithmetic in
+    ``_weno_flux_mhd_pallas_local``.
     """
     if not _mhd_pallas_flux_supported(conserved_state, config):
         # Lazy import to break the circular dependency with _weno.py.
@@ -580,6 +624,31 @@ def _weno_flux_mhd_pallas(
             return _weno_flux_y_native(conserved_state, params, config, registered_variables)
         return _weno_flux_z_native(conserved_state, params, config, registered_variables)
 
+    def _local(state_local):
+        return _weno_flux_mhd_pallas_local(
+            state_local, params, config, registered_variables, axis=axis
+        )
+    return _weno5_shard_wrap(_local, conserved_state, config, axis)
+
+
+def _weno_flux_mhd_pallas_local(
+    conserved_state,
+    params: SimulationParams,
+    config: SimulationConfig,
+    registered_variables: RegisteredVariables,
+    *,
+    axis: int,
+):
+    """Single-shard ideal-gas MHD WENO build.  Mirrors
+    ``_weno_flux_hydro_pallas`` but with 8 conserved variables and 7
+    characteristic waves (fast-, alfvén-, slow-, entropy, slow+, alfvén+,
+    fast+).  All face eigenstructure (the body of
+    ``_eigen_mhd._eigenvector_building_blocks``) is inlined as kernel-local
+    closures, and ``L_row``/``R_col``/``λ`` projections are dispatched at
+    compile time via Python ``if mode == k`` branches inside the per-mode
+    loop, matching the structure of the native ``_eigen_L_row`` /
+    ``_eigen_R_col`` functions.  No full-domain projection matrices are ever
+    materialised — every component is computed per-tile in registers."""
     ndim = 3
     nvars = int(conserved_state.shape[0])
     spatial_shape = tuple(int(x) for x in conserved_state.shape[1:])
@@ -1199,12 +1268,9 @@ def _weno_flux_mhd_iso_pallas(
 ):
     """Pallas implementation of the isothermal MHD WENO interface flux.
 
-    Mirrors ``_weno_flux_mhd_pallas`` but with 7 conserved-state slots
-    (no energy) and 6 characteristic waves (no entropy mode): fast-,
-    alfvén-, slow-, slow+, alfvén+, fast+.  Sound speed is the fixed
-    ``params.isothermal_sound_speed``.  All face eigenstructure, ``L_row``,
-    ``R_col``, and ``λ`` are inlined as kernel-local closures mirroring
-    ``_eigen_mhd_iso`` line-for-line.
+    Public entry point: dispatches the supported-predicate check and the
+    multi-GPU ``shard_map`` + halo wrap.  Kernel arithmetic in
+    ``_weno_flux_mhd_iso_pallas_local``.
     """
     if not _mhd_iso_pallas_flux_supported(conserved_state, config):
         # Lazy import to break the circular dependency with _weno.py.
@@ -1217,6 +1283,28 @@ def _weno_flux_mhd_iso_pallas(
             return _weno_flux_y_native(conserved_state, params, config, registered_variables)
         return _weno_flux_z_native(conserved_state, params, config, registered_variables)
 
+    def _local(state_local):
+        return _weno_flux_mhd_iso_pallas_local(
+            state_local, params, config, registered_variables, axis=axis
+        )
+    return _weno5_shard_wrap(_local, conserved_state, config, axis)
+
+
+def _weno_flux_mhd_iso_pallas_local(
+    conserved_state,
+    params: SimulationParams,
+    config: SimulationConfig,
+    registered_variables: RegisteredVariables,
+    *,
+    axis: int,
+):
+    """Single-shard isothermal MHD WENO build.  Mirrors
+    ``_weno_flux_mhd_pallas`` but with 7 conserved-state slots (no
+    energy) and 6 characteristic waves (no entropy mode): fast-,
+    alfvén-, slow-, slow+, alfvén+, fast+.  Sound speed is the fixed
+    ``params.isothermal_sound_speed``.  All face eigenstructure,
+    ``L_row``, ``R_col``, and ``λ`` are inlined as kernel-local closures
+    mirroring ``_eigen_mhd_iso`` line-for-line."""
     ndim = 3
     nvars = int(conserved_state.shape[0])
     spatial_shape = tuple(int(x) for x in conserved_state.shape[1:])
@@ -1638,12 +1726,63 @@ def _weno_flux_hydro_pallas_rhs(
     followed by ``_hydro_flux_divergence_pallas``; the only change is that the
     left interface flux is also computed inside the same program rather than
     being read back from HBM.
+
+    Public entry point: dispatches the supported-predicate check and the
+    multi-GPU ``shard_map`` + halo wrap.  The same WENO5 halo as the
+    pure-flux variant (3 cells on the active axis) suffices — the fused
+    kernel evaluates both ``F_{i+1/2}`` and ``F_{i-1/2}``, and the deepest
+    read inside ``F_{i-1/2}`` is at offset ``-3`` from the cell index.
+    Arithmetic lives in ``_weno_flux_hydro_pallas_rhs_local``.
     """
     if not _hydro_pallas_flux_supported(conserved_state, config):
         raise RuntimeError(
             "_weno_flux_hydro_pallas_rhs called when Pallas WENO is unsupported."
         )
 
+    ndim = int(config.dimensionality)
+    block_shape = _as_3tuple_block_shape(config.pallas_block_shape, ndim)
+    halo_list = [0, 0, 0]
+    if 0 <= int(axis) < ndim:
+        halo_list[int(axis)] = 3
+    halo = tuple(halo_list[:ndim])
+
+    if rhs_accumulator is None:
+        def _local(state_local):
+            return _weno_flux_hydro_pallas_rhs_local(
+                state_local, dt_over_dx, params, config, registered_variables,
+                axis=axis, rhs_accumulator=None,
+            )
+        return _pallas_call_sharded(
+            _local,
+            state_inputs=(conserved_state,),
+            halo=halo,
+            block_shape=block_shape[:ndim],
+        )
+
+    def _local(rhs_local, state_local):
+        return _weno_flux_hydro_pallas_rhs_local(
+            state_local, dt_over_dx, params, config, registered_variables,
+            axis=axis, rhs_accumulator=rhs_local,
+        )
+    return _pallas_call_sharded(
+        _local,
+        state_inputs=(rhs_accumulator, conserved_state),
+        halo=halo,
+        block_shape=block_shape[:ndim],
+    )
+
+
+def _weno_flux_hydro_pallas_rhs_local(
+    conserved_state,
+    dt_over_dx,
+    params: SimulationParams,
+    config: SimulationConfig,
+    registered_variables: RegisteredVariables,
+    *,
+    axis: int,
+    rhs_accumulator=None,
+):
+    """Single-shard fused WENO + divergence kernel build."""
     accumulate = rhs_accumulator is not None
 
     ndim = int(config.dimensionality)

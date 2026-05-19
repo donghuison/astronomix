@@ -1,6 +1,8 @@
 # general
+from contextlib import nullcontext
 from types import NoneType
 import jax
+from jax.sharding import PartitionSpec
 import jax.numpy as jnp
 from functools import partial
 
@@ -20,6 +22,7 @@ from astronomix._finite_difference._state_evolution._evolve_state import _evolve
 from astronomix._finite_difference._timestep_estimation._timestep_estimator import _cfl_time_step_fd, _cfl_time_step_fd_hydro
 from astronomix._finite_volume._magnetic_update._vector_maths import divergence3D
 from astronomix._geometry.boundaries import _boundary_handler
+from astronomix._pallas_helpers import pallas_mesh_context
 from astronomix._physics_modules._turbulent_forcing._turbulent_forcing import _apply_forcing
 from astronomix.analysis_helpers.energy_spectrum import _wavenumber_bins, get_kinetic_energy_spectrum, get_magnetic_energy_spectrum, get_magnetic_helicity_spectrum
 from astronomix.data_classes.simulation_state_struct import StateStruct
@@ -126,6 +129,24 @@ def time_integration(
         requirements = requirements,
     )
 
+    # When the user supplies a multi-device sharding, pjit dispatch needs
+    # every JIT input leaf to carry a sharding compatible with the target
+    # mesh. SimulationParams has both Python-scalar fields (gamma, t_end,
+    # C_cfl, ...) and size-(0,) placeholder arrays (the default
+    # ``fixed_boundary_state``); JAX converts those into numpy 0-d /
+    # empty arrays for the JIT call and pjit cannot infer a sharding for
+    # them on a multi-device mesh, surfacing as
+    # ``AttributeError: 'UnspecifiedValue' object has no attribute
+    # '_addressable_device_assignment'`` at dispatch time. Promote every
+    # leaf of ``params`` onto a fully-replicated NamedSharding on the
+    # supplied mesh so pjit always sees a concrete sharding.
+    if sharding is not None:
+        replicated = jax.NamedSharding(sharding.mesh, PartitionSpec())
+        params = jax.tree.map(
+            lambda leaf: jax.device_put(leaf, replicated),
+            params,
+        )
+
     if config.donate_state:
         time_integration_jit = jax.jit(
             _time_integration,
@@ -167,7 +188,23 @@ def time_integration(
         err.throw()
 
     else:
+        memory_stats = None
+        # Activate the user-provided mesh for every trace/compile of
+        # ``_time_integration`` so any inner ``with_sharding_constraint``
+        # calls (used to pin auxiliary scalar outputs to replicated
+        # sharding) have a mesh to bind to.
+        mesh_ctx = sharding.mesh if sharding is not None else nullcontext()
+        # Multi-GPU Pallas: the Pallas kernels (WENO, divergence, positivity)
+        # are opaque to GSPMD, so on a sharded input XLA would otherwise
+        # all-gather the full state on every device before each
+        # ``pallas_call``. ``pallas_mesh_context`` flips them into a
+        # ``shard_map`` + ppermute halo-exchange shape instead, which is
+        # the difference between ~0.95x and ~2x strong-scaling on FD
+        # Pallas. The context only needs to be live while the JIT body is
+        # traced; it is read by ``_pallas_call_sharded`` at trace time.
+        pallas_mesh = sharding.mesh if sharding is not None else None
         if config.memory_analysis:
+          with mesh_ctx, pallas_mesh_context(pallas_mesh):
             compiled_step = time_integration_jit.lower(
                 primitive_state,
                 config,
@@ -186,6 +223,11 @@ def time_integration(
                     + compiled_stats.output_size_in_bytes
                     - compiled_stats.alias_size_in_bytes
                 )
+                memory_stats = (
+                    int(compiled_stats.temp_size_in_bytes),
+                    int(compiled_stats.argument_size_in_bytes),
+                    int(total),
+                )
                 print("=== Compiled memory usage PER DEVICE ===")
                 print(
                     f"Temp size: {compiled_stats.temp_size_in_bytes / (1024**2):.2f} MB"
@@ -199,26 +241,47 @@ def time_integration(
         if config.print_elapsed_time:
             if not config.memory_analysis:
                 # compile the time integration function
-                time_integration_jit.lower(
-                    primitive_state,
-                    config,
-                    params,
-                    registered_variables,
-                    helper_data_pad,
-                    snapshot_callable,
-                ).compile()
+                with mesh_ctx, pallas_mesh_context(pallas_mesh):
+                    time_integration_jit.lower(
+                        primitive_state,
+                        config,
+                        params,
+                        registered_variables,
+                        helper_data_pad,
+                        snapshot_callable,
+                    ).compile()
 
             start_time = timer()
             print("🚀 Starting simulation...")
 
-        final_state = time_integration_jit(
-            primitive_state,
-            config,
-            params,
-            registered_variables,
-            helper_data_pad,
-            snapshot_callable,
-        )
+        with mesh_ctx, pallas_mesh_context(pallas_mesh):
+            final_state = time_integration_jit(
+                primitive_state,
+                config,
+                params,
+                registered_variables,
+                helper_data_pad,
+                snapshot_callable,
+            )
+
+        # For certain backend/size combinations (notably FD JAX at large
+        # N with a multi-device mesh) pjit returns some scalar/auxiliary
+        # output leaves with an ``UnspecifiedValue`` sharding. Their
+        # device buffers are valid; the wrapper just never bound a
+        # public Sharding, and every host-side accessor
+        # (``is_fully_replicated``, ``is_fully_addressable``,
+        # ``_value``) then crashes. Rebuild each such leaf as a regular
+        # single-device array by going through its underlying per-device
+        # buffer.
+        if sharding is not None:
+            from jax._src.sharding_impls import UnspecifiedValue as _Unspec
+
+            def _force_concrete(leaf):
+                if isinstance(leaf, jax.Array) and isinstance(leaf.sharding, _Unspec):
+                    return jnp.asarray(leaf._arrays[0])
+                return leaf
+
+            final_state = jax.tree.map(_force_concrete, final_state)
 
         if config.print_elapsed_time:
             if config.return_snapshots and config.snapshot_settings.return_final_state:
@@ -236,6 +299,14 @@ def time_integration(
                     f"⏱️ / 🔄 time per iteration: {(end_time - start_time) / num_iterations} seconds"
                 )
                 final_state = final_state._replace(runtime=end_time - start_time)
+
+        if memory_stats is not None and config.return_snapshots:
+            temp_b, arg_b, total_b = memory_stats
+            final_state = final_state._replace(
+                temporary_memory_bytes=temp_b,
+                argument_memory_bytes=arg_b,
+                total_memory_bytes=total_b,
+            )
 
     return final_state
 
@@ -1036,7 +1107,7 @@ def _time_integration(
                     unpad_primitive_state = _unpad(primitive_state, config)
                 else:
                     unpad_primitive_state = primitive_state
-                
+
                 snapshot_data = snapshot_data._replace(
                     final_state=unpad_primitive_state
                 )

@@ -32,54 +32,85 @@ from astronomix.plotting_helpers.power_law_indicators import add_power_law_indic
 # ==============================================================================
 # 1. Fourier-based N-Dimensional Analytical Gradients (from Theory Write-up)
 # ==============================================================================
-def compute_analytic_gradients_fourier(rho_0, v0_tuple, L, c_s, rho_B, t_end):
+def compute_analytic_gradients_fourier(rho_0, v0_tuple, L, c_s, rho_B, t_end, mass_matrix='first_order'):
     """
     Computes the exact analytical gradients for the linearized Euler equations
     in N-dimensions using the exact Fourier space operator S*S derived in the theory write-up.
+
+    The ``mass_matrix`` argument selects which inner product the discrete
+    objective is taken in:
+
+    - ``'first_order'``: J = 0.5 * Σ |U_bar|² dV  (lumped/midpoint quadrature on
+      cell averages). The Fourier gradient is the unmodified Fourier multiplier
+      acting on the DFT of the cell averages.
+    - ``'fourier'``: J = 0.5 * ∫ u² dV using the spectrally-accurate Parseval
+      quadrature on the implicit polynomial reconstruction. The same Fourier
+      multiplier is divided by ``Π_d sinc(k_d h_d / 2)²``, which is the
+      Fourier-space Jacobian of the cell-average ↔ point-value map.
     """
     dim = len(rho_0.shape)
     N_list = rho_0.shape
-    
+
     # Generate frequencies for each dimension
     freqs = [jnp.fft.fftfreq(N_list[i], d=L/N_list[i]) * 2 * jnp.pi for i in range(dim)]
-    
+
     # Create N-dimensional meshgrid of frequencies
     K = jnp.meshgrid(*freqs, indexing='ij')
-    
+
     # Wavenumber magnitude and frequency
     k_sq = sum(k_i**2 for k_i in K)
     k_mag = jnp.sqrt(k_sq)
     omega = c_s * k_mag
-    
+
     # Normalized wavenumber vector (handle k=0 safely)
     k_hat = [jnp.where(k_mag > 0, k_i / k_mag, 0.0) for k_i in K]
-    
+
     # Transform initial conditions to Fourier space
     rho_0_hat = jnp.fft.fftn(rho_0)
     v0_hat = [jnp.fft.fftn(v) for v in v0_tuple]
-    
+
     # Dot product: k_hat \cdot \hat{v}_0
     k_dot_v0_hat = sum(k_hat[i] * v0_hat[i] for i in range(dim))
-    
+
     # Evaluate S*S Operator Multipliers
     cos_wt = jnp.cos(omega * t_end)
     sin_wt = jnp.sin(omega * t_end)
-    
+
     rho_factor = cos_wt**2 + (c_s / rho_B)**2 * sin_wt**2
     cross_term = 1j * sin_wt * cos_wt * (rho_B / c_s - c_s / rho_B)
     v_parallel_factor = ((rho_B / c_s)**2 - 1.0) * sin_wt**2
-    
-    # Gradients in Fourier Space
+
+    # Gradients in Fourier Space (cell-average → cell-average operator)
     grad_rho_hat = rho_factor * rho_0_hat - cross_term * k_dot_v0_hat
     grad_v0_hat = [
         cross_term * rho_0_hat * k_hat[i] + v0_hat[i] + v_parallel_factor * k_dot_v0_hat * k_hat[i]
         for i in range(dim)
     ]
-    
-    # Inverse FFT back to spatial domain 
+
+    if mass_matrix == 'fourier':
+        # Sinc² correction: AD with the high-order mass matrix on cell averages
+        # produces a per-cell-average gradient equal to (S*S U_bar) / sinc² in
+        # Fourier space, because both forward and adjoint maps go through the
+        # cell-average ↔ point-value transform sinc(k h / 2).
+        h_list = [L / N_list[i] for i in range(dim)]
+        sinc_total = None
+        for d in range(dim):
+            freq_d = jnp.fft.fftfreq(N_list[d], d=h_list[d])
+            s = jnp.sinc(freq_d * h_list[d])
+            shape = [1] * dim
+            shape[d] = N_list[d]
+            s = s.reshape(shape)
+            sinc_total = s if sinc_total is None else sinc_total * s
+        inv_sinc_sq = 1.0 / (sinc_total ** 2)
+        grad_rho_hat = grad_rho_hat * inv_sinc_sq
+        grad_v0_hat = [gv * inv_sinc_sq for gv in grad_v0_hat]
+    elif mass_matrix != 'first_order':
+        raise ValueError(f"Unknown mass_matrix option: {mass_matrix!r}")
+
+    # Inverse FFT back to spatial domain
     grad_rho = jnp.fft.ifftn(grad_rho_hat).real
     grad_v0 = [jnp.fft.ifftn(gv).real for gv in grad_v0_hat]
-    
+
     return grad_rho, grad_v0
 
 # ==============================================================================
@@ -159,27 +190,65 @@ def generate_ic(helper_data, dim, ic_type, eps, L):
 # ==============================================================================
 # 3. Simulator Target & Automatic Differentiation
 # ==============================================================================
-def run_forward_and_cost(rho_P0, v_P0_tuple, config, params, rho_B, c_s, P_B):
+def _spectral_squared_integral(u, dx_vec):
+    """
+    Spectrally-accurate integral of u(x)^2 over a uniform periodic domain,
+    given u as cell averages of a smooth function.
+
+    Cell averages and underlying Fourier coefficients are related by
+        U_bar_k = u_hat_k * prod_d sinc(k_d * dx_d / 2),
+    so dividing the DFT of the cell averages by this sinc factor recovers
+    the Fourier coefficients of the reconstructed (point-valued) field.
+    Parseval then gives the integral of the squared reconstruction. For
+    the 5th-order WENO reconstruction on smooth periodic data this acts
+    as the matching high-order mass matrix.
+    """
+    N_vec = u.shape
+    dim = len(N_vec)
+    N_total = 1
+    L_total = 1.0
+    for d in range(dim):
+        N_total *= N_vec[d]
+        L_total *= dx_vec[d] * N_vec[d]
+
+    U_hat = jnp.fft.fftn(u)
+
+    sinc_corr = None
+    for d in range(dim):
+        freq = jnp.fft.fftfreq(N_vec[d], d=dx_vec[d])
+        # jnp.sinc(x) = sin(pi*x)/(pi*x); k*dx/2 = pi*freq*dx
+        s = jnp.sinc(freq * dx_vec[d])
+        shape = [1] * dim
+        shape[d] = N_vec[d]
+        s = s.reshape(shape)
+        sinc_corr = s if sinc_corr is None else sinc_corr * s
+
+    u_hat = U_hat / sinc_corr
+    return (L_total / (N_total ** 2)) * jnp.sum(u_hat.real ** 2 + u_hat.imag ** 2)
+
+
+def run_forward_and_cost(rho_P0, v_P0_tuple, config, params, rho_B, c_s, P_B, mass_matrix='first_order'):
     registered_variables = get_registered_variables(config)
     dim = config.dimensionality
-    
+
     # Calculate cell volume
     L_vec = [config.box_size] if dim == 1 else ([config.box_size.x, config.box_size.y, config.box_size.z][:dim])
     N_vec = [config.num_cells] if dim == 1 else ([config.num_cells.x, config.num_cells.y, config.num_cells.z][:dim])
-    dV = jnp.prod(jnp.array([L_vec[i]/N_vec[i] for i in range(dim)]))
-    
+    dx_vec = [L_vec[i]/N_vec[i] for i in range(dim)]
+    dV = jnp.prod(jnp.array(dx_vec))
+
     rho = rho_B + rho_P0
     p = P_B + (c_s**2) * rho_P0
-    
+
     kwargs = {"density": rho, "gas_pressure": p, "velocity_x": v_P0_tuple[0]}
     if dim > 1: kwargs["velocity_y"] = v_P0_tuple[1]
     if dim > 2: kwargs["velocity_z"] = v_P0_tuple[2]
-    
+
     initial_state = construct_primitive_state(config, registered_variables, **kwargs)
     config_final = finalize_config(config, initial_state.shape)
-    
+
     final_state = time_integration(initial_state, config_final, params, registered_variables)
-    
+
     final_rho_P = final_state[registered_variables.density_index] - rho_B
     if dim == 1:
         final_v_P = [final_state[registered_variables.velocity_index]]
@@ -187,31 +256,41 @@ def run_forward_and_cost(rho_P0, v_P0_tuple, config, params, rho_B, c_s, P_B):
         final_v_P = [final_state[registered_variables.velocity_index.x]]
     if dim > 1: final_v_P.append(final_state[registered_variables.velocity_index.y])
     if dim > 2: final_v_P.append(final_state[registered_variables.velocity_index.z])
-    
+
     # Objective Function: J = 0.5 * integral(rho_P^2 + v_P^2) dV
-    v_sq = sum(v**2 for v in final_v_P)
-    J = 0.5 * jnp.sum(final_rho_P**2 + v_sq) * dV
+    if mass_matrix == 'first_order':
+        # Lumped (midpoint) mass matrix on cell averages.
+        v_sq = sum(v**2 for v in final_v_P)
+        J = 0.5 * jnp.sum(final_rho_P**2 + v_sq) * dV
+    elif mass_matrix == 'fourier':
+        # Sinc-corrected spectral quadrature — matches the high-order
+        # polynomial reconstruction of WENO in the smooth limit.
+        J = 0.5 * _spectral_squared_integral(final_rho_P, dx_vec)
+        for v in final_v_P:
+            J = J + 0.5 * _spectral_squared_integral(v, dx_vec)
+    else:
+        raise ValueError(f"Unknown mass_matrix option: {mass_matrix!r}")
     return J
 
-def get_ad_gradients(rho_P0, v_P0_tuple, config, params, rho_B, c_s, P_B):
+def get_ad_gradients(rho_P0, v_P0_tuple, config, params, rho_B, c_s, P_B, mass_matrix='first_order'):
     """ Compiles and extracts JAX continuous Fréchet gradients via AD """
     dim = config.dimensionality
     L_vec = [config.box_size] if dim == 1 else ([config.box_size.x, config.box_size.y, config.box_size.z][:dim])
     N_vec = [config.num_cells] if dim == 1 else ([config.num_cells.x, config.num_cells.y, config.num_cells.z][:dim])
     dV = jnp.prod(jnp.array([L_vec[i]/N_vec[i] for i in range(dim)]))
-    
+
     if dim == 1:
-        cost_fn = lambda r, vx: run_forward_and_cost(r, (vx,), config, params, rho_B, c_s, P_B)
+        cost_fn = lambda r, vx: run_forward_and_cost(r, (vx,), config, params, rho_B, c_s, P_B, mass_matrix=mass_matrix)
         grad_fn = jax.grad(cost_fn, argnums=(0, 1))
         grads = grad_fn(rho_P0, v_P0_tuple[0])
         return grads[0]/dV, [grads[1]/dV]
     elif dim == 2:
-        cost_fn = lambda r, vx, vy: run_forward_and_cost(r, (vx, vy), config, params, rho_B, c_s, P_B)
+        cost_fn = lambda r, vx, vy: run_forward_and_cost(r, (vx, vy), config, params, rho_B, c_s, P_B, mass_matrix=mass_matrix)
         grad_fn = jax.grad(cost_fn, argnums=(0, 1, 2))
         grads = grad_fn(rho_P0, v_P0_tuple[0], v_P0_tuple[1])
         return grads[0]/dV, [grads[1]/dV, grads[2]/dV]
     elif dim == 3:
-        cost_fn = lambda r, vx, vy, vz: run_forward_and_cost(r, (vx, vy, vz), config, params, rho_B, c_s, P_B)
+        cost_fn = lambda r, vx, vy, vz: run_forward_and_cost(r, (vx, vy, vz), config, params, rho_B, c_s, P_B, mass_matrix=mass_matrix)
         grad_fn = jax.grad(cost_fn, argnums=(0, 1, 2, 3))
         grads = grad_fn(rho_P0, v_P0_tuple[0], v_P0_tuple[1], v_P0_tuple[2])
         return grads[0]/dV, [grads[1]/dV, grads[2]/dV, grads[3]/dV]
@@ -462,6 +541,113 @@ def run_gradient_convergence_test():
     print(f"Success! Convergence plot saved to {plot_path}")
 
 # ==============================================================================
+# 6. Mass Matrix Comparison (3D, low resolution)
+# ==============================================================================
+def run_3d_mass_matrix_comparison(N=16):
+    """ Compare AD gradients computed with the first-order (lumped) mass matrix
+        vs the high-order Fourier mass matrix on a 3D smooth wave at low N,
+        with the exact analytical Fourier gradient as reference. """
+    print(f"\n{'-'*50}\nRunning 3D Mass Matrix Comparison (N={N}, FD/WENO)\n{'-'*50}")
+
+    rho_B, c_s, gamma = 1.0, 2.0, 5/3
+    P_B = (c_s**2) * rho_B / gamma
+    eps = 1e-6
+    L, t_end = 1.0, 0.15
+    dim = 3
+
+    config, params = get_config_and_params(dim, N, L, t_end, solver_mode=FINITE_DIFFERENCE)
+    helper_data = get_helper_data(config)
+    coords, rho_P0, v_P0 = generate_ic(helper_data, dim, 'wave', eps, L)
+
+    print("AD gradient with first-order (lumped) mass matrix...")
+    ad_grad_rho_lo, ad_grad_v_lo = get_ad_gradients(
+        rho_P0, v_P0, config, params, rho_B, c_s, P_B, mass_matrix='first_order')
+    print("AD gradient with high-order (Fourier) mass matrix...")
+    ad_grad_rho_hi, ad_grad_v_hi = get_ad_gradients(
+        rho_P0, v_P0, config, params, rho_B, c_s, P_B, mass_matrix='fourier')
+    print("Analytical Fourier gradients (matched mass matrices)...")
+    ana_grad_rho_lo, ana_grad_v_lo = compute_analytic_gradients_fourier(
+        rho_P0, v_P0, L, c_s, rho_B, params.t_end, mass_matrix='first_order')
+    ana_grad_rho_hi, ana_grad_v_hi = compute_analytic_gradients_fourier(
+        rho_P0, v_P0, L, c_s, rho_B, params.t_end, mass_matrix='fourier')
+
+    # Project velocity gradient longitudinally along the wave direction.
+    k_vec = jnp.array([2 * jnp.pi * (i+1) * 2 / L for i in range(dim)])
+    k_hat_vec = k_vec / jnp.linalg.norm(k_vec)
+    phase = sum(k_vec[i] * coords[i] for i in range(dim))
+    phase_1d = (phase.flatten() / (2 * jnp.pi))
+
+    def _flatten(scaled):
+        return (scaled / eps).flatten()
+
+    def _proj(v_list):
+        return sum(v_list[i] * k_hat_vec[i] for i in range(dim))
+
+    y_ad_rho_lo = _flatten(ad_grad_rho_lo)
+    y_ad_rho_hi = _flatten(ad_grad_rho_hi)
+    y_ana_rho_lo = _flatten(ana_grad_rho_lo)
+    y_ana_rho_hi = _flatten(ana_grad_rho_hi)
+
+    y_ad_v_lo = _flatten(_proj(ad_grad_v_lo))
+    y_ad_v_hi = _flatten(_proj(ad_grad_v_hi))
+    y_ana_v_lo = _flatten(_proj(ana_grad_v_lo))
+    y_ana_v_hi = _flatten(_proj(ana_grad_v_hi))
+
+    sort_idx = jnp.argsort(phase_1d)
+    x_line = phase_1d[sort_idx]
+    y_ana_rho_lo_line = y_ana_rho_lo[sort_idx]
+    y_ana_rho_hi_line = y_ana_rho_hi[sort_idx]
+    y_ana_v_lo_line = y_ana_v_lo[sort_idx]
+    y_ana_v_hi_line = y_ana_v_hi[sort_idx]
+
+    err_rho_lo = float(jnp.mean(jnp.abs(y_ad_rho_lo - y_ana_rho_lo)))
+    err_rho_hi = float(jnp.mean(jnp.abs(y_ad_rho_hi - y_ana_rho_hi)))
+    err_v_lo = float(jnp.mean(jnp.abs(y_ad_v_lo - y_ana_v_lo)))
+    err_v_hi = float(jnp.mean(jnp.abs(y_ad_v_hi - y_ana_v_hi)))
+    print(f"  L1 error AD vs matched analytical  rho:  lumped MM = {err_rho_lo:.3e},  Fourier MM = {err_rho_hi:.3e}")
+    print(f"  L1 error AD vs matched analytical  v||:  lumped MM = {err_v_lo:.3e},  Fourier MM = {err_v_hi:.3e}")
+
+    sep_rho = float(jnp.mean(jnp.abs(y_ana_rho_hi - y_ana_rho_lo)))
+    sep_v = float(jnp.mean(jnp.abs(y_ana_v_hi - y_ana_v_lo)))
+    print(f"  Separation between MMs (analytical lines)  rho: {sep_rho:.3e},  v||: {sep_v:.3e}")
+
+    fig, axs = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+
+    axs[0].scatter(phase_1d, y_ad_rho_lo, s=18, color='steelblue', alpha=0.45,
+                   label='AD: first-order (lumped) mass matrix')
+    axs[0].scatter(phase_1d, y_ad_rho_hi, s=18, color='seagreen', alpha=0.6, marker='^',
+                   label='AD: high-order Fourier mass matrix')
+    axs[0].plot(x_line, y_ana_rho_lo_line, '-', color='orange', linewidth=2.0,
+                label='Analytical (lumped MM target)')
+    axs[0].plot(x_line, y_ana_rho_hi_line, '--', color='firebrick', linewidth=2.0,
+                label='Analytical (Fourier MM target)')
+    axs[0].set_title(rf'3D wave (N={N}, 5th-order WENO): $\partial J/\partial \rho_0$')
+    axs[0].set_ylabel('Gradient amplitude')
+    axs[0].legend(loc='best', fontsize=9)
+    axs[0].grid(True, linestyle='--', alpha=0.6)
+
+    axs[1].scatter(phase_1d, y_ad_v_lo, s=18, color='steelblue', alpha=0.45,
+                   label='AD: first-order (lumped) mass matrix')
+    axs[1].scatter(phase_1d, y_ad_v_hi, s=18, color='seagreen', alpha=0.6, marker='^',
+                   label='AD: high-order Fourier mass matrix')
+    axs[1].plot(x_line, y_ana_v_lo_line, '-', color='orange', linewidth=2.0,
+                label='Analytical (lumped MM target)')
+    axs[1].plot(x_line, y_ana_v_hi_line, '--', color='firebrick', linewidth=2.0,
+                label='Analytical (Fourier MM target)')
+    axs[1].set_title(rf'3D wave (N={N}, 5th-order WENO): $\partial J/\partial v_\parallel$ (longitudinal)')
+    axs[1].set_xlabel(r'Wave phase cycles ($\vec{k} \cdot \vec{x} / 2\pi$)')
+    axs[1].set_ylabel('Gradient amplitude')
+    axs[1].legend(loc='best', fontsize=9)
+    axs[1].grid(True, linestyle='--', alpha=0.6)
+
+    fig.tight_layout()
+    os.makedirs("figures", exist_ok=True)
+    plot_path = f"figures/mass_matrix_comparison_3d_N{N}.png"
+    fig.savefig(plot_path, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Success! Plot saved to {plot_path}")
+
+# ==============================================================================
 # Execution
 # ==============================================================================
 if __name__ == "__main__":
@@ -469,6 +655,11 @@ if __name__ == "__main__":
     for dimensionality in [1, 2, 3]:
         for condition in ['wave', 'gaussian']:
             run_adjoint_test(dimensionality, condition)
-            
+
     # Test continuous convergence across solvers
     run_gradient_convergence_test()
+
+    # Mass-matrix comparison on a low-resolution 3D test. N<48 with the
+    # k_vec=(4π, 8π, 12π) IC pushes the k_z=12π mode past WENO's stability
+    # margin in 3D and the run blows up; N=48 is the smallest stable point.
+    run_3d_mass_matrix_comparison(N=48)

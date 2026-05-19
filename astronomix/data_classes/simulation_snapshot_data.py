@@ -58,6 +58,19 @@ class SnapshotData(NamedTuple):
     #: Number of timesteps taken.
     num_iterations: int = 0
 
+    #: Compiled-step temporary memory per device, in bytes
+    #: (populated when config.memory_analysis is True).
+    temporary_memory_bytes: int = 0
+
+    #: Compiled-step argument memory per device, in bytes
+    #: (populated when config.memory_analysis is True).
+    argument_memory_bytes: int = 0
+
+    #: Compiled-step total memory per device, in bytes
+    #: (temp + argument + output - alias; populated when
+    #: config.memory_analysis is True).
+    total_memory_bytes: int = 0
+
     #: The current checkpoint, used internally.
     current_checkpoint: int = 0
 

@@ -3,6 +3,7 @@ import math
 from types import NoneType
 from typing import NamedTuple, Union
 from jax import NamedSharding
+from jax.sharding import PartitionSpec
 import jax.numpy as jnp
 from astronomix._geometry.geometry import _center_of_volume, _r_hat_alpha
 from astronomix.option_classes.simulation_config import (
@@ -455,8 +456,17 @@ def _apply_sharding(
     if helper_data.geometric_centers is None:
         return helper_data
 
+    # primitive_state is (vars, X, Y, Z); geometric_centers is (X, Y, Z, vec).
+    # Reusing the primitive-state PartitionSpec positionally would put the
+    # vars-axis mesh assignment on the X-axis of geometric_centers and shift
+    # the spatial assignments by one — i.e. Y would inherit XAXIS (split)
+    # while X would inherit VARAXIS (replicated), breaking co-location with
+    # primitive_state. Drop the leading vars entry and pad with None for
+    # the trailing vector index so the spatial axes line up.
+    spatial_spec = PartitionSpec(*sharding.spec[1:4], None)
+    centers_sharding = NamedSharding(sharding.mesh, spatial_spec)
     centers = jax.lax.with_sharding_constraint(
-        helper_data.geometric_centers, sharding
+        helper_data.geometric_centers, centers_sharding
     )
     replaced = {"geometric_centers": centers}
     if helper_data.volumetric_centers is not None:

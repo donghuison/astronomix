@@ -65,7 +65,7 @@ astronomix/
 A `_pallas` module must:
 - Import shared helpers from `astronomix._pallas_helpers`
   (`_as_3tuple_block_shape`, `_backend_is_pallas`,
-  `_pallas_compiler_params`, `pl`, `pltriton`).
+  `_pallas_compiler_params`, `_pallas_call_sharded`, `pl`, `pltriton`).
 - **Not** import from its native sibling at module load — use lazy
   imports inside the function body if a native fallback is needed.  The
   native module imports from the Pallas module at the **bottom** of
@@ -75,13 +75,24 @@ A `_pallas` module must:
 - Expose a `_<flavour>_indices_for_axis(config, registered_variables,
   axis)` if the algorithm uses characteristic projection / per-axis
   component permutation.
-- Expose the actual kernel (`_*_pallas`) which:
+- Expose the actual public kernel (`_<flavour>_pallas`) as a **thin
+  shard-aware wrapper** that:
   - takes the same arguments as the native function plus `axis` (if
     per-axis) and any accumulator buffers;
-  - asserts/short-circuits on `_supported(...) is False`;
-  - uses `pl.BlockSpec`, `pl.program_id`, modular indexing for the
-    stencil reads, and `input_output_aliases={0:0}` for any
-    accumulator buffer that is reused across axes.
+  - dispatches the native fallback if `_supported(...) is False`;
+  - otherwise calls `_pallas_call_sharded(...)` so the actual
+    `pl.pallas_call` is routed through ``shard_map`` + a periodic
+    ppermute halo exchange whenever a multi-device mesh is active.
+- Expose `_<flavour>_pallas_local` containing the actual
+  ``pl.pallas_call`` build — this is the single-shard body that
+  ``_pallas_call_sharded`` invokes either directly (single device) or
+  inside the ``shard_map`` body on each shard (multi device).  Its
+  ``BlockSpec``, ``out_shape`` and ``grid`` are derived from the input
+  array's shape *inside the body* so the same code runs for the global
+  shape or a halo-padded local shape.
+- Use `pl.BlockSpec`, `pl.program_id`, modular indexing for the
+  stencil reads, and `input_output_aliases={0:0}` for any
+  accumulator buffer that is reused across axes.
 
 ---
 
@@ -157,9 +168,11 @@ Walk the native body top-to-bottom and tag each statement:
 
 ### 2. Build the kernel skeleton
 
-Start from this template (3-D variant; 1-D / 2-D drop the trailing
-indices analogously — see `_weno_flux_hydro_pallas` for the
-multi-dim form):
+The skeleton is **two functions, not one**, so the same kernel build
+runs on either the global state (single device) or a halo-padded local
+shard (multi device).  3-D variant shown; 1-D / 2-D drop the trailing
+indices analogously — see `_weno_flux_hydro_pallas` /
+`_weno_flux_hydro_pallas_local` for the canonical multi-dim form.
 
 ```python
 def _flavour_pallas_supported(state, config) -> bool:
@@ -182,11 +195,51 @@ def _flavour_indices_for_axis(config, registered_variables, axis):
     …  # axis=0 → (density, p_normal=mx, …); axis=1 → swap x/y; axis=2 → swap x/z.
 
 
-def _flavour_pallas_kernel(state, …, *, axis):
+def _flavour_pallas(state, …, *, axis):
+    """Public entry point: predicate gate + multi-GPU shard_map wrap.
+
+    On a single device this just calls ``_flavour_pallas_local`` directly.
+    On a multi-device mesh ``_pallas_call_sharded`` halo-pads the state
+    once per sharded spatial axis (via ppermute), calls
+    ``_flavour_pallas_local`` on each shard, and strips the halo off the
+    output — so the kernel body never has to know it's been sharded.
+    """
     if not _flavour_pallas_supported(state, config):
         from astronomix.<…>._<…> import _flavour_native_x, _flavour_native_y, _flavour_native_z  # lazy
         return [_flavour_native_x, _flavour_native_y, _flavour_native_z][axis](state, …)
 
+    ndim = int(config.dimensionality)
+    block_shape = _as_3tuple_block_shape(getattr(config, "pallas_block_shape", None), ndim)
+
+    # Per-axis stencil reach (== the deepest offset the kernel reads from
+    # ``q_ref[var, (ii + offset) % nx, …]`` along the active axis).
+    # WENO5 → 3, divergence → 1, pointwise → 0.  The wrapper rounds this
+    # up to a multiple of the block size on each axis.
+    halo_list = [0, 0, 0]
+    if 0 <= int(axis) < ndim:
+        halo_list[int(axis)] = STENCIL_REACH
+    halo = tuple(halo_list[:ndim])
+
+    def _local(state_local):
+        return _flavour_pallas_local(state_local, …, axis=axis)
+
+    return _pallas_call_sharded(
+        _local,
+        state_inputs=(state,),
+        halo=halo,
+        block_shape=block_shape[:ndim],
+    )
+
+
+def _flavour_pallas_local(state, …, *, axis):
+    """Single-shard kernel build.
+
+    Crucial property: every shape-derived value (``nx``, ``ny``, ``nz``,
+    ``grid``, ``out_shape``, the ``in_state_spec`` shape) is read from
+    *this* function's ``state.shape`` argument — never closed over from
+    enclosing scope — so when the wrapper invokes it on a halo-padded
+    local shard the kernel grid and modular indexing automatically resize.
+    """
     ndim = int(config.dimensionality)
     nvars = int(state.shape[0])
     spatial_shape = tuple(int(x) for x in state.shape[1:])
@@ -207,7 +260,10 @@ def _flavour_pallas_kernel(state, …, *, axis):
 
     def kernel(q_ref, *scalar_refs, out_ref):
         bi = pl.program_id(0); bj = pl.program_id(1); bk = pl.program_id(2)
-        # Modular index arrays — periodic BC for free.
+        # Modular index arrays — periodic BC for free.  Inside ``shard_map``
+        # the modular wrap is over the *padded* local size; halo cells at
+        # the boundary do compute output that the wrapper later strips, so
+        # only the interior is correctness-critical.
         ii = (bi*bx + jnp.arange(bx)[:, None, None]) % nx
         jj = (bj*by + jnp.arange(by)[None, :, None]) % ny
         kk = (bk*bz + jnp.arange(bz)[None, None, :]) % nz
@@ -269,6 +325,12 @@ When provided:
   physical buffer across calls.
 - Inside the kernel, read `accumulator_in_ref[var, …]` and write
   `out_ref[var, …] = scale * accumulator_in_ref[…] + new_contrib`.
+- In the **public** wrapper, pass both the accumulator and the
+  flux/state input through ``_pallas_call_sharded`` with
+  ``state_inputs=(accumulator, dF)`` (accumulator first, matching the
+  ``input_output_aliases={0:0}`` order).  The wrapper applies the same
+  halo to both — that's harmless for the accumulator (which is only
+  read at the local cell) and correct for the stencil-reading flux.
 
 `_hydro_flux_div_axis_pallas` in `_ssprk_pallas.py` is the canonical
 example; `_fv_evolve_axis_pallas` shows the same trick on the FV side.
@@ -299,10 +361,74 @@ than the stencil+accumulator pattern in §4:
 - Same `_as_3tuple_block_shape` / `_pallas_compiler_params` plumbing
   as the stencil case. The predicate is shorter — no per-axis halo
   check, just `state.ndim == ndim + 1` and block-divisibility.
+- **Still wrap in ``_pallas_call_sharded`` with ``halo=(0,)*ndim``.**
+  Even pointwise kernels are opaque to GSPMD and would trigger a
+  full-state ``all-gather`` on a sharded input.  The helper with
+  ``halo=0`` skips the ppermute but still routes through
+  ``shard_map``, which is what tells GSPMD "this kernel can run
+  locally on each shard, no collective needed".
 
 `_enforce_positivity_pallas` in
 `_finite_difference/_fluid_equations/` is the canonical example;
 copy its skeleton for new leaf ops.
+
+### 4b'. Multi-GPU: always route through `_pallas_call_sharded`
+
+A ``pl.pallas_call`` is opaque to GSPMD.  Its ``BlockSpec`` index map is
+``lambda bi, bj, bk: (0, 0, 0, 0)`` — every block program *can* read
+anywhere in the input array, so GSPMD has to assume it *does* and
+``all-gather`` the full state on every device before each call.  On the
+FD Pallas sound-wave benchmark that pinned multi-GPU speedup at ~0.95×.
+
+The fix is mechanical: when ``pallas_mesh_context(mesh)`` is active
+around the JIT trace (``time_integration`` does this whenever the user
+passes a ``sharding``), wrap the public kernel's ``pl.pallas_call`` in
+``_pallas_call_sharded``.  That helper:
+
+1. Reads the active mesh from the contextvar.
+2. Infers which spatial axes are sharded from the state's
+   ``NamedSharding.spec`` (falls back to a default mesh-axis PartitionSpec
+   when the state is an intermediate with ``UnspecifiedValue`` sharding).
+3. Rounds each natural halo width up to the nearest block-size multiple,
+   so the padded local shard stays block-divisible.
+4. ``jax.experimental.shard_map.shard_map`` wraps the kernel body; inside
+   the body it ``jax.lax.ppermute``s a halo of that width on each sharded
+   spatial axis (periodic ring), concatenates ``[left_halo, local,
+   right_halo]``, calls the ``*_local`` kernel build on the padded
+   shard, then strips the halo from each state-shape output.
+5. Recurses safely: the helper re-enters with ``mesh=None`` inside the
+   body, so the inner ``*_local`` call goes through the no-wrap path
+   and just builds the ``pl.pallas_call`` for the local-padded shape.
+
+Halo widths to use:
+
+| Kernel family | Halo per active axis | Block-rounded (for `bx=4`) |
+|---|---|---|
+| Pointwise leaf op (positivity, EOS conversion) | 0 | 0 (shard_map only, no ppermute) |
+| Divergence (`f[i] − f[i-1]`) | 1 | 4 |
+| FV reconstruction + Riemann (PLM) | 2 | 4 |
+| FV reconstruction (parabolic) | 3 | 4 |
+| WENO5 (`q[i-2 .. i+3]`) | 3 | 4 |
+| CT modified-flux / edge-EMF | 2 | 4 |
+| CT curl (PVA + FD6) | 4 | 4 |
+
+For a per-axis kernel only the active axis needs a non-zero halo (the
+kernel reads ``ii``, ``jj``, ``kk`` with no offset along the other
+axes).  Off-axis halos cost a bit of extra ppermute traffic but are
+correct.  When in doubt, set ``halo_list[axis] = STENCIL_REACH`` and
+leave the others at 0.
+
+**What you don't have to change inside the kernel body.**  The modular
+indexing ``(ii + offset) % nx`` still does the right thing — inside
+``shard_map`` ``nx`` is the *padded local* size, and any wrap is
+restricted to halo cells whose output the wrapper strips.  Only the
+interior block outputs are correctness-critical.
+
+**Single-device runs are unaffected.**  When
+``pallas_mesh_context(mesh)`` is not entered (or ``mesh.size == 1``),
+``_pallas_call_sharded`` is a transparent forward to
+``kernel_build_fn(*state_inputs, *other_args)`` — same kernel, same
+compile cache, same perf.
 
 ### 4c. Multi-stage pipeline: split, don't fuse
 
@@ -332,7 +458,7 @@ definitions, before the public dispatchers), add:
 ```python
 from astronomix.<package>.<subpackage>._<flavour>_pallas import (  # noqa: E402
     _flavour_pallas_supported,
-    _flavour_pallas_kernel,
+    _flavour_pallas,            # public, shard-aware wrapper
 )
 ```
 
@@ -343,9 +469,13 @@ predicate accepts:
 @partial(jax.jit, static_argnames=["registered_variables", "config"])
 def _flavour_flux_x(state, params, config, registered_variables):
     if _flavour_pallas_supported(state, config):
-        return _flavour_pallas_kernel(state, params, config, registered_variables, axis=0)
+        return _flavour_pallas(state, params, config, registered_variables, axis=0)
     return _flavour_native_x(state, params, config, registered_variables)
 ```
+
+The dispatcher imports only the **public** ``_flavour_pallas`` entry
+point — not the ``_flavour_pallas_local`` body — so it always picks up
+the multi-GPU shard-map wrap.
 
 The bottom-of-file import position is important: it lets the
 `_pallas` module do a *lazy* import of native fallbacks from the
@@ -385,6 +515,14 @@ Acceptance criteria:
   if the native version is high-order.
 - Memory analysis (`compiled.memory_analysis()`) shows the expected
   reduction (typically 30–60 %) and no regressions.
+- **Multi-GPU strong scaling** — at the largest resolution the
+  ``*_local`` kernel was designed for, ``pytests/hydrodynamics/_extended_scaling.py``
+  (or the equivalent strong-scaling sweep for the kernel's flavour)
+  should hit a 2-GPU speedup of roughly 1.5–1.9× depending on the
+  compute/halo ratio.  Anything ≤ 1.0× means the ``_pallas_call_sharded``
+  wrap is not being hit — usually a missed dispatcher rewire (still
+  calling ``_local`` directly) or a missed ``pallas_mesh_context`` at
+  the JIT call site.
 
 ### 7. Update the guide if the flavour is new
 
@@ -429,6 +567,21 @@ add a short subsection in `pallas_backend_implementation_guide.md`
 - **Don't change the native function's signature when pallasifying** —
   the Pallas kernel mirrors the signature so the dispatcher in the
   native file can call either path interchangeably.
+- **Don't call `pl.pallas_call(…)(state, …)` directly from a public
+  Pallas entry point.**  Always go through
+  ``_pallas_call_sharded(_local, state_inputs=(state, …), halo=…,
+  block_shape=…)``.  Bypassing it works on one device but silently
+  re-introduces the full-state ``all-gather`` the moment the user
+  passes a multi-device ``sharding`` to ``time_integration`` — strong
+  scaling drops back to ~0.95× without any error message.
+- **Don't capture ``nx``, ``ny``, ``nz``, ``grid`` or ``state.shape``
+  in a closure that's reused across calls.**  Inside ``shard_map``
+  these have the local halo-padded size, not the global size.  Always
+  read them from the *current* ``state.shape`` argument inside the
+  ``_local`` body.  If you write ``def _local(s): return pallas_call(…
+  shape=state.shape)`` you've captured the outer shape and the kernel
+  silently mis-sizes — the symptom is a runtime ``Block shape ... does
+  not divide spatial dimension`` from Pallas.
 - **Don't fuse a multi-stage pipeline into one Pallas kernel if the
   effective halo exceeds ~4–6.** Triton's lowering pass scales badly
   with closure graph depth × halo. Split at intermediates (see §4c)
@@ -447,10 +600,15 @@ add a short subsection in `pallas_backend_implementation_guide.md`
 Report to the user:
 
 - which native function was pallasified,
-- the path to the new / updated `_pallas` module,
+- the path to the new / updated `_pallas` module (both the public
+  shard-aware wrapper and the ``_local`` body),
 - the validation test you ran and the `max|PALLAS − NATIVE|` it
   produced,
 - the memory / runtime delta on that test,
+- the **multi-GPU strong-scaling speedup** (1 GPU vs 2 GPUs at the
+  same problem size).  If you didn't measure it, say so and recommend
+  ``pytests/hydrodynamics/_extended_scaling.py`` (or the closest
+  flavour equivalent),
 - anything you had to leave on the native fallback (and why — usually
   an unsupported limiter or Riemann solver, or an x64 gate).
 

@@ -4,11 +4,21 @@ This module is the single place that:
 - imports Pallas / Triton (and exposes ``pl is None`` if unavailable),
 - normalises ``config.pallas_block_shape`` to a 3-tuple,
 - builds Triton ``CompilerParams`` from config knobs,
-- exposes the ``backend == PALLAS`` predicate.
+- exposes the ``backend == PALLAS`` predicate,
+- provides the ``_pallas_call_sharded`` multi-GPU wrapper that turns an
+  opaque ``pl.pallas_call`` into a ``shard_map`` + ppermute halo-exchange
+  body when the user runs on a multi-device mesh.
 
 Every Pallas kernel module under ``astronomix`` should import from here so
 new knobs / fallbacks only need to be added once.
 """
+
+import contextvars
+from contextlib import contextmanager
+
+import jax
+import jax.numpy as jnp
+from jax.sharding import NamedSharding, PartitionSpec
 
 from astronomix.option_classes.simulation_config import PALLAS, SimulationConfig
 
@@ -69,3 +79,250 @@ def _pallas_compiler_params(config: SimulationConfig):
             num_warps=config.pallas_num_warps,
         )
     return None
+
+
+# -----------------------------------------------------------------------------
+# Multi-GPU shard_map + halo wrapper.
+#
+# Every Pallas kernel in this codebase passes its state-shape input(s) to
+# ``pl.pallas_call`` via ``BlockSpec(state.shape, lambda ...: (0, 0, 0, 0))``.
+# That tells Pallas/Triton "each block program can read anywhere in the
+# array", which is the correct (and fast) shape on a single device — but
+# it makes the call entirely opaque to GSPMD.  When the input is sharded
+# across a device mesh, XLA's only legal lowering is to ``all-gather`` the
+# whole state on every device before each ``pallas_call``, which dominates
+# every kernel hot-loop and kills strong scaling (~0.95× on the FD Pallas
+# sound-wave benchmark before this fix).
+#
+# The fix is mechanical: wrap each ``pl.pallas_call`` in a ``shard_map``
+# body that
+#   1. ppermutes a halo of ``stencil_reach`` cells from each neighbour
+#      shard along every sharded spatial axis (periodic ring),
+#   2. concatenates [left_halo, local, right_halo] on each sharded axis,
+#   3. calls the existing kernel on the local-padded shard (its modular
+#      indexing wraps within the padded shape; halo cells provide the
+#      correct neighbour values for interior reads),
+#   4. strips the halo from the output.
+#
+# So the user-facing knob is just: ``pallas_mesh_context(mesh)`` around
+# the JIT trace, plus each kernel calling ``_pallas_call_sharded`` instead
+# of ``pl.pallas_call(...)(args)`` directly.  No kernel arithmetic changes.
+# -----------------------------------------------------------------------------
+
+
+_pallas_mesh_ctx: contextvars.ContextVar = contextvars.ContextVar(
+    "astronomix_pallas_mesh", default=None
+)
+
+
+@contextmanager
+def pallas_mesh_context(mesh):
+    """Set the active mesh for Pallas kernel sharding.
+
+    ``time_integration`` enters this context around the JIT trace whenever
+    the user supplies a ``sharding`` argument.  Inside the context every
+    Pallas kernel that calls ``_pallas_call_sharded`` will route through
+    a ``shard_map`` + ppermute halo exchange instead of the bare
+    ``pl.pallas_call``.
+
+    When ``mesh`` is ``None`` (single-device run) or has size 1, the
+    helper is a no-op — the kernel runs exactly as before.
+    """
+    token = _pallas_mesh_ctx.set(mesh)
+    try:
+        yield
+    finally:
+        _pallas_mesh_ctx.reset(token)
+
+
+def _current_pallas_mesh():
+    return _pallas_mesh_ctx.get()
+
+
+def _round_halo_up_to_block(halo, block_shape) -> tuple[int, ...]:
+    """Round each natural halo width up to a multiple of the corresponding
+    Pallas block size.  The kernel's internal ``grid = (nx // bx, ...)``
+    must remain block-divisible after halo padding, so we always grow the
+    halo to the nearest block multiple."""
+    out = []
+    for h, b in zip(halo, block_shape, strict=False):
+        h_i = int(h)
+        b_i = max(int(b), 1)
+        if h_i <= 0:
+            out.append(0)
+        else:
+            q, r = divmod(h_i, b_i)
+            out.append(b_i * (q + (1 if r else 0)))
+    return tuple(out)
+
+
+def _spatial_sharded_axes(mesh, pspec, ndim):
+    """Return a list of ``(array_axis_idx, mesh_axis_name, num_dev)`` for
+    every spatial array axis that is split across more than one device.
+    The variable axis (index 0) is always skipped."""
+    out = []
+    for ax in range(1, ndim + 1):
+        if ax >= len(pspec):
+            break
+        name = pspec[ax]
+        if name is None:
+            continue
+        if isinstance(name, tuple):
+            for nm in name:
+                n = mesh.shape[nm]
+                if n > 1:
+                    out.append((ax, nm, n))
+        else:
+            n = mesh.shape[name]
+            if n > 1:
+                out.append((ax, name, n))
+    return out
+
+
+def _default_state_pspec(mesh, ndim) -> PartitionSpec:
+    """Best-effort PartitionSpec when an input array's ``.sharding`` is an
+    ``UnspecifiedValue`` (which can happen for intermediates inside a
+    JIT trace).  Assumes the standard ``(VARAXIS, XAXIS, YAXIS, ZAXIS)``
+    mesh emitted by ``pytests/_benchmark_utils.py::_build_sharding`` and
+    by callers that mirror it."""
+    axis_names = tuple(mesh.axis_names)
+    return PartitionSpec(*axis_names[: 1 + ndim])
+
+
+def _pallas_call_sharded(
+    kernel_build_fn,
+    state_inputs,
+    other_args=(),
+    *,
+    halo,
+    block_shape,
+    num_state_outputs: int = 1,
+):
+    """Optionally wrap a Pallas-kernel build-and-call in ``shard_map``.
+
+    Args:
+        kernel_build_fn:
+            Callable ``(state_inputs_local_padded..., other_args...) -> out``
+            whose body builds and calls ``pl.pallas_call``.  When the call
+            runs inside a ``shard_map`` body, each invocation sees the
+            *local* (halo-padded) shape and the kernel's internal
+            ``grid``/``BlockSpec`` are built for that shape automatically.
+        state_inputs:
+            Tuple of state-shape arrays that all share the same sharding
+            (same ``PartitionSpec``).  Each one is padded with halo cells
+            from neighbour shards along every sharded spatial axis.
+        other_args:
+            Tuple of replicated arrays (scalar dt, scalar gamma, ...)
+            passed through as ``PartitionSpec()``.
+        halo:
+            Per-spatial-axis natural stencil reach ``(hx, hy, hz)``.
+            Pointwise kernels pass ``(0, 0, 0)`` — they still get the
+            ``shard_map`` (so the kernel runs locally on each shard),
+            just with no ppermute.
+        block_shape:
+            Per-spatial-axis Pallas block size ``(bx, by, bz)``.  The
+            halo is rounded up to the nearest block multiple so the
+            padded shard remains block-divisible.
+        num_state_outputs:
+            Number of state-shape outputs of ``kernel_build_fn`` (1 for
+            most kernels; >1 for the CT staged kernels which return
+            tuples of single-channel arrays).
+
+    Returns:
+        Either ``kernel_build_fn(*state_inputs, *other_args)`` directly
+        (single-device path) or the equivalent ``shard_map``-wrapped
+        result with the halo stripped from each state-shape output.
+    """
+    mesh = _current_pallas_mesh()
+    if mesh is None or mesh.size <= 1:
+        return kernel_build_fn(*state_inputs, *other_args)
+
+    state0 = state_inputs[0]
+    ndim = state0.ndim - 1
+
+    sharding = getattr(state0, "sharding", None)
+    if isinstance(sharding, NamedSharding):
+        pspec = sharding.spec
+    else:
+        pspec = _default_state_pspec(mesh, ndim)
+
+    sharded_axes = _spatial_sharded_axes(mesh, pspec, ndim)
+    if not sharded_axes:
+        return kernel_build_fn(*state_inputs, *other_args)
+
+    block_3 = tuple(block_shape) + (1,) * max(0, 3 - len(block_shape))
+    halo_3 = tuple(halo) + (0,) * max(0, 3 - len(halo))
+    halo_padded = _round_halo_up_to_block(halo_3[:ndim], block_3[:ndim])
+
+    from jax.experimental.shard_map import shard_map
+
+    def body(*all_args):
+        state_arrays = list(all_args[: len(state_inputs)])
+        others = all_args[len(state_inputs):]
+
+        for array_axis_idx, mesh_axis_name, num_dev in sharded_axes:
+            spatial_idx = array_axis_idx - 1
+            if spatial_idx >= len(halo_padded):
+                continue
+            h = halo_padded[spatial_idx]
+            if h <= 0:
+                continue
+            left_perm = [(j, (j - 1) % num_dev) for j in range(num_dev)]
+            right_perm = [(j, (j + 1) % num_dev) for j in range(num_dev)]
+            for i, arr in enumerate(state_arrays):
+                size = arr.shape[array_axis_idx]
+                left_edge = jax.lax.slice_in_dim(arr, 0, h, axis=array_axis_idx)
+                right_edge = jax.lax.slice_in_dim(
+                    arr, size - h, size, axis=array_axis_idx
+                )
+                # Each device sends its right edge to the right neighbour;
+                # the receiving device installs the inbound payload as its
+                # *left* halo.  Symmetric pattern for the right halo.
+                left_halo = jax.lax.ppermute(
+                    right_edge, mesh_axis_name, perm=right_perm
+                )
+                right_halo = jax.lax.ppermute(
+                    left_edge, mesh_axis_name, perm=left_perm
+                )
+                state_arrays[i] = jnp.concatenate(
+                    [left_halo, arr, right_halo], axis=array_axis_idx
+                )
+
+        # Re-enter the wrapper with mesh=None so the recursive
+        # ``kernel_build_fn`` call goes through the no-wrap path.  Without
+        # this, a kernel that calls ``_pallas_call_sharded`` from its body
+        # would wrap itself forever.
+        with pallas_mesh_context(None):
+            out = kernel_build_fn(*state_arrays, *others)
+
+        def _strip(o):
+            for array_axis_idx, _, _ in sharded_axes:
+                spatial_idx = array_axis_idx - 1
+                if spatial_idx >= len(halo_padded):
+                    continue
+                h = halo_padded[spatial_idx]
+                if h <= 0:
+                    continue
+                size = o.shape[array_axis_idx]
+                o = jax.lax.slice_in_dim(o, h, size - h, axis=array_axis_idx)
+            return o
+
+        if isinstance(out, tuple):
+            return tuple(_strip(o) for o in out)
+        return _strip(out)
+
+    state_specs = tuple(pspec for _ in state_inputs)
+    other_specs = tuple(PartitionSpec() for _ in other_args)
+    if num_state_outputs > 1:
+        out_specs = tuple(pspec for _ in range(num_state_outputs))
+    else:
+        out_specs = pspec
+
+    wrapped = shard_map(
+        body,
+        mesh=mesh,
+        in_specs=state_specs + other_specs,
+        out_specs=out_specs,
+        check_rep=False,
+    )
+    return wrapped(*state_inputs, *other_args)
