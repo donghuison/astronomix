@@ -3,18 +3,22 @@
 
 Configurations:
     - FV  (NATIVE_JAX)
-    - FD  (NATIVE_JAX)
     - FD  (Pallas)
+    - AthenaPK overlay (loaded from npz)
 
 Modes:
-    Default (convergence): L1 error and runtime plots across a resolution
-        sweep, with optional AthenaPK overlay.
+    Default (convergence): runs both single (x32) and double (x64) precision
+        convergence sweeps, producing one figure per precision with the
+        matching AthenaPK overlay (athenapk_alfven_convergence_{sp,dp}.npz).
+    --sp / --dp: restrict to one precision.
     --scaling: strong-scaling sweep on every config (1 GPU vs
         ``NUM_GPUS_SCALING`` GPUs) producing runtime, speedup and per-device
         memory plots.
 
 Examples:
     python pytests/mhd/alfven_wave3D.py
+    python pytests/mhd/alfven_wave3D.py --sp
+    python pytests/mhd/alfven_wave3D.py --dp
     python pytests/mhd/alfven_wave3D.py --scaling
     python pytests/mhd/alfven_wave3D.py --convergence --scaling
 """
@@ -27,6 +31,14 @@ NUM_GPUS_SCALING = 4
 RUN_SCALING = "--scaling" in sys.argv
 RUN_CONVERGENCE = "--convergence" in sys.argv or not RUN_SCALING
 
+PRECISIONS = []
+if "--sp" in sys.argv:
+    PRECISIONS.append("sp")
+if "--dp" in sys.argv:
+    PRECISIONS.append("dp")
+if not PRECISIONS:
+    PRECISIONS = ["sp", "dp"]
+
 # ==== GPU selection ====
 from autocvd import autocvd
 autocvd(num_gpus=NUM_GPUS_SCALING if RUN_SCALING else 1)
@@ -34,9 +46,6 @@ autocvd(num_gpus=NUM_GPUS_SCALING if RUN_SCALING else 1)
 # =======================
 
 import jax
-
-# Double precision for the convergence test (eps amplitudes < 1e-4).
-jax.config.update("jax_enable_x64", True)
 
 from astronomix.option_classes.simulation_config import (
     FINITE_DIFFERENCE,
@@ -64,7 +73,7 @@ from _benchmark_utils import (  # noqa: E402
 
 DATA_DIR = os.path.join(_HERE, "data", "astronomix")
 FIG_DIR = os.path.join(_HERE, "figures")
-ATHENAPK_NPZ = os.path.join(_HERE, "data", "athenapk", "athenapk_alfven_convergence.npz")
+ATHENAPK_DIR = os.path.join(_HERE, "data", "athenapk")
 
 
 _common_kwargs = dict(
@@ -87,15 +96,6 @@ BENCHMARKS = [
             **_common_kwargs,
         ),
         cfl=0.4,
-    ),
-    BenchmarkSpec(
-        label="FD (JAX)",
-        base_config=SimulationConfig(
-            backend=NATIVE_JAX,
-            solver_mode=FINITE_DIFFERENCE,
-            **_common_kwargs,
-        ),
-        cfl=1.5,
     ),
     BenchmarkSpec(
         label="FD (Pallas)",
@@ -121,19 +121,29 @@ def _error_indices(rv):
     )
 
 
+def _precision_label(precision: str) -> str:
+    return "double" if precision == "dp" else "single"
+
+
 def test_alfven_wave_convergence():
-    run_convergence_and_runtime(
-        BENCHMARKS,
-        N_values=[8, 16, 32, 64, 128],
-        setup_fn=setup_cp_alfven_wave,
-        analytic_fn=cp_alfven_wave_solution,
-        error_var_indices_fn=_error_indices,
-        name="alfven_wave3D",
-        title="3D CP Alfvén wave",
-        data_dir=DATA_DIR,
-        figure_dir=FIG_DIR,
-        athenapk_npz=ATHENAPK_NPZ if os.path.exists(ATHENAPK_NPZ) else None,
-    )
+    for precision in PRECISIONS:
+        jax.config.update("jax_enable_x64", precision == "dp")
+        jax.clear_caches()
+        athenapk_npz = os.path.join(
+            ATHENAPK_DIR, f"athenapk_alfven_convergence_{precision}.npz"
+        )
+        run_convergence_and_runtime(
+            BENCHMARKS,
+            N_values=[8, 16, 32, 64, 128],
+            setup_fn=setup_cp_alfven_wave,
+            analytic_fn=cp_alfven_wave_solution,
+            error_var_indices_fn=_error_indices,
+            name=f"alfven_wave3D_{precision}",
+            title=f"3D CP Alfvén wave ({_precision_label(precision)} precision)",
+            data_dir=DATA_DIR,
+            figure_dir=FIG_DIR,
+            athenapk_npz=athenapk_npz if os.path.exists(athenapk_npz) else None,
+        )
 
 
 def test_alfven_wave_strong_scaling():
