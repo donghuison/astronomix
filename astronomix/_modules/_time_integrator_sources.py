@@ -1,6 +1,6 @@
 # TODO: streamline FD and FV codes
 
-from astronomix._finite_difference._fluid_equations._equations import conserved_state_from_primitive_mhd, primitive_state_from_conserved_mhd
+from astronomix._fluid_equations._equations_mhd import conserved_state_from_primitive_mhd, primitive_state_from_conserved_mhd
 from astronomix._fluid_equations._equations import conserved_state_from_primitive, primitive_state_from_conserved
 from astronomix._modules._cooling._cooling import update_pressure_by_cooling
 from astronomix._modules._cooling._simple_mixing_cooling import update_pressure_by_cooling_mixing
@@ -8,9 +8,8 @@ from astronomix._modules._cooling.cooling_options import SIMPLE_MIXING_LAYER_COO
 from astronomix._modules._gravity._gravity import _compute_total_potential, _fd_gravity_source, _gravitational_source_term_along_axis
 from astronomix._modules._stellar_wind.stellar_wind import _wind_ei3D_source
 from astronomix._modules._viscosity._viscosity import fd_viscosity_source
-from astronomix._stencil_operations._stencil_operations import _shift, _stencil_add
 from astronomix.data_classes.simulation_helper_data import HelperData
-from astronomix.option_classes.simulation_config import DONOR_ACCOUNTING, FD_FLUX_GRAVITY, FINITE_DIFFERENCE, FINITE_VOLUME, SIMPLE_SOURCE_TERM, STATE_TYPE, WENO_FLUX_GRAVITY, SimulationConfig
+from astronomix.option_classes.simulation_config import FINITE_DIFFERENCE, FINITE_VOLUME, STATE_TYPE, SimulationConfig
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 

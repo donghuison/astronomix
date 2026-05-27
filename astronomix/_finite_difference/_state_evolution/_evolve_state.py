@@ -10,7 +10,7 @@ from beartype import beartype as typechecker
 from typing import Union
 
 # general astronomix imports
-from astronomix._finite_difference._fluid_equations._equations import conserved_state_from_primitive_isothermal, conserved_state_from_primitive_mhd, primitive_state_from_conserved_isothermal, primitive_state_from_conserved_mhd
+from astronomix._fluid_equations._equations_mhd import conserved_state_from_primitive_isothermal, conserved_state_from_primitive_mhd, primitive_state_from_conserved_isothermal, primitive_state_from_conserved_mhd
 from astronomix._finite_difference._magnetic_update._constrained_transport import update_cell_center_fields
 from astronomix._finite_difference._time_integrators._ssprk import (
     _lsrk4_hydro,
@@ -38,7 +38,6 @@ def _evolve_state_fd(
     primitive_state: STATE_TYPE,
     dt: Float[Array, ""],
     gamma: Union[float, Float[Array, ""]],
-    gravitational_constant: Union[float, Float[Array, ""]],
     config: SimulationConfig,
     params: SimulationParams,
     helper_data: HelperData,

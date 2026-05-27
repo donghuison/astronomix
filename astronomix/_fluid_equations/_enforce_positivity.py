@@ -131,7 +131,7 @@ def _enforce_positivity_native_impl(
     return conserved_state
 
 # Bottom-of-file Pallas import (avoids circular import — see guide §2.4).
-from astronomix._finite_difference._fluid_equations._enforce_positivity_pallas import (  # noqa: E402
+from astronomix._fluid_equations._enforce_positivity_pallas import (  # noqa: E402
     _enforce_positivity_pallas,
     _enforce_positivity_pallas_supported,
 )

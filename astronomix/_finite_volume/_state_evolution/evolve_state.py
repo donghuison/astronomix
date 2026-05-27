@@ -7,14 +7,12 @@ from functools import partial
 from jax.experimental import checkify
 
 # type checking imports
-from jaxtyping import Array, Float, jaxtyped
-from beartype import beartype as typechecker
+from jaxtyping import Array, Float
 from typing import Union
 
 # general astronomix imports
 from astronomix._finite_volume._riemann_solver._riemann_solver import _riemann_solver
 from astronomix._finite_volume._magnetic_update._magnetic_field_update import magnetic_update
-from astronomix._fluid_equations.total_quantities import calculate_total_energy
 from astronomix._integrators._explicit_rk import rk2_ssp
 from astronomix._modules._time_integrator_sources import _time_integrator_sources
 from astronomix._stencil_operations._stencil_operations import _stencil_add
@@ -37,9 +35,8 @@ from astronomix._finite_volume._state_evolution.reconstruction import (
     _reconstruct_at_interface_unsplit,
     _reconstruct_at_interface_unsplit_single,
 )
-from astronomix._pallas_helpers import diffable_pallas_call_n
 from astronomix._finite_volume._state_evolution._pallas_evolve import (
-    _fv_evolve_axis_pallas,
+    _evolve_gas_state_unsplit_pallas,
     _fv_pallas_evolve_supported,
 )
 from astronomix._geometry.boundaries import _boundary_handler
@@ -47,7 +44,6 @@ from astronomix._fluid_equations._equations import (
     primitive_state_from_conserved,
     conserved_state_from_primitive,
 )
-from astronomix._finite_volume._riemann_solver._lax_friedrichs import _lax_friedrichs_solver
 from astronomix.option_classes.simulation_params import SimulationParams
 
 # -------------------------------------------------------------
@@ -237,7 +233,6 @@ def _evolve_gas_state_split(
     primitive_state: STATE_TYPE,
     dt: Float[Array, ""],
     gamma: Union[float, Float[Array, ""]],
-    gravitational_constant: Union[float, Float[Array, ""]],
     config: SimulationConfig,
     params: SimulationParams,
     helper_data: HelperData,
@@ -399,7 +394,6 @@ def _evolve_gas_state_unsplit_inner(
     primitive_state: STATE_TYPE,
     dt: Float[Array, ""],
     gamma: Union[float, Float[Array, ""]],
-    gravitational_constant: Union[float, Float[Array, ""]],
     config: SimulationConfig,
     params: SimulationParams,
     helper_data: HelperData,
@@ -419,56 +413,16 @@ def _evolve_gas_state_unsplit_inner(
     # full-state q_L, q_R, fluxes are materialised.  Falls back to the
     # original native chain when ``_fv_pallas_evolve_supported`` says no.
     if _fv_pallas_evolve_supported(primitive_state, config):
-        dt_over_dx = dt / config.grid_spacing
-        for axis in range(1, config.dimensionality + 1):
-            if config.boundary_handling == GHOST_CELLS:
-                primitive_state = _boundary_handler(
-                    primitive_state, config, registered_variables, params
-                )
-
-            axis_ = axis  # capture for the closures
-
-            def _pallas_branch(ps, dod, acc):
-                return _fv_evolve_axis_pallas(
-                    ps, dod, params, config, registered_variables,
-                    axis_index=axis_,
-                    conserved_accumulator=acc,
-                )
-
-            def _native_branch(ps, dod, acc):
-                # Per-axis native path matching the Pallas-fused kernel:
-                # reconstruct -> Riemann -> accumulate
-                # -(dt/dx) * (F_{i+1/2} - F_{i-1/2}). Used as the tangent
-                # path for diffable_pallas_call_n so AD through the Pallas
-                # backend produces the same gradient as native FV.
-                pl_iface, pr_iface = _reconstruct_at_interface_unsplit_single(
-                    ps, config, helper_data, axis_
-                )
-                fluxes = _riemann_solver(
-                    pl_iface, pr_iface, ps, gamma, config,
-                    registered_variables, axis_,
-                )
-                flux_diff = _stencil_add(
-                    fluxes, indices=(0, 1), factors=(1.0, -1.0), axis=axis_,
-                )
-                return acc + dod * flux_diff
-
-            conservative_states = diffable_pallas_call_n(
-                (primitive_state, dt_over_dx, conservative_states),
-                pallas_branch=_pallas_branch,
-                native_branch=_native_branch,
-            )
-            # Re-derive primitives so the next-axis reconstruction uses an
-            # up-to-date state (the native pipeline does the same via the
-            # ``primitive_state = ...`` re-derivation each iteration).
-            primitive_state = primitive_state_from_conserved(
-                conservative_states, gamma, config, registered_variables
-            )
-        if config.boundary_handling == GHOST_CELLS:
-            primitive_state = _boundary_handler(
-                primitive_state, config, registered_variables, params
-            )
-        return primitive_state
+        return _evolve_gas_state_unsplit_pallas(
+            primitive_state,
+            conservative_states,
+            dt,
+            gamma,
+            config,
+            params,
+            helper_data,
+            registered_variables,
+        )
 
     # in case of the van albada pp limiter, the limited
     # gradients along all dimensions are needed at once for
@@ -537,7 +491,6 @@ def _evolve_gas_state_unsplit(
     primitive_state: STATE_TYPE,
     dt: Float[Array, ""],
     gamma: Union[float, Float[Array, ""]],
-    gravitational_constant: Union[float, Float[Array, ""]],
     config: SimulationConfig,
     params: SimulationParams,
     helper_data: HelperData,
@@ -561,7 +514,6 @@ def _evolve_gas_state_unsplit(
                 p,
                 dt_step,
                 gamma,
-                gravitational_constant,
                 config,
                 params,
                 helper_data,
@@ -604,7 +556,6 @@ def _evolve_state_fv(
     primitive_state: STATE_TYPE,
     dt: Float[Array, ""],
     gamma: Union[float, Float[Array, ""]],
-    gravitational_constant: Union[float, Float[Array, ""]],
     config: SimulationConfig,
     params: SimulationParams,
     helper_data: HelperData,
@@ -627,7 +578,6 @@ def _evolve_state_fv(
                     gas_state,
                     dt / 2,
                     gamma,
-                    gravitational_constant,
                     config,
                     params,
                     helper_data,
@@ -638,7 +588,6 @@ def _evolve_state_fv(
                     gas_state,
                     dt / 2,
                     gamma,
-                    gravitational_constant,
                     config,
                     params,
                     helper_data,
@@ -660,7 +609,6 @@ def _evolve_state_fv(
                     evolved_gas,
                     dt / 2,
                     gamma,
-                    gravitational_constant,
                     config,
                     params,
                     helper_data,
@@ -671,7 +619,6 @@ def _evolve_state_fv(
                     evolved_gas,
                     dt / 2,
                     gamma,
-                    gravitational_constant,
                     config,
                     params,
                     helper_data,
@@ -688,7 +635,6 @@ def _evolve_state_fv(
                 primitive_state,
                 dt,
                 gamma,
-                gravitational_constant,
                 config,
                 params,
                 helper_data,
@@ -699,7 +645,6 @@ def _evolve_state_fv(
                 primitive_state,
                 dt,
                 gamma,
-                gravitational_constant,
                 config,
                 params,
                 helper_data,

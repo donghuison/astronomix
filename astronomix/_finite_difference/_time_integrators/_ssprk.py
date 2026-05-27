@@ -9,12 +9,11 @@ https://arxiv.org/abs/2304.04360).
 from functools import partial
 import jax
 import jax.numpy as jnp
-from typing import Union, Tuple
+from typing import Union
 
-from astronomix._finite_difference._fluid_equations._enforce_positivity import (
+from astronomix._fluid_equations._enforce_positivity import (
     _enforce_positivity,
 )
-from astronomix._finite_difference._fluid_equations._equations import conserved_state_from_primitive_mhd, primitive_state_from_conserved_mhd
 from astronomix._finite_difference._interface_fluxes._weno import (
     _hydro_pallas_flux_supported,
     _weno_flux_x,
@@ -29,7 +28,6 @@ from astronomix._pallas_helpers import _backend_is_pallas, pl
 
 from astronomix._finite_difference._magnetic_update._constrained_transport import (
     _constrained_transport_rhs_from_slices,
-    constrained_transport_rhs,
     update_cell_center_fields,
 )
 from astronomix._geometry.boundaries import _boundary_handler
@@ -37,7 +35,7 @@ from astronomix._integrators._explicit_rk import lsrk4, ssprk4
 from astronomix._modules._time_integrator_sources import _time_integrator_sources
 from astronomix._stencil_operations._stencil_operations import _shift
 from astronomix.data_classes.simulation_helper_data import HelperData
-from astronomix.option_classes.simulation_config import CONSERVATIVE_GAS_STATE, GHOST_CELLS, MAGNETIC_FIELD_ONLY, PALLAS, SIMPLE_SOURCE_TERM, SimulationConfig
+from astronomix.option_classes.simulation_config import CONSERVATIVE_GAS_STATE, GHOST_CELLS, MAGNETIC_FIELD_ONLY, SIMPLE_SOURCE_TERM, SimulationConfig
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 
@@ -734,7 +732,7 @@ def _lsrk4_with_ct(
             bx, by, bz = b_curr[0], b_curr[1], b_curr[2]
         return (q, bx, by, bz)
 
-    def lsrk_increment(u, du, a_coef, dt_step):
+    def lsrk_increment(u, du, a_coef, _dt_step):
         # ``compute_lqs`` returns the new ``dq`` already in LSRK4 form
         # (``a_coef * dq_old + dt * L_q``), folding the accumulate into the
         # divergence kernel when Pallas is available.  The interface-B deltas

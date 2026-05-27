@@ -113,11 +113,11 @@ try:
 except Exception:  # pragma: no cover - optional backend
     pltriton = None
 
-from astronomix._finite_difference._fluid_equations._eigen_hydro import _eigen_L_row_hydro, _eigen_R_col_hydro, _eigen_lambdas_hydro
-from astronomix._finite_difference._fluid_equations._eigen_hydro_iso import _eigen_L_row_hydro_iso, _eigen_R_col_hydro_iso, _eigen_lambdas_hydro_iso
-from astronomix._finite_difference._fluid_equations._eigen_mhd import _eigen_L_row, _eigen_R_col, _eigen_lambdas
-from astronomix._finite_difference._fluid_equations._eigen_mhd_iso import _eigen_L_row_iso, _eigen_R_col_iso, _eigen_lambdas_iso
-from astronomix._finite_difference._fluid_equations._fluxes import _euler_flux_isothermal_x, _mhd_flux_isothermal_x, _mhd_flux_x
+from astronomix._fluid_equations._eigen_hydro import _eigen_L_row_hydro, _eigen_R_col_hydro, _eigen_lambdas_hydro
+from astronomix._fluid_equations._eigen_hydro_iso import _eigen_L_row_hydro_iso, _eigen_R_col_hydro_iso, _eigen_lambdas_hydro_iso
+from astronomix._fluid_equations._eigen_mhd import _eigen_L_row, _eigen_R_col, _eigen_lambdas
+from astronomix._fluid_equations._eigen_mhd_iso import _eigen_L_row_iso, _eigen_R_col_iso, _eigen_lambdas_iso
+from astronomix._fluid_equations._fluxes_mhd import _euler_flux_isothermal_x, _mhd_flux_isothermal_x, _mhd_flux_x
 from astronomix._fluid_equations._equations import primitive_state_from_conserved
 from astronomix._fluid_equations._fluxes import _euler_flux
 from astronomix._stencil_operations._stencil_operations import _shift

@@ -6,8 +6,8 @@ from astronomix.option_classes.simulation_config import (
     FINITE_DIFFERENCE,
     FINITE_VOLUME,
 )
-from astronomix._finite_difference._maths._differencing import finite_difference_int6
-from astronomix._finite_difference._maths._interpolate import interp_face_to_center
+from astronomix._spatial_operators._differencing import finite_difference_int6
+from astronomix._spatial_operators._interpolate import interp_face_to_center
 
 def setup_magnetic_fields_from_vector_potential(
     config: SimulationConfig,

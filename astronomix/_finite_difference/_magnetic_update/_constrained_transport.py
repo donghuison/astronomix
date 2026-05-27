@@ -30,10 +30,10 @@ from functools import partial
 from typing import Tuple, Union
 from jaxtyping import Array, Float
 
-from astronomix._finite_difference._maths._differencing import finite_difference_int6
-from astronomix._finite_difference._maths._interpolate import interp_center_to_face, point_values_to_averages_single_axis
-from astronomix._finite_difference._maths._interpolate import interp_face_to_center
-from astronomix._finite_difference._maths._interpolate import point_values_to_averages
+from astronomix._spatial_operators._differencing import finite_difference_int6
+from astronomix._spatial_operators._interpolate import interp_center_to_face, point_values_to_averages_single_axis
+from astronomix._spatial_operators._interpolate import interp_face_to_center
+from astronomix._spatial_operators._interpolate import point_values_to_averages
 from astronomix.option_classes.simulation_config import IDEAL_GAS, SimulationConfig
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 

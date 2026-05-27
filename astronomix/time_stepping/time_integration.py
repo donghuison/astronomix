@@ -4,30 +4,24 @@ from types import NoneType
 import jax
 from jax.sharding import PartitionSpec
 import jax.numpy as jnp
-from functools import partial
 
 from equinox.internal._loop.checkpointed import checkpointed_while_loop
 
-# type checking
-from jaxtyping import jaxtyped
-from beartype import beartype as typechecker
 from typing import Union
 
 # runtime debugging
 from jax.experimental import checkify
 
 # astronomix constants
-from astronomix._finite_difference._maths._differencing import _interface_field_divergence
+from astronomix._spatial_operators._differencing import _interface_field_divergence
 from astronomix._finite_difference._state_evolution._evolve_state import _evolve_state_fd
 from astronomix._finite_difference._timestep_estimation._timestep_estimator import _cfl_time_step_fd, _cfl_time_step_fd_hydro
 from astronomix._finite_volume._magnetic_update._vector_maths import divergence3D
 from astronomix._geometry.boundaries import _boundary_handler
 from astronomix._pallas_helpers import pallas_mesh_context
-from astronomix._modules._frame_tracking._frame_tracking import _frame_tracking
-from astronomix._modules._turbulent_forcing._turbulent_forcing import _apply_forcing
 from astronomix.analysis_helpers.energy_spectrum import _wavenumber_bins, get_kinetic_energy_spectrum, get_magnetic_energy_spectrum, get_magnetic_helicity_spectrum
 from astronomix.data_classes.simulation_state_struct import StateStruct
-from astronomix.option_classes.simulation_config import BACKWARDS, FINITE_DIFFERENCE, FINITE_VOLUME, FORWARDS, GHOST_CELLS, IDEAL_GAS, PERIODIC_ROLL, STATE_TYPE
+from astronomix.option_classes.simulation_config import BACKWARDS, FINITE_DIFFERENCE, FINITE_VOLUME, FORWARDS, GHOST_CELLS, PERIODIC_ROLL, STATE_TYPE
 
 # astronomix containers
 from astronomix.option_classes.simulation_config import SimulationConfig
@@ -918,7 +912,6 @@ def _time_integration(
                 primitive_state,
                 dt,
                 params.gamma,
-                params.gravitational_constant,
                 config,
                 params,
                 helper_data_pad,
@@ -929,7 +922,6 @@ def _time_integration(
                 primitive_state,
                 dt,
                 params.gamma,
-                params.gravitational_constant,
                 config,
                 params,
                 helper_data_pad,

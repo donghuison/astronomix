@@ -6,7 +6,7 @@ from jaxtyping import Array, Float
 
 from typing import Union
 
-from astronomix._finite_difference._fluid_equations._equations import primitive_state_from_conserved_isothermal, primitive_state_from_conserved_mhd, total_energy_from_primitives_mhd, total_pressure_from_conserved_mhd
+from astronomix._fluid_equations._equations_mhd import primitive_state_from_conserved_isothermal, primitive_state_from_conserved_mhd, total_energy_from_primitives_mhd, total_pressure_from_conserved_mhd
 from astronomix.variable_registry.registered_variables import AxisInfo, RegisteredVariables
 from astronomix.option_classes.simulation_config import (
     FIELD_TYPE,

@@ -66,8 +66,8 @@ from astronomix.option_classes.simulation_config import (
 )
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.variable_registry.registered_variables import RegisteredVariables, get_registered_variables
-from astronomix._finite_difference._maths._differencing import finite_difference_int6
-from astronomix._finite_difference._maths._interpolate import interp_face_to_center
+from astronomix._spatial_operators._differencing import finite_difference_int6
+from astronomix._spatial_operators._interpolate import interp_face_to_center
 
 _XAXIS, _YAXIS, _ZAXIS = 0, 1, 2
 

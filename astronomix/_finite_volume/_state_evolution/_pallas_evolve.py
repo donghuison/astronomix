@@ -33,10 +33,19 @@ from astronomix._pallas_helpers import (
     _backend_is_pallas,
     _default_pallas_block_shape,
     _pallas_compiler_params,
+    diffable_pallas_call_n,
     pl,
     pltriton,
 )
+from astronomix._fluid_equations._equations import primitive_state_from_conserved
+from astronomix._geometry.boundaries import _boundary_handler
+from astronomix._finite_volume._riemann_solver._riemann_solver import _riemann_solver
+from astronomix._finite_volume._state_evolution.reconstruction import (
+    _reconstruct_at_interface_unsplit_single,
+)
+from astronomix._stencil_operations._stencil_operations import _stencil_add
 from astronomix.option_classes.simulation_config import (
+    GHOST_CELLS,
     HLL,
     IDEAL_GAS,
     LAX_FRIEDRICHS,
@@ -496,3 +505,86 @@ def _fv_evolve_axis_pallas(
         name=f"fv_evolve_axis_{axis_index}{'_acc' if accumulate else ''}",
         **kwargs,
     )(*kernel_args)
+
+
+# -----------------------------------------------------------------------------
+# Unsplit FV gas update driver (Pallas-fused per-axis recon+Riemann+divergence).
+# -----------------------------------------------------------------------------
+
+
+def _evolve_gas_state_unsplit_pallas(
+    primitive_state,
+    conservative_states,
+    dt,
+    gamma,
+    config: SimulationConfig,
+    params: SimulationParams,
+    helper_data,
+    registered_variables: RegisteredVariables,
+):
+    """Pallas-fused unsplit FV gas update.
+
+    Each axis writes ``conservative_states += -(dt/dx) * (F[i+1/2] - F[i-1/2])``
+    directly into the conservative buffer via ``input_output_aliases``, so no
+    full-state ``q_L``, ``q_R``, ``fluxes`` are materialised.  The caller is
+    expected to have already boundary-handled ``primitive_state`` and derived
+    ``conservative_states`` from it, and to gate on
+    :func:`_fv_pallas_evolve_supported`.
+
+    A native reconstruct -> Riemann -> divergence tangent branch is supplied
+    to :func:`diffable_pallas_call_n` so AD through the Pallas backend produces
+    the same gradient as the native FV pipeline.
+
+    Returns the evolved primitive state.
+    """
+    dt_over_dx = dt / config.grid_spacing
+    for axis in range(1, config.dimensionality + 1):
+        if config.boundary_handling == GHOST_CELLS:
+            primitive_state = _boundary_handler(
+                primitive_state, config, registered_variables, params
+            )
+
+        axis_ = axis  # capture for the closures
+
+        def _pallas_branch(ps, dod, acc):
+            return _fv_evolve_axis_pallas(
+                ps, dod, params, config, registered_variables,
+                axis_index=axis_,
+                conserved_accumulator=acc,
+            )
+
+        def _native_branch(ps, dod, acc):
+            # Per-axis native path matching the Pallas-fused kernel:
+            # reconstruct -> Riemann -> accumulate
+            # -(dt/dx) * (F_{i+1/2} - F_{i-1/2}). Used as the tangent
+            # path for diffable_pallas_call_n so AD through the Pallas
+            # backend produces the same gradient as native FV.
+            pl_iface, pr_iface = _reconstruct_at_interface_unsplit_single(
+                ps, config, helper_data, axis_
+            )
+            fluxes = _riemann_solver(
+                pl_iface, pr_iface, ps, gamma, config,
+                registered_variables, axis_,
+            )
+            flux_diff = _stencil_add(
+                fluxes, indices=(0, 1), factors=(1.0, -1.0), axis=axis_,
+            )
+            return acc + dod * flux_diff
+
+        conservative_states = diffable_pallas_call_n(
+            (primitive_state, dt_over_dx, conservative_states),
+            pallas_branch=_pallas_branch,
+            native_branch=_native_branch,
+        )
+        # Re-derive primitives so the next-axis reconstruction uses an
+        # up-to-date state (the native pipeline does the same via the
+        # ``primitive_state = ...`` re-derivation each iteration).
+        primitive_state = primitive_state_from_conserved(
+            conservative_states, gamma, config, registered_variables
+        )
+
+    if config.boundary_handling == GHOST_CELLS:
+        primitive_state = _boundary_handler(
+            primitive_state, config, registered_variables, params
+        )
+    return primitive_state
