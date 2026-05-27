@@ -9,7 +9,7 @@ from beartype import beartype as typechecker
 from typing import Union
 
 # general astronomix
-from astronomix._physics_modules._cosmic_rays.cr_fluid_equations import speed_of_sound_crs
+from astronomix._modules._cosmic_rays.cr_fluid_equations import speed_of_sound_crs
 from astronomix._finite_volume._riemann_solver._lax_friedrichs import _lax_friedrichs_solver
 from astronomix._finite_volume._riemann_solver.hll import _am_hllc_solver, _hll_solver, _hllc_solver
 from astronomix.variable_registry.registered_variables import RegisteredVariables

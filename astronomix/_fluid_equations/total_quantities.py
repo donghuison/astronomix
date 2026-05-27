@@ -9,7 +9,7 @@ from jaxtyping import Array, Float, jaxtyped
 from typing import Union
 
 # astronomix containers
-from astronomix._physics_modules._cosmic_rays.cr_fluid_equations import (
+from astronomix._modules._cosmic_rays.cr_fluid_equations import (
     total_energy_from_primitives_with_crs,
 )
 from astronomix.variable_registry.registered_variables import RegisteredVariables
@@ -17,10 +17,10 @@ from astronomix.option_classes.simulation_config import STATE_TYPE, SimulationCo
 from astronomix.data_classes.simulation_helper_data import HelperData
 
 # astronomix functions
-from astronomix._physics_modules._gravity._poisson_solver import (
+from astronomix._modules._gravity._poisson_solver import (
     _compute_gravitational_potential,
 )
-from astronomix._physics_modules._gravity._utils import _pad_external_potential
+from astronomix._modules._gravity._utils import _pad_external_potential
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix._fluid_equations._equations import (
     get_absolute_velocity,

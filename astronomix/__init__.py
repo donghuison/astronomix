@@ -29,7 +29,7 @@ from astronomix._finite_difference._magnetic_update._constrained_transport impor
 )
 
 # module-setup
-from astronomix._physics_modules._stellar_wind.stellar_wind_options import WindParams
+from astronomix._modules._stellar_wind.stellar_wind_options import WindParams
 
 # run
 from astronomix.time_stepping.time_integration import time_integration

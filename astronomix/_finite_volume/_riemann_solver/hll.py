@@ -9,7 +9,7 @@ from beartype import beartype as typechecker
 from typing import Union
 
 # general astronomix
-from astronomix._physics_modules._cosmic_rays.cr_fluid_equations import speed_of_sound_crs
+from astronomix._modules._cosmic_rays.cr_fluid_equations import speed_of_sound_crs
 from astronomix._stencil_operations._stencil_operations import _stencil_add
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 

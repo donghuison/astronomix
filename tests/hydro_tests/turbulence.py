@@ -35,7 +35,7 @@ import astropy.constants as c
 from astropy.constants import m_p
 
 # wind-specific
-from astronomix._physics_modules._stellar_wind.weaver import Weaver
+from astronomix._modules._stellar_wind.weaver import Weaver
 
 # turbulence
 from astronomix.initial_condition_generation.turbulent_ic_generator import create_turb_field

@@ -7,7 +7,7 @@ from functools import partial
 from jaxtyping import Array, Float, jaxtyped
 from beartype import beartype as typechecker
 from typing import Union
-from astronomix._physics_modules._stellar_wind.stellar_wind import _wind_injection
+from astronomix._modules._stellar_wind.stellar_wind import _wind_injection
 from astronomix.option_classes.simulation_config import DYNAMIC_VISCOSITY, KINEMATIC_VISCOSITY, STATE_TYPE, UNSPLIT
 
 # astronomix containers
@@ -19,11 +19,10 @@ from astronomix.variable_registry.registered_variables import RegisteredVariable
 # astronomix functions
 from astronomix._fluid_equations._fluxes import _euler_flux
 from astronomix._fluid_equations._equations import speed_of_sound
-from astronomix._physics_modules._cosmic_rays.cr_fluid_equations import (
+from astronomix._modules._cosmic_rays.cr_fluid_equations import (
     gas_pressure_from_primitives_with_crs,
     speed_of_sound_crs,
 )
-from astronomix._physics_modules.run_physics_modules import _run_physics_modules
 
 # better use same as in the riemann solver??
 # now these wave speeds are calculated without
@@ -283,16 +282,6 @@ def _source_term_aware_time_step(
     hypothetical_new_state = _wind_injection(
         primitive_state, dt, config, params, helper_data, registered_variables
     )
-
-    # hypothetical_new_state = _run_physics_modules(
-    #     primitive_state,
-    #     dt,
-    #     config,
-    #     params,
-    #     helper_data,
-    #     registered_variables,
-    #     current_time,
-    # )
 
     dt = _cfl_time_step(
         hypothetical_new_state,

@@ -25,7 +25,7 @@ import jax
 
 import equinox as eqx
 
-from astronomix._physics_modules._cooling.cooling_options import (
+from astronomix._modules._cooling.cooling_options import (
     COOLING_CURVE_TYPE,
     EXPLICIT_COOLING,
     IMPLICIT_COOLING,

@@ -33,7 +33,8 @@ from astronomix._finite_difference._magnetic_update._constrained_transport impor
     update_cell_center_fields,
 )
 from astronomix._geometry.boundaries import _boundary_handler
-from astronomix._physics_modules.run_physics_modules import _physics_sources
+from astronomix._integrators._explicit_rk import lsrk4, ssprk4
+from astronomix._modules._time_integrator_sources import _time_integrator_sources
 from astronomix._stencil_operations._stencil_operations import _shift
 from astronomix.data_classes.simulation_helper_data import HelperData
 from astronomix.option_classes.simulation_config import CONSERVATIVE_GAS_STATE, GHOST_CELLS, MAGNETIC_FIELD_ONLY, PALLAS, SIMPLE_SOURCE_TERM, SimulationConfig
@@ -78,17 +79,18 @@ def _ssprk4_with_ct(
         and _div_axis_pallas_shape_ok(conserved_state, config)
     )
 
-    def compute_rhs(current_q, bx, by, bz, k2_coeff):
+    def rhs(u, dt_tilde):
         """
         Computes the right-hand side (RHS) of the MHD equations for a given stage.
-        The `k2_coeff` scales the timestep `dt` for the current RK stage.
+        ``dt_tilde`` is the stage-effective step (``k * dt``); the state pytree
+        ``u`` is the ``(q, bx, by, bz)`` tuple.
         """
+
+        current_q, bx, by, bz = u
 
         current_q = update_cell_center_fields(
             current_q, bx, by, bz, config, registered_variables
         )
-
-        dt_tilde = k2_coeff * dt
 
         # in the future we might support
         # different grid spacings in each direction
@@ -173,7 +175,7 @@ def _ssprk4_with_ct(
 
 
         # Add physics source terms
-        rhs_q += _physics_sources(
+        rhs_q += _time_integrator_sources(
             current_q,
             density_fluxes,
             rhs_q[registered_variables.density_index], # drho
@@ -187,128 +189,44 @@ def _ssprk4_with_ct(
 
         return rhs_q, rhs_bx, rhs_by, rhs_bz
 
-    # define the SSPRK4 coefficients
-
-    k1_1 = 1.0
-    k2_1 = 0.39175222700392
-    k3_1 = 0.0
-
-    k1_2 = 0.44437049406734
-    k2_2 = 0.36841059262959
-    k3_2 = 0.55562950593266
-
-    k1_3 = 0.62010185138540
-    k2_3 = 0.25189177424738
-    k3_3 = 0.37989814861460
-    
-    k1_4 = 0.17807995410773
-    k2_4 = 0.54497475021237
-    k3_4 = 0.82192004589227
-
-    k1_5 = -2.081261929715610e-02
-    k2_5 = 0.22600748319395
-    k3_5 = 5.03580947213895e-01
-    k4_5 = 0.51723167208978
-    k5_5 = -6.518979800418380e-12
-
-    final_factors = jnp.array([k1_5, 0.0, k4_5, k5_5, k3_5])
-    k_rhs_s = jnp.array([k2_1, k2_2, k2_3, k2_4, k2_5])
-    k_0_s = jnp.array([k1_1, k1_2, k1_3, k1_4, k1_5])
-    k_curr_s = jnp.array([k3_1, k3_2, k3_3, k3_4, k3_5])
-
-    # Store the initial state (t = n)
-    q0 = conserved_state
-    bx0, by0, bz0 = bx_interface, by_interface, bz_interface
-
-    def ssprk_stage(stage_idx, carry):
-
-        # unpack carry
-        current_state, final_state = carry
-        q_curr, bx_curr, by_curr, bz_curr = current_state
-        q_final, bx_final, by_final, bz_final = final_state
-
+    def pre_stage(u):
+        q, bx, by, bz = u
         if config.enforce_positivity:
-            q_curr = _enforce_positivity(
-                q_curr,
-                config,
-                gamma,
-                params.minimum_density,
-                params.minimum_pressure,
+            q = _enforce_positivity(
+                q, config, gamma,
+                params.minimum_density, params.minimum_pressure,
                 registered_variables,
             )
-
         if config.boundary_handling == GHOST_CELLS:
-            q_curr = _boundary_handler(
-                q_curr, config, registered_variables, params, CONSERVATIVE_GAS_STATE
+            q = _boundary_handler(
+                q, config, registered_variables, params, CONSERVATIVE_GAS_STATE
             )
             b_curr = _boundary_handler(
-                jnp.stack([bx_curr, by_curr, bz_curr], axis=0),
-                config,
-                registered_variables,
-                params,
-                MAGNETIC_FIELD_ONLY
+                jnp.stack([bx, by, bz], axis=0),
+                config, registered_variables, params, MAGNETIC_FIELD_ONLY,
             )
-            bx_curr, by_curr, bz_curr = b_curr[0], b_curr[1], b_curr[2]
+            bx, by, bz = b_curr[0], b_curr[1], b_curr[2]
+        return (q, bx, by, bz)
 
-        k_rhs = k_rhs_s[stage_idx]
-        k_0 = k_0_s[stage_idx]
-        k_curr = k_curr_s[stage_idx]
-
-        # update the current state
-        rhs_q, rhs_bx, rhs_by, rhs_bz = compute_rhs(q_curr, bx_curr, by_curr, bz_curr, k_rhs)
-        q_curr = k_0 * q0 + k_curr * q_curr + rhs_q
-        bx_curr = k_0 * bx0 + k_curr * bx_curr + rhs_bx
-        by_curr = k_0 * by0 + k_curr * by_curr + rhs_by
-        bz_curr = k_0 * bz0 + k_curr * bz_curr + rhs_bz
-
-        # update the final state
-        final_factor = final_factors[stage_idx + 1]
-        q_final += q_curr * final_factor
-        bx_final += bx_curr * final_factor
-        by_final += by_curr * final_factor
-        bz_final += bz_curr * final_factor
-
-        return (
-            (q_curr, bx_curr, by_curr, bz_curr), 
-            (q_final, bx_final, by_final, bz_final)
+    def finalize(u):
+        q, bx, by, bz = u
+        # Update the cell-centered magnetic fields in the conserved state array
+        # from the final interface magnetic fields.
+        q = update_cell_center_fields(
+            q, bx, by, bz, config, registered_variables
         )
+        if config.enforce_positivity:
+            q = _enforce_positivity(
+                q, config, gamma,
+                params.minimum_density, params.minimum_pressure,
+                registered_variables,
+            )
+        return (q, bx, by, bz)
 
-    # one could also write out everything (which is what I originally had),
-    # I used the fori_loop to possibly reduce the memory footprint
-    (
-        (q4, bx4, by4, bz4),
-        (q_final, bx_final, by_final, bz_final)
-    ) = jax.lax.fori_loop(0, 4, ssprk_stage, 
-        (
-            (q0, bx0, by0, bz0), 
-            (final_factors[0] * q0, final_factors[0] * bx0, final_factors[0] * by0, final_factors[0] * bz0)
-        )
+    return ssprk4(
+        (conserved_state, bx_interface, by_interface, bz_interface),
+        dt, rhs=rhs, pre_stage=pre_stage, finalize=finalize,
     )
-
-    # Final Stage (Stage 5)
-    rhs_q4, rhs_bx4, rhs_by4, rhs_bz4 = compute_rhs(q4, bx4, by4, bz4, k2_5)
-    q_final = q_final + rhs_q4
-    bx_final = bx_final + rhs_bx4
-    by_final = by_final + rhs_by4
-    bz_final = bz_final + rhs_bz4
-
-    # Update the cell-centered magnetic fields in the conserved state array
-    # from the final interface magnetic fields.
-    q_final = update_cell_center_fields(
-        q_final, bx_final, by_final, bz_final, config, registered_variables
-    )
-
-    if config.enforce_positivity:
-        q_final = _enforce_positivity(
-            q_final,
-            config,
-            gamma,
-            params.minimum_density,
-            params.minimum_pressure,
-            registered_variables,
-        )
-    
-    return q_final, bx_final, by_final, bz_final
 
 
 def _hydro_density_fluxes_needed(config) -> bool:
@@ -415,7 +333,7 @@ def _hydro_step_rhs(
             density_fluxes = tuple(density_fluxes)
 
     # Add physics source terms
-    rhs_q += _physics_sources(
+    rhs_q += _time_integrator_sources(
         current_q,
         density_fluxes,
         rhs_q[registered_variables.density_index],  # drho
@@ -457,10 +375,23 @@ def _ssprk4_hydro(
 
     density_fluxes_needed = _hydro_density_fluxes_needed(config)
 
-    def compute_rhs(current_q, k2_coeff):
+    def pre_stage(q):
+        if config.enforce_positivity:
+            q = _enforce_positivity(
+                q, config, gamma,
+                params.minimum_density, params.minimum_pressure,
+                registered_variables,
+            )
+        if config.boundary_handling == GHOST_CELLS:
+            q = _boundary_handler(
+                q, config, registered_variables, params, CONSERVATIVE_GAS_STATE
+            )
+        return q
+
+    def rhs(q, dt_stage):
         return _hydro_step_rhs(
-            current_q,
-            k2_coeff * dt,
+            q,
+            dt_stage,
             params=params,
             config=config,
             registered_variables=registered_variables,
@@ -470,117 +401,16 @@ def _ssprk4_hydro(
             density_fluxes_needed=density_fluxes_needed,
         )
 
-    # define the SSPRK4 coefficients
-
-    k1_1 = 1.0
-    k2_1 = 0.39175222700392
-    k3_1 = 0.0
-
-    k1_2 = 0.44437049406734
-    k2_2 = 0.36841059262959
-    k3_2 = 0.55562950593266
-
-    k1_3 = 0.62010185138540
-    k2_3 = 0.25189177424738
-    k3_3 = 0.37989814861460
-    
-    k1_4 = 0.17807995410773
-    k2_4 = 0.54497475021237
-    k3_4 = 0.82192004589227
-
-    k1_5 = -2.081261929715610e-02
-    k2_5 = 0.22600748319395
-    k3_5 = 5.03580947213895e-01
-    k4_5 = 0.51723167208978
-    k5_5 = -6.518979800418380e-12
-
-    final_factors = jnp.array([k1_5, 0.0, k4_5, k5_5, k3_5])
-    k_rhs_s = jnp.array([k2_1, k2_2, k2_3, k2_4, k2_5])
-    k_0_s = jnp.array([k1_1, k1_2, k1_3, k1_4, k1_5])
-    k_curr_s = jnp.array([k3_1, k3_2, k3_3, k3_4, k3_5])
-
-    # Store the initial state (t = n)
-    q0 = conserved_state
-
-    def ssprk_stage(stage_idx, carry):
-
-        # unpack carry
-        q_curr, q_final = carry
-
+    def finalize(q):
         if config.enforce_positivity:
-            q_curr = _enforce_positivity(
-                q_curr,
-                config,
-                gamma,
-                params.minimum_density,
-                params.minimum_pressure,
+            q = _enforce_positivity(
+                q, config, gamma,
+                params.minimum_density, params.minimum_pressure,
                 registered_variables,
             )
+        return q
 
-        if config.boundary_handling == GHOST_CELLS:
-            q_curr = _boundary_handler(
-                q_curr, config, registered_variables, params, CONSERVATIVE_GAS_STATE
-            )
-
-        k_rhs = k_rhs_s[stage_idx]
-        k_0 = k_0_s[stage_idx]
-        k_curr = k_curr_s[stage_idx]
-
-        # update the current state
-        rhs_q = compute_rhs(q_curr, k_rhs)
-        q_curr = k_0 * q0 + k_curr * q_curr + rhs_q
-
-        # update the final state
-        final_factor = final_factors[stage_idx + 1]
-        q_final += q_curr * final_factor
-
-        return (q_curr, q_final)
-
-    q4, q_final = jax.lax.fori_loop(
-        0, 4, ssprk_stage, (q0, final_factors[0] * q0)
-    )
-
-    # Final Stage (Stage 5)
-    rhs_q4 = compute_rhs(q4, k2_5)
-    q_final = q_final + rhs_q4
-
-    if config.enforce_positivity:
-        q_final = _enforce_positivity(
-            q_final,
-            config,
-            gamma,
-            params.minimum_density,
-            params.minimum_pressure,
-            registered_variables,
-        )
-
-    return q_final
-
-
-# Carpenter & Kennedy (1994) 2N-storage 5-stage 4th-order low-storage RK
-# coefficients ("RK4(5)").  See:
-#   Carpenter, M.H. & Kennedy, C.A. (1994), "Fourth-order 2N-storage
-#   Runge-Kutta schemes", NASA TM-109112.
-# The scheme advances ``q`` and one auxiliary register ``dq``:
-#     dq^{(0)} = 0
-#     for i in 0..4:
-#         dq^{(i+1)} = A[i] * dq^{(i)} + dt * L(q^{(i)})
-#         q^{(i+1)}  = q^{(i)} + B[i] * dq^{(i+1)}
-# with ``A[0] = 0`` so the first stage is a plain forward Euler micro-step.
-_LSRK4_A = (
-    0.0,
-    -567301805773.0 / 1357537059087.0,
-    -2404267990393.0 / 2016746695238.0,
-    -3550918686646.0 / 2091501179385.0,
-    -1275806237668.0 / 842570457699.0,
-)
-_LSRK4_B = (
-    1432997174477.0 / 9575080441755.0,
-    5161836677717.0 / 13612068292357.0,
-    1720146321549.0 / 2090206949498.0,
-    3134564353537.0 / 4481467310338.0,
-    2277821191437.0 / 14882151754819.0,
-)
+    return ssprk4(conserved_state, dt, rhs=rhs, pre_stage=pre_stage, finalize=finalize)
 
 
 @partial(jax.jit, static_argnames=["registered_variables", "config"], donate_argnames=["conserved_state"])
@@ -612,34 +442,24 @@ def _lsrk4_hydro(
 
     density_fluxes_needed = _hydro_density_fluxes_needed(config)
 
-    a_coeffs = jnp.asarray(_LSRK4_A, dtype=conserved_state.dtype)
-    b_coeffs = jnp.asarray(_LSRK4_B, dtype=conserved_state.dtype)
-
     dtdx = dt / grid_spacing
     dtdy = dt / grid_spacing
     dtdz = dt / grid_spacing
 
-    def stage(stage_idx, carry):
-        q, dq = carry
-
+    def pre_stage(q):
         if config.enforce_positivity:
             q = _enforce_positivity(
-                q,
-                config,
-                gamma,
-                params.minimum_density,
-                params.minimum_pressure,
+                q, config, gamma,
+                params.minimum_density, params.minimum_pressure,
                 registered_variables,
             )
-
         if config.boundary_handling == GHOST_CELLS:
             q = _boundary_handler(
                 q, config, registered_variables, params, CONSERVATIVE_GAS_STATE
             )
+        return q
 
-        a_coef = a_coeffs[stage_idx]
-        b_coef = b_coeffs[stage_idx]
-
+    def lsrk_increment(q, dq, a_coef, dt_step):
         # Fused path: write the LSRK4 ``dq_new = A[i] * dq + dt * L(q)``
         # update directly into the ``dq`` buffer using the per-axis
         # divergence kernel's ``input_output_aliases``.  The
@@ -676,14 +496,14 @@ def _lsrk4_hydro(
                 del dF_z
 
             # Physics source terms.  Sedov-style hydro with no active modules
-            # makes this a no-op (``_physics_sources`` returns zeros); for
+            # makes this a no-op (``_time_integrator_sources`` returns zeros); for
             # active modules the dt-scaled source is added on top of the
             # already-scaled ``A[i] * dq + dt * L(q)`` value in ``dq``.
-            sources = _physics_sources(
+            sources = _time_integrator_sources(
                 q,
                 None,
                 dq[registered_variables.density_index],
-                dt,
+                dt_step,
                 gamma,
                 config,
                 params,
@@ -692,39 +512,35 @@ def _lsrk4_hydro(
             )
             if sources is not None:
                 dq = dq + sources
-        else:
-            # Fallback: explicit ``rhs = dt * L(q)`` then ``dq = A * dq + rhs``.
-            rhs = _hydro_step_rhs(
-                q,
-                dt,
-                params=params,
-                config=config,
-                registered_variables=registered_variables,
-                gamma=gamma,
-                grid_spacing=grid_spacing,
-                helper_data=helper_data,
-                density_fluxes_needed=density_fluxes_needed,
-            )
-            dq = a_coef * dq + rhs
+            return dq
 
-        q = q + b_coef * dq
-        return (q, dq)
-
-    q_final, _ = jax.lax.fori_loop(
-        0, 5, stage, (conserved_state, jnp.zeros_like(conserved_state))
-    )
-
-    if config.enforce_positivity:
-        q_final = _enforce_positivity(
-            q_final,
-            config,
-            gamma,
-            params.minimum_density,
-            params.minimum_pressure,
-            registered_variables,
+        # Fallback: explicit ``rhs = dt * L(q)`` then ``dq = A * dq + rhs``.
+        rhs = _hydro_step_rhs(
+            q,
+            dt_step,
+            params=params,
+            config=config,
+            registered_variables=registered_variables,
+            gamma=gamma,
+            grid_spacing=grid_spacing,
+            helper_data=helper_data,
+            density_fluxes_needed=density_fluxes_needed,
         )
+        return a_coef * dq + rhs
 
-    return q_final
+    def finalize(q):
+        if config.enforce_positivity:
+            q = _enforce_positivity(
+                q, config, gamma,
+                params.minimum_density, params.minimum_pressure,
+                registered_variables,
+            )
+        return q
+
+    return lsrk4(
+        conserved_state, dt,
+        pre_stage=pre_stage, finalize=finalize, lsrk_increment=lsrk_increment,
+    )
 
 
 @partial(
@@ -767,9 +583,6 @@ def _lsrk4_with_ct(
         _backend_is_pallas(config) and pl is not None
         and _div_axis_pallas_shape_ok(conserved_state, config)
     )
-
-    a_coeffs = jnp.asarray(_LSRK4_A, dtype=conserved_state.dtype)
-    b_coeffs = jnp.asarray(_LSRK4_B, dtype=conserved_state.dtype)
 
     dtdx = dt / grid_spacing
     dtdy = dt / grid_spacing
@@ -873,7 +686,7 @@ def _lsrk4_with_ct(
         # On the native fallback we still have a standalone ``rhs_q_for_phys``
         # and fold the full LSRK4 update at the end.
         if use_pallas_div:
-            sources = _physics_sources(
+            sources = _time_integrator_sources(
                 current_q,
                 density_fluxes,
                 dq[registered_variables.density_index],
@@ -887,7 +700,7 @@ def _lsrk4_with_ct(
             if sources is not None:
                 dq = dq + sources
         else:
-            rhs_q_for_phys += _physics_sources(
+            rhs_q_for_phys += _time_integrator_sources(
                 current_q,
                 density_fluxes,
                 rhs_q_for_phys[registered_variables.density_index],
@@ -902,16 +715,14 @@ def _lsrk4_with_ct(
 
         return dq, rhs_bx, rhs_by, rhs_bz
 
-    def stage(stage_idx, carry):
-        q, dq, bx, dbx, by, dby, bz, dbz = carry
-
+    def pre_stage(u):
+        q, bx, by, bz = u
         if config.enforce_positivity:
             q = _enforce_positivity(
                 q, config, gamma,
                 params.minimum_density, params.minimum_pressure,
                 registered_variables,
             )
-
         if config.boundary_handling == GHOST_CELLS:
             q = _boundary_handler(
                 q, config, registered_variables, params, CONSERVATIVE_GAS_STATE,
@@ -921,49 +732,35 @@ def _lsrk4_with_ct(
                 config, registered_variables, params, MAGNETIC_FIELD_ONLY,
             )
             bx, by, bz = b_curr[0], b_curr[1], b_curr[2]
+        return (q, bx, by, bz)
 
-        a_coef = a_coeffs[stage_idx]
-        b_coef = b_coeffs[stage_idx]
-
+    def lsrk_increment(u, du, a_coef, dt_step):
         # ``compute_lqs`` returns the new ``dq`` already in LSRK4 form
-        # (``a_coef * dq_old + dt * L_q``) so no separate
-        # ``rhs_q + dq = a_coef * dq + rhs_q`` step is needed for the
-        # conserved-state register.  The interface-B deltas are small so
-        # they stay on the explicit LSRK4 update path.
+        # (``a_coef * dq_old + dt * L_q``), folding the accumulate into the
+        # divergence kernel when Pallas is available.  The interface-B deltas
+        # use the explicit ``a_coef * db + dt * L_b`` low-storage update.
+        q, bx, by, bz = u
+        dq, dbx, dby, dbz = du
         dq, rhs_bx, rhs_by, rhs_bz = compute_lqs(q, bx, by, bz, dq, a_coef)
-
         dbx = a_coef * dbx + rhs_bx
         dby = a_coef * dby + rhs_by
         dbz = a_coef * dbz + rhs_bz
+        return (dq, dbx, dby, dbz)
 
-        q = q + b_coef * dq
-        bx = bx + b_coef * dbx
-        by = by + b_coef * dby
-        bz = bz + b_coef * dbz
-
-        return (q, dq, bx, dbx, by, dby, bz, dbz)
-
-    init = (
-        conserved_state,
-        jnp.zeros_like(conserved_state),
-        bx_interface, jnp.zeros_like(bx_interface),
-        by_interface, jnp.zeros_like(by_interface),
-        bz_interface, jnp.zeros_like(bz_interface),
-    )
-
-    q_final, _, bx_final, _, by_final, _, bz_final, _ = jax.lax.fori_loop(
-        0, 5, stage, init,
-    )
-
-    q_final = update_cell_center_fields(
-        q_final, bx_final, by_final, bz_final, config, registered_variables,
-    )
-
-    if config.enforce_positivity:
-        q_final = _enforce_positivity(
-            q_final, config, gamma,
-            params.minimum_density, params.minimum_pressure,
-            registered_variables,
+    def finalize(u):
+        q, bx, by, bz = u
+        q = update_cell_center_fields(
+            q, bx, by, bz, config, registered_variables,
         )
+        if config.enforce_positivity:
+            q = _enforce_positivity(
+                q, config, gamma,
+                params.minimum_density, params.minimum_pressure,
+                registered_variables,
+            )
+        return (q, bx, by, bz)
 
-    return q_final, bx_final, by_final, bz_final
+    return lsrk4(
+        (conserved_state, bx_interface, by_interface, bz_interface),
+        dt, pre_stage=pre_stage, finalize=finalize, lsrk_increment=lsrk_increment,
+    )

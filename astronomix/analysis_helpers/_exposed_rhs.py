@@ -9,7 +9,7 @@ import jax
 from astronomix._finite_difference._interface_fluxes._weno import _weno_flux_x, _weno_flux_y, _weno_flux_z
 from astronomix._fluid_equations._equations import primitive_state_from_conserved
 from astronomix._geometry.boundaries import _boundary_handler
-from astronomix._physics_modules._viscosity._viscosity import fd_viscosity_source
+from astronomix._modules._viscosity._viscosity import fd_viscosity_source
 from astronomix._stencil_operations._stencil_operations import _shift
 from astronomix.option_classes.simulation_config import CONSERVATIVE_GAS_STATE, FINITE_DIFFERENCE, FINITE_VOLUME
 from astronomix.time_stepping._utils import _pad, _unpad

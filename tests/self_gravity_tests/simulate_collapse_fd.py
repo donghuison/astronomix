@@ -29,7 +29,6 @@ from astronomix.option_classes.simulation_config import (
     FINITE_VOLUME,
     HLLC_LM,
     WENO_FLUX_GRAVITY,
-    MIDPOINT_OPTIM,
     RIEMANN_SPLIT,
     RIEMANN_SPLIT_UNSTABLE,
     BoundarySettings,
@@ -131,7 +130,7 @@ baseline_config_fv = SimulationConfig(
     split = UNSPLIT,
     differentiation_mode = FORWARDS,
     limiter = MINMOD,
-    time_integrator = RK2_SSP, # MIDPOINT_OPTIM
+    time_integrator = RK2_SSP,
     riemann_solver = HLLC,
     boundary_settings=BoundarySettings(
         BoundarySettings1D(

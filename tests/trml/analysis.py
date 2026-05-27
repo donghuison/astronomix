@@ -8,7 +8,7 @@ from matplotlib.colors import LogNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import jax
 import numpy as np
-from astronomix._physics_modules._cooling._simple_mixing_cooling import _cooling_rate
+from astronomix._modules._cooling._simple_mixing_cooling import _cooling_rate
 from trml import P0, T_cold, T_hot, registered_variables, mixing_cooling_params, params, t_coolmin, rho_cold, rho_hot, initial_state, config
 from astronomix._geometry.boundaries import _boundary_handler
 from astronomix.time_stepping._utils import _pad

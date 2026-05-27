@@ -87,12 +87,6 @@ class HelperDataRequirements(NamedTuple):
 
 def _helper_data_requirements(config: SimulationConfig) -> HelperDataRequirements:
     """Derive which :class:`HelperData` fields the configuration needs.
-
-    The dispatch mirrors the one in :func:`_run_physics_modules` /
-    :class:`SnapshotSettings`: each enabled subsystem contributes its
-    own set of required fields, and the union is returned. New
-    subsystems must extend this function rather than computing helper
-    data themselves.
     """
 
     dim = config.dimensionality

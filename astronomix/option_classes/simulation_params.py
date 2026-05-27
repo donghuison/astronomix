@@ -1,12 +1,12 @@
 from typing import NamedTuple
 import jax.numpy as jnp
 
-from astronomix._physics_modules._cnn_mhd_corrector._cnn_mhd_corrector_options import CNNMHDconfig
-from astronomix._physics_modules._cooling.cooling_options import CoolingParams
-from astronomix._physics_modules._cosmic_rays.cosmic_ray_options import CosmicRayParams
-from astronomix._physics_modules._neural_net_force._neural_net_force_options import NeuralNetForceParams
-from astronomix._physics_modules._stellar_wind.stellar_wind_options import WindParams
-from astronomix._physics_modules._turbulent_forcing._turbulent_forcing_options import TurbulentForcingParams
+from astronomix._modules._cnn_mhd_corrector._cnn_mhd_corrector_options import CNNMHDconfig
+from astronomix._modules._cooling.cooling_options import CoolingParams
+from astronomix._modules._cosmic_rays.cosmic_ray_options import CosmicRayParams
+from astronomix._modules._neural_net_force._neural_net_force_options import NeuralNetForceParams
+from astronomix._modules._stellar_wind.stellar_wind_options import WindParams
+from astronomix._modules._turbulent_forcing._turbulent_forcing_options import TurbulentForcingParams
 
 class FixedBoundaryState1D(NamedTuple):
     #: Left state of shape (num_variables,).

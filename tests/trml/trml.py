@@ -99,7 +99,7 @@ from astronomix.option_classes.simulation_config import (
     BoundarySettings,
     BoundarySettings1D,
 )
-from astronomix._physics_modules._cooling.cooling_options import EXPLICIT_COOLING, IMPLICIT_COOLING, SIMPLE_MIXING_LAYER_COOLING, CoolingConfig, CoolingCurveConfig, CoolingParams, MixingCoolingParams
+from astronomix._modules._cooling.cooling_options import EXPLICIT_COOLING, IMPLICIT_COOLING, SIMPLE_MIXING_LAYER_COOLING, CoolingConfig, CoolingCurveConfig, CoolingParams, MixingCoolingParams
 
 from jax.sharding import PartitionSpec as P
 

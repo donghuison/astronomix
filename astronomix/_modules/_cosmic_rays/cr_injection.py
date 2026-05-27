@@ -11,7 +11,7 @@ from typing import Union
 from astronomix.option_classes.simulation_config import STATE_TYPE
 
 # astronomix classes
-from astronomix._physics_modules._cosmic_rays.cosmic_ray_options import CosmicRayParams
+from astronomix._modules._cosmic_rays.cosmic_ray_options import CosmicRayParams
 from astronomix.data_classes.simulation_helper_data import HelperData
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 from astronomix.option_classes.simulation_config import SimulationConfig

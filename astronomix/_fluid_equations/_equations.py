@@ -7,7 +7,7 @@ from beartype import beartype as typechecker
 
 from typing import Union
 
-from astronomix._physics_modules._cosmic_rays.cr_fluid_equations import (
+from astronomix._modules._cosmic_rays.cr_fluid_equations import (
     total_energy_from_primitives_with_crs,
     total_pressure_from_conserved_with_crs,
 )

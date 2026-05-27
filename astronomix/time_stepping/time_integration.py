@@ -23,8 +23,8 @@ from astronomix._finite_difference._timestep_estimation._timestep_estimator impo
 from astronomix._finite_volume._magnetic_update._vector_maths import divergence3D
 from astronomix._geometry.boundaries import _boundary_handler
 from astronomix._pallas_helpers import pallas_mesh_context
-from astronomix._physics_modules._frame_tracking._frame_tracking import _frame_tracking
-from astronomix._physics_modules._turbulent_forcing._turbulent_forcing import _apply_forcing
+from astronomix._modules._frame_tracking._frame_tracking import _frame_tracking
+from astronomix._modules._turbulent_forcing._turbulent_forcing import _apply_forcing
 from astronomix.analysis_helpers.energy_spectrum import _wavenumber_bins, get_kinetic_energy_spectrum, get_magnetic_energy_spectrum, get_magnetic_helicity_spectrum
 from astronomix.data_classes.simulation_state_struct import StateStruct
 from astronomix.option_classes.simulation_config import BACKWARDS, FINITE_DIFFERENCE, FINITE_VOLUME, FORWARDS, GHOST_CELLS, IDEAL_GAS, PERIODIC_ROLL, STATE_TYPE
@@ -43,7 +43,7 @@ from astronomix.data_classes.simulation_snapshot_data import SnapshotData
 
 # astronomix functions
 from astronomix._finite_volume._state_evolution.evolve_state import _evolve_state_fv
-from astronomix._physics_modules.run_physics_modules import _run_physics_modules
+from astronomix._modules._iteration_level_updates import _iteration_level_updates
 from astronomix._finite_volume._timestep_estimation._timestep_estimator import (
     _cfl_time_step,
     _source_term_aware_time_step,
@@ -900,63 +900,19 @@ def _time_integration(
 
         # ----------------- ↓ CENTRAL UPDATE ↓ ----------------
 
-        if config.solver_mode == FINITE_VOLUME:
-            # run physics modules
-            # for now we mainly consider the stellar wind, a constant source term term,
-            # so the source is handled via a simple Euler step but generally
-            # a higher order method (in a split fashion) may be used
-            primitive_state = _run_physics_modules(
-                primitive_state,
-                dt,
-                config,
-                params,
-                helper_data_pad,
-                registered_variables,
-                time + dt,
-            )
+        # modules that run every time step
+        key, primitive_state = _iteration_level_updates(
+            primitive_state,
+            key,
+            dt,
+            config,
+            params,
+            helper_data_pad,
+            registered_variables,
+            time + dt,
+        )
 
-        # turbulence forcing, TODO: move to physics modules
-        # NOTE: THE KEY IS CURRENTLY DIRECTLY IN THE CARRY
-        # FOR THE CASE WITHOUT SNAPSHOT DATA AND NOT PRESENT
-        # IN THE CARRY OTHERWISE. TODO: IMPROVE THIS.
-        if config.turbulent_forcing_config.turbulent_forcing:
-            key, primitive_state = _apply_forcing(
-                key,
-                primitive_state,
-                dt,
-                params.turbulent_forcing_params,
-                config,
-                registered_variables,
-            )
-
-        # PRELIMINARY
-        # Frame tracking, currently very specialized
-        # I do not like this being here
-        # CURRENTLY ONLY 3D
-        if config.frame_tracking:
-            primitive_state = _frame_tracking(
-                primitive_state,
-                config,
-                params,
-                registered_variables,
-                helper_data_pad,
-            )
-
-        # better safe than sorry
-        if config.enforce_positivity:
-            primitive_state = primitive_state.at[registered_variables.density_index].set(
-                jnp.maximum(
-                    primitive_state[registered_variables.density_index], params.minimum_density
-                )
-            )
-            if config.equation_of_state == IDEAL_GAS:
-                primitive_state = primitive_state.at[registered_variables.pressure_index].set(
-                    jnp.maximum(
-                        primitive_state[registered_variables.pressure_index], params.minimum_pressure
-                    )
-                )
-
-        # EVOLVE THE STATE
+        # evolve the state
         if config.solver_mode == FINITE_VOLUME:
             primitive_state = _evolve_state_fv(
                 primitive_state,

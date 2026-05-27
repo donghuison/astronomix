@@ -12,7 +12,7 @@ from astronomix.option_classes.simulation_params import SimulationParams
 
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.variable_registry.registered_variables import RegisteredVariables
-from astronomix._physics_modules._cooling.cooling_options import COOLING_CURVE_TYPE, EXPLICIT_COOLING, IMPLICIT_COOLING, CoolingConfig, CoolingCurveConfig, MixingCoolingParams
+from astronomix._modules._cooling.cooling_options import COOLING_CURVE_TYPE, EXPLICIT_COOLING, IMPLICIT_COOLING, CoolingConfig, CoolingCurveConfig, MixingCoolingParams
 from astronomix.option_classes.simulation_config import FIELD_TYPE, STATE_TYPE
 
 def _cooling_rate(

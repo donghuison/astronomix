@@ -4,19 +4,19 @@ from typing import NamedTuple, Tuple, Union
 
 import jax
 
-from astronomix._physics_modules._cnn_mhd_corrector._cnn_mhd_corrector_options import (
+from astronomix._modules._cnn_mhd_corrector._cnn_mhd_corrector_options import (
     CNNMHDconfig,
 )
-from astronomix._physics_modules._cooling.cooling_options import CoolingConfig
-from astronomix._physics_modules._cosmic_rays.cosmic_ray_options import CosmicRayConfig
-from astronomix._physics_modules._neural_net_force._neural_net_force_options import (
+from astronomix._modules._cooling.cooling_options import CoolingConfig
+from astronomix._modules._cosmic_rays.cosmic_ray_options import CosmicRayConfig
+from astronomix._modules._neural_net_force._neural_net_force_options import (
     NeuralNetForceConfig,
 )
-from astronomix._physics_modules._stellar_wind.stellar_wind_options import WindConfig
+from astronomix._modules._stellar_wind.stellar_wind_options import WindConfig
 
 from jaxtyping import Array, Float
 
-from astronomix._physics_modules._turbulent_forcing._turbulent_forcing_options import TurbulentForcingConfig
+from astronomix._modules._turbulent_forcing._turbulent_forcing_options import TurbulentForcingConfig
 
 # ===================== constant definition =====================
 
@@ -55,7 +55,6 @@ AM_HLLC = 5
 # time integrators
 # currently only for finite volume
 RK2_SSP = 0
-MIDPOINT_OPTIM = 10 # experiment
 MUSCL = 1
 # currently only for finite difference
 RK4_SSP = 2

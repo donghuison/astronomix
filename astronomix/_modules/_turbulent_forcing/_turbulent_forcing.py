@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 from functools import partial
 
-from astronomix._physics_modules._turbulent_forcing._turbulent_forcing_options import TurbulentForcingParams
+from astronomix._modules._turbulent_forcing._turbulent_forcing_options import TurbulentForcingParams
 from astronomix.option_classes.simulation_config import SimulationConfig
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 

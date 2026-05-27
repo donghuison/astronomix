@@ -16,7 +16,6 @@ from astronomix import SimulationParams
 from astronomix.option_classes.simulation_config import (
     DONOR_ACCOUNTING,
     HLLC_LM,
-    MIDPOINT_OPTIM,
     RIEMANN_SPLIT,
     RIEMANN_SPLIT_UNSTABLE,
     BoundarySettings,
@@ -73,7 +72,7 @@ baseline_config = SimulationConfig(
     split = UNSPLIT,
     differentiation_mode = FORWARDS,
     limiter = MINMOD,
-    time_integrator = RK2_SSP, # MIDPOINT_OPTIM,
+    time_integrator = RK2_SSP,
     riemann_solver = HLLC,
     boundary_settings = BoundarySettings(
         BoundarySettings1D(

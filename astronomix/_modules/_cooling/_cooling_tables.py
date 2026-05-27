@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from astronomix._physics_modules._cooling.cooling_options import PiecewisePowerLawParams
+from astronomix._modules._cooling.cooling_options import PiecewisePowerLawParams
 from astronomix.units.unit_helpers import CodeUnits
 
 from astropy import units as u
