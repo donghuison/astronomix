@@ -317,7 +317,7 @@ def _hydro_density_fluxes_needed(config) -> bool:
     so for typical setups (hydrodynamics only / wind / cooling without
     flux-coupled gravity) the standalone density flux arrays can be skipped
     and the fused Pallas WENO+divergence path is safe."""
-    return config.self_gravity and (
+    return config.gravity and (
         config.self_gravity_version != SIMPLE_SOURCE_TERM
     )
 

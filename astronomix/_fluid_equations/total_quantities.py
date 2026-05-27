@@ -17,9 +17,11 @@ from astronomix.option_classes.simulation_config import STATE_TYPE, SimulationCo
 from astronomix.data_classes.simulation_helper_data import HelperData
 
 # astronomix functions
-from astronomix._physics_modules._self_gravity._poisson_solver import (
+from astronomix._physics_modules._gravity._poisson_solver import (
     _compute_gravitational_potential,
 )
+from astronomix._physics_modules._gravity._utils import _pad_external_potential
+from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix._fluid_equations._equations import (
     get_absolute_velocity,
     total_energy_from_primitives,
@@ -88,14 +90,27 @@ def calculate_kinetic_energy(state, helper_data, config, registered_variables):
 # @jaxtyped(typechecker=typechecker)
 @partial(jax.jit, static_argnames=["config", "registered_variables"])
 def calculate_gravitational_energy(
-    state, helper_data, gravitational_constant, config, registered_variables
+    state, helper_data, gravitational_constant, params, config, registered_variables
 ):
     rho = state[registered_variables.density_index]
 
-    potential = _compute_gravitational_potential(
-        rho, config.grid_spacing, config, gravitational_constant
-    )
-    gravitational_energy = 0.5 * rho * potential
+    gravitational_energy = jnp.zeros_like(rho)
+
+    # self-gravity uses the factor 1/2 to avoid double counting the mutual
+    # interaction, while a fixed external potential contributes its full
+    # potential energy rho * phi_ext.
+    if config.self_gravity:
+        self_potential = _compute_gravitational_potential(
+            rho, config.grid_spacing, config, gravitational_constant
+        )
+        gravitational_energy = gravitational_energy + 0.5 * rho * self_potential
+
+    if config.external_potential:
+        external_potential = _pad_external_potential(
+            params.gravitational_potential, rho, config, registered_variables, params
+        )
+        gravitational_energy = gravitational_energy + rho * external_potential
+
     if config.dimensionality == 1:
         return jnp.sum(gravitational_energy * helper_data.cell_volumes)
     else:
@@ -111,6 +126,7 @@ def calculate_total_energy(
     helper_data: HelperData,
     gamma: Union[float, Float[Array, ""]],
     gravitational_constant: Union[float, Float[Array, ""]],
+    params: SimulationParams,
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ) -> Float[Array, ""]:
@@ -121,7 +137,10 @@ def calculate_total_energy(
         primitive_state: The primitive state array.
         helper_data: The helper data.
         gamma: The adiabatic index.
-        num_ghost_cells: The number of ghost cells.
+        gravitational_constant: The gravitational constant.
+        params: The simulation parameters (provides the external potential).
+        config: The simulation configuration.
+        registered_variables: The registered variables.
 
     Returns:
         The total energy.
@@ -138,11 +157,19 @@ def calculate_total_energy(
     else:
         energy = total_energy_from_primitives(rho, u, p, gamma)
 
+    # self-gravity carries the factor 1/2 (mutual interaction); a fixed
+    # external potential contributes its full potential energy rho * phi_ext.
     if config.self_gravity:
-        potential = _compute_gravitational_potential(
+        self_potential = _compute_gravitational_potential(
             rho, config.grid_spacing, config, gravitational_constant
         )
-        energy += 0.5 * rho * potential
+        energy += 0.5 * rho * self_potential
+
+    if config.external_potential:
+        external_potential = _pad_external_potential(
+            params.gravitational_potential, rho, config, registered_variables, params
+        )
+        energy += rho * external_potential
 
     if config.dimensionality == 1:
         return jnp.sum(energy * helper_data.cell_volumes)

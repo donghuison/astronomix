@@ -14,8 +14,8 @@ from astronomix._fluid_equations._equations import (
     total_energy_from_primitives,
     # total_pressure_from_conserved_mhd,
 )
-from astronomix._physics_modules._self_gravity._poisson_solver import _compute_gravitational_potential
-from astronomix._physics_modules._self_gravity._poisson_solver import _compute_gravitational_potential
+from astronomix._physics_modules._gravity._poisson_solver import _compute_gravitational_potential
+from astronomix._physics_modules._gravity._poisson_solver import _compute_gravitational_potential
 from astronomix.variable_registry.registered_variables import AxisInfo, RegisteredVariables
 from astronomix.option_classes.simulation_config import STATE_TYPE, WENO_FLUX_GRAVITY, SimulationConfig
 

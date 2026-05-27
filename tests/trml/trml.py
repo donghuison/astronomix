@@ -30,6 +30,8 @@ Basic setup:
 
 Cooling function: TODO
 
+Viscosity can be used to stability simulations.
+
 """
 
 multi_gpu = False
@@ -114,7 +116,7 @@ if multi_gpu:
     named_sharding_no_var = jax.NamedSharding(sharding_mesh_no_var, P(XAXIS, YAXIS, ZAXIS))
 
 # Box setup
-num_cells_x = 64
+num_cells_x = 128
 num_cells_y = num_cells_x
 num_cells_z = int(1.5 * num_cells_x)
 box_size = 1.0
@@ -128,7 +130,7 @@ t_end_in_t_sh = 30.0
 
 # Mixing settings
 density_contrast = 100.0
-xi = 3.0
+xi = 100.0
 mach_number = 0.5
 gamma = 5 / 3
 P0 = 1.0

@@ -289,6 +289,10 @@ class SimulationConfig(NamedTuple):
     #: The geometry of the simulation.
     geometry: int = CARTESIAN
 
+    #: The random seed for any stochastic processes
+    #: in the simulation, e.g. turbulent forcing.
+    random_seed: int = 42
+
     #: The equation of state for the simulation.
     #: NOTE: CURRENTLY ONLY IMPLEMENTED FOR 
     #: FINITE DIFFERENCE MODE.
@@ -312,6 +316,16 @@ class SimulationConfig(NamedTuple):
     #: Coupling of the self-gravity to the
     #: hydrodynamics.
     self_gravity_version: int = DONOR_ACCOUNTING
+
+    #: Enable an external, static gravitational potential provided via
+    #: params.gravitational_potential. It is added to the self-gravity
+    #: potential (if any) in _compute_total_potential.
+    external_potential: bool = False
+
+    #: Master gravity switch. Set automatically in finalize_config to
+    #: self_gravity or external_potential; gates the gravity source-term
+    #: machinery so an external potential works without self-gravity.
+    gravity: bool = False
 
     #: Manual open boundary conditions in the
     #: Poisson solver.
@@ -531,11 +545,15 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
             print("Setting MUSCL time integrator for spherical geometry")
             config = config._replace(time_integrator=MUSCL)
 
-    if config.self_gravity and (config.limiter != MINMOD):
+    # master gravity switch: active if self-gravity and/or an external
+    # potential is used. This gates the (shared) gravity source-term machinery.
+    config = config._replace(gravity=config.self_gravity or config.external_potential)
+
+    if config.gravity and (config.limiter != MINMOD):
         print(
             "Curiously, in self-gravitating systems, the VAN_ALBADA limiters seem to cause crashes."
         )
-        print("Setting DOUBLE_MINMOD limiter for self-gravity.")
+        print("Setting MINMOD limiter for gravity.")
         config = config._replace(limiter=MINMOD)
 
     # finite difference specific checks
@@ -639,7 +657,7 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
         config = config._replace(source_term_aware_timestep=True)
 
     if (
-        config.self_gravity
+        config.gravity
         and (config.riemann_solver == HLLC or config.riemann_solver == HLLC_LM)
         and config.riemann_solver != RIEMANN_SPLIT
     ):

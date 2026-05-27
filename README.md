@@ -167,6 +167,15 @@ There are two main options for storing intermediate states:
 - activate `return_snapshots` in the `SimulationConfig`, set either `num_snapshots` in the `SimulationConfig` for equidistant snapshots or `snapshot_timepoints` in the `SimulationParams` for custom snapshot timepoints, then activate specific variables to be stored via `snapshot_settings` in the `SimulationConfig` (e.g. the full states, the total energy, ..., see [here](https://astronomix-mhd.web.app/source/astronomix.option_classes.simulation_config.html#astronomix.option_classes.simulation_config.SnapshotSettings)) - these snapshots are stored on the GPU directly, which avoids host-device transfer and is e.g. very useful for losses over intermediate states
 - activate `snapshot_callable` in the `SimulationConfig` and provide a callable to the `time_integration` function which is called at the same timepoints as the snapshots in the first option, this function can then offload specific data (possibly after processing) to the host via `jax.debug.callback` and save it appropriately (e.g. directly make plots, save to disk in the preferred format, ...)
 
+### How to fit larger simulations into GPU memory?
+
+Make sure that you only have the initial state in GPU memory when you start the simulation,
+e.g. have a function which constructs the initial state (otherwise e.g. the intermediate helper data
+you used to construct the state might still be in GPU memory). To further save storage,
+you can donate the initial state to the time integration (activate `donate_state` in the `SimulationConfig`),
+which allows `JAX` to reuse the same memory for the state throughout the simulation (but you can also no
+longer access the initial state after the simulation has started).
+
 ## Documentation
 
 See [here](https://astronomix-mhd.web.app/).

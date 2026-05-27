@@ -15,9 +15,10 @@ from typing import Tuple, Union
 
 # astronomix data classes
 from astronomix._physics_modules._cosmic_rays.cr_fluid_equations import speed_of_sound_crs
-from astronomix._physics_modules._self_gravity._poisson_solver import (
+from astronomix._physics_modules._gravity._poisson_solver import (
     _compute_gravitational_potential,
 )
+from astronomix._physics_modules._gravity._utils import _pad_external_potential
 from astronomix._finite_volume._riemann_solver._riemann_solver import _riemann_solver
 from astronomix._stencil_operations._stencil_operations import _stencil_add
 from astronomix.data_classes.simulation_helper_data import HelperData
@@ -59,6 +60,48 @@ from astronomix._fluid_equations._equations import (
     speed_of_sound,
 )
 from astronomix.option_classes.simulation_params import SimulationParams
+
+@partial(jax.jit, static_argnames=["grid_spacing", "config", "registered_variables"])
+def _compute_total_potential(
+    gas_density: FIELD_TYPE,
+    grid_spacing: float,
+    config: SimulationConfig,
+    params: SimulationParams,
+    registered_variables: RegisteredVariables,
+    G: Union[float, Float[Array, ""]] = 1.0,
+) -> FIELD_TYPE:
+    """
+    Compute the total gravitational potential, including contributions from self-gravity and any external potentials.
+
+    Args:
+        gas_density: The gas density field (ghost-cell padded, i.e. the
+            shape of a single state field).
+        grid_spacing: The grid spacing.
+        config: The simulation configuration.
+        params: The simulation parameters (provides the external potential).
+        registered_variables: The registered variables.
+        G: The gravitational constant.
+    Returns:
+        The total gravitational potential, with the same shape as gas_density.
+    """
+    total_potential = jnp.zeros_like(gas_density)
+
+    # self-gravity contribution from the Poisson solve
+    if config.self_gravity:
+        total_potential = total_potential + _compute_gravitational_potential(
+            gas_density, grid_spacing, config, G
+        )
+
+    # external potential contribution
+    if config.external_potential:
+        # the external potential is provided on the bare grid cells, so it gets
+        # ghost cells matching the (here padded) density field, filled per BC
+        external_potential = _pad_external_potential(
+            params.gravitational_potential, gas_density, config, registered_variables, params
+        )
+        total_potential = total_potential + external_potential
+
+    return total_potential
 
 
 # @jaxtyped(typechecker=typechecker)
@@ -354,8 +397,8 @@ def _apply_self_gravity(
 ) -> STATE_TYPE:
     rho = old_primitive_state[registered_variables.density_index]
 
-    potential = _compute_gravitational_potential(
-        rho, config.grid_spacing, config, gravitational_constant
+    potential = _compute_total_potential(
+        rho, config.grid_spacing, config, params, registered_variables, gravitational_constant
     )
 
     source_term = jnp.zeros_like(primitive_state)

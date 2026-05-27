@@ -21,7 +21,7 @@ from astronomix._physics_modules._cosmic_rays.cr_injection import (
 from astronomix._physics_modules._neural_net_force._neural_net_force import (
     _neural_net_force,
 )
-from astronomix._physics_modules._self_gravity._poisson_solver import _compute_gravitational_potential
+from astronomix._physics_modules._gravity._gravity import _compute_total_potential
 from astronomix._physics_modules._viscosity._viscosity import fd_viscosity_source, fv_viscosity_update
 from astronomix._stencil_operations._stencil_operations import _shift, _stencil_add
 from astronomix.data_classes.simulation_helper_data import HelperData
@@ -233,12 +233,14 @@ def _physics_sources(
 
     # simplest self-gravity
     # TODO: maybe only one Poisson solve per RK step?
-    if config.self_gravity:
+    if config.gravity:
 
-        gravitational_potential = _compute_gravitational_potential(
+        gravitational_potential = _compute_total_potential(
             conserved_state[registered_variables.density_index],
             config.grid_spacing,
             config,
+            params,
+            registered_variables,
             params.gravitational_constant
         )
 

@@ -23,6 +23,7 @@ from astronomix._finite_difference._timestep_estimation._timestep_estimator impo
 from astronomix._finite_volume._magnetic_update._vector_maths import divergence3D
 from astronomix._geometry.boundaries import _boundary_handler
 from astronomix._pallas_helpers import pallas_mesh_context
+from astronomix._physics_modules._frame_tracking._frame_tracking import _frame_tracking
 from astronomix._physics_modules._turbulent_forcing._turbulent_forcing import _apply_forcing
 from astronomix.analysis_helpers.energy_spectrum import _wavenumber_bins, get_kinetic_energy_spectrum, get_magnetic_energy_spectrum, get_magnetic_helicity_spectrum
 from astronomix.data_classes.simulation_state_struct import StateStruct
@@ -413,7 +414,7 @@ def _time_integration(
         gravitational_energy = (
             jnp.zeros(config.num_snapshots)
             if config.snapshot_settings.return_gravitational_energy
-            and config.self_gravity
+            and config.gravity
             else None
         )
 
@@ -571,6 +572,7 @@ def _time_integration(
                             helper_data_unpad,
                             params.gamma,
                             params.gravitational_constant,
+                            params,
                             config,
                             registered_variables,
                         )
@@ -622,7 +624,7 @@ def _time_integration(
                     radial_momentum = None
 
                 if (
-                    config.self_gravity
+                    config.gravity
                     and config.snapshot_settings.return_gravitational_energy
                 ):
                     gravitational_energy = snapshot_data.gravitational_energy.at[
@@ -632,6 +634,7 @@ def _time_integration(
                             unpad_primitive_state,
                             helper_data_unpad,
                             params.gravitational_constant,
+                            params,
                             config,
                             registered_variables,
                         )
@@ -931,57 +934,13 @@ def _time_integration(
         # I do not like this being here
         # CURRENTLY ONLY 3D
         if config.frame_tracking:
-            rho_hot = 1.0
-            P0 = 1.0
-            L_box = config.box_size.x
-            box_size_z = config.box_size.z
-            # cell_centers_z is a 1D array along the z axis; jnp
-            # broadcasts it against the 3D pk_mask / Z-reduction below.
-            Z = helper_data_pad.cell_centers_z
-            density_contrast = params.cooling_params.cooling_curve_params.density_contrast
-            mach_number = params.cooling_params.cooling_curve_params.mach_number
-            rho_cold = density_contrast * rho_hot
-            T_hot  = P0 / rho_hot
-            T_cold = P0 / rho_cold
-            c_hot  = (params.gamma * P0 / rho_hot) ** 0.5
-            v_rel  = mach_number * c_hot
-            T_pk   = (T_cold ** 2 * T_hot) ** (1/3)
-            rho = primitive_state[registered_variables.density_index]
-            v_z = primitive_state[registered_variables.velocity_index.z]
-            P   = primitive_state[registered_variables.pressure_index]
-            T   = P / rho
-
-            # --- Peak-cooling measurements --------------------------------------
-            f_w       = 10.0 ** 0.1
-            T_ratio   = T / T_pk
-            pk_mask   = (T_ratio > 1.0 / f_w) & (T_ratio < f_w)
-            n_pk_safe = jnp.maximum(jnp.sum(pk_mask), 1)
-            v_z_pk    = jnp.sum(jnp.where(pk_mask, v_z, 0.0)) / n_pk_safe
-            z_layer   = jnp.sum(jnp.where(pk_mask, Z,   0.0)) / n_pk_safe
-
-            # --- PD control: velocity damping + position restoring --------------
-            # Target: center of the z-domain (where the interface was initialized).
-            # k_p sets the correction timescale. k_p = v_rel / L_box => ~1 shear
-            # time to close a displacement; critically damped when paired with the
-            # instantaneous velocity term below.
-            z_target = box_size_z / 2.0
-            dz       = z_layer - z_target
-            k_p      = v_rel / L_box
-
-            boost = -v_z_pk - k_p * dz
-
-            # --- Single cap: prevent shocks --------------------------------------
-            # v_rel / 10 shifts the frame by Mach ~0.05 in the hot gas — deeply
-            # subsonic and safe. This is intentionally looser than the paper's
-            # v_rel/100 because that cap is the mechanism that was failing.
-            boost = jnp.clip(boost, -v_rel / 10.0, v_rel / 10.0)
-
-            primitive_state = primitive_state.at[
-                registered_variables.velocity_index.z
-            ].add(boost)
-
-            # apply boundary conditions for safety
-            primitive_state = _boundary_handler(primitive_state, config, registered_variables, params)
+            primitive_state = _frame_tracking(
+                primitive_state,
+                config,
+                params,
+                registered_variables,
+                helper_data_pad,
+            )
 
         # better safe than sorry
         if config.enforce_positivity:
@@ -1071,9 +1030,9 @@ def _time_integration(
         return t < params.t_end
 
     if config.return_snapshots or config.activate_snapshot_callback:
-        carry = (0.0, jax.random.key(42), primitive_state, snapshot_data)
+        carry = (0.0, jax.random.key(config.random_seed), primitive_state, snapshot_data)
     else:
-        carry = (0.0, jax.random.key(42), primitive_state)
+        carry = (0.0, jax.random.key(config.random_seed), primitive_state)
 
     if not config.fixed_timestep:
         if config.differentiation_mode == BACKWARDS:

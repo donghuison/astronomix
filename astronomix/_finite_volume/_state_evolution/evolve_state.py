@@ -15,9 +15,7 @@ from typing import Union
 from astronomix._finite_volume._riemann_solver._riemann_solver import _riemann_solver
 from astronomix._finite_volume._magnetic_update._magnetic_field_update import magnetic_update
 from astronomix._fluid_equations.total_quantities import calculate_total_energy
-from astronomix._physics_modules._self_gravity._poisson_solver import _compute_gravitational_potential
-from astronomix._physics_modules._self_gravity._poisson_solver import _compute_gravitational_potential
-from astronomix._physics_modules._self_gravity._self_gravity import _apply_self_gravity, _gravitational_source_term_along_axis
+from astronomix._physics_modules._gravity._gravity import _apply_self_gravity, _gravitational_source_term_along_axis, _compute_total_potential
 from astronomix._stencil_operations._stencil_operations import _stencil_add
 from astronomix.data_classes.simulation_helper_data import HelperData
 from astronomix.variable_registry.registered_variables import RegisteredVariables
@@ -186,7 +184,7 @@ def _evolve_gas_state_split(
     registered_variables: RegisteredVariables,
 ) -> STATE_TYPE:
     if config.dimensionality == 1:
-        if config.self_gravity:
+        if config.gravity:
             old_primitive_state = primitive_state
 
         primitive_state = _evolve_state_along_axis(
@@ -201,7 +199,7 @@ def _evolve_gas_state_split(
             1,
         )
 
-        if config.self_gravity:
+        if config.gravity:
             primitive_state = _apply_self_gravity(
                 primitive_state,
                 old_primitive_state,
@@ -215,7 +213,7 @@ def _evolve_gas_state_split(
             )
 
     elif config.dimensionality == 2:
-        if config.self_gravity:
+        if config.gravity:
             old_primitive_state = primitive_state
 
         primitive_state = _evolve_state_along_axis(
@@ -252,7 +250,7 @@ def _evolve_gas_state_split(
             1,
         )
 
-        if config.self_gravity:
+        if config.gravity:
             primitive_state = _apply_self_gravity(
                 primitive_state,
                 old_primitive_state,
@@ -266,7 +264,7 @@ def _evolve_gas_state_split(
             )
 
     elif config.dimensionality == 3:
-        if config.self_gravity:
+        if config.gravity:
             old_primitive_state = primitive_state
 
         primitive_state = _evolve_state_along_axis(
@@ -325,7 +323,7 @@ def _evolve_gas_state_split(
             1,
         )
 
-        if config.self_gravity:
+        if config.gravity:
             primitive_state = _apply_self_gravity(
                 primitive_state,
                 old_primitive_state,
@@ -504,7 +502,7 @@ def _evolve_gas_state_unsplit(
     registered_variables: RegisteredVariables,
 ) -> STATE_TYPE:
 
-    if config.self_gravity:
+    if config.gravity:
         old_primitive_state = primitive_state
 
     if config.time_integrator == RK2_SSP:
@@ -551,6 +549,7 @@ def _evolve_gas_state_unsplit(
             helper_data,
             gamma,
             gravitational_constant,
+            params,
             config,
             registered_variables,
         )
@@ -595,10 +594,12 @@ def _evolve_gas_state_unsplit(
         
         def _source_terms(primitive_state):
 
-            potential = _compute_gravitational_potential(
+            potential = _compute_total_potential(
                 primitive_state[registered_variables.density_index],
                 config.grid_spacing,
                 config,
+                params,
+                registered_variables,
                 gravitational_constant
             )
 
@@ -661,6 +662,7 @@ def _evolve_gas_state_unsplit(
                 helper_data,
                 gamma,
                 gravitational_constant,
+                params,
                 config,
                 registered_variables,
             )
@@ -702,7 +704,7 @@ def _evolve_gas_state_unsplit(
             "Only the RK2 SSP time integrator is currently supported for the unsplit scheme."
         )
 
-    if config.self_gravity and config.time_integrator != MIDPOINT_OPTIM:
+    if config.gravity and config.time_integrator != MIDPOINT_OPTIM:
         primitive_state = _apply_self_gravity(
             primitive_state,
             old_primitive_state,

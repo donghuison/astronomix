@@ -33,6 +33,13 @@ class SimulationParams(NamedTuple):
     #: Gravitational constant.
     gravitational_constant: float = 1.0
 
+    #: External, static gravitational potential evaluated at the cell
+    #: centers of the grid (without ghost cells). Only used when
+    #: config.external_potential is True; it is added on top of the
+    #: self-gravity potential in _compute_total_potential and padded to the
+    #: ghost-cell-extended shape of a state field internally.
+    gravitational_potential: jnp.array = jnp.array([])
+
     #: Dynamic or kinematic viscosity depending 
     #: on the viscosity_type in SimulationConfig.
     viscosity: float = 0.0

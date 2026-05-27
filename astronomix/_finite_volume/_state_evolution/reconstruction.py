@@ -10,7 +10,7 @@ from jaxtyping import Array, Float, jaxtyped
 
 # general astronomix imports
 from astronomix._physics_modules._cosmic_rays.cr_fluid_equations import speed_of_sound_crs
-from astronomix._physics_modules._self_gravity._poisson_solver import (
+from astronomix._physics_modules._gravity._poisson_solver import (
     _compute_gravitational_potential,
 )
 from astronomix._finite_volume._state_evolution.limiters import _van_albada_limiter, _minmod
