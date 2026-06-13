@@ -398,20 +398,23 @@ def diffable_pallas_call_n(primals, *, pallas_branch, native_branch):
     return _f(*primals)
 
 
-def pallas_vjp_call(state, *, pallas_forward, pallas_backward):
-    """Run ``pallas_forward(state)`` with a ``jax.custom_vjp`` boundary whose
-    reverse rule is a *native Pallas adjoint kernel* ``pallas_backward``.
+def pallas_vjp_call(state, aux, *, pallas_forward, pallas_backward):
+    """Run ``pallas_forward(state, aux)`` with a ``jax.custom_vjp`` boundary
+    whose reverse rule is a *native Pallas adjoint kernel* ``pallas_backward``.
 
     Unlike :func:`diffable_pallas_call` (which routes the tangent — and hence
     the transposed gradient — through native JAX), this keeps the entire
-    backward pass on the Pallas/GPU backend: ``pallas_backward(state, cot)``
+    backward pass on the Pallas/GPU backend: ``pallas_backward(state, aux, cot)``
     returns the input cotangent ``d(loss)/d(state)`` directly from a
     hand-built adjoint kernel.
 
-    Differentiates w.r.t. ``state`` only (everything else — params, config,
-    axis — is closed over by the two branches and treated as non-differentiable;
-    this matches the inverse-problem regime, which differentiates w.r.t. the
-    state, not the physical constants).
+    Differentiates w.r.t. ``state`` only.  ``aux`` (e.g. the traced
+    ``SimulationParams``) is threaded *through* the boundary and given a zero
+    cotangent — it must be passed explicitly rather than closed over because
+    ``jax.custom_vjp`` cannot capture traced values in its forward/backward
+    closures (only static/concrete data — config, axis — may be closed over by
+    the two branches).  Treating the physical constants as non-differentiable
+    matches the inverse-problem regime (gradients w.r.t. the state, not params).
 
     NOTE: ``jax.custom_vjp`` supports reverse-mode only — ``jax.jvp`` /
     forward-mode AD on this boundary raises.  Use it for reverse-mode
@@ -419,14 +422,23 @@ def pallas_vjp_call(state, *, pallas_forward, pallas_backward):
     :func:`diffable_pallas_call`.
     """
     @jax.custom_vjp
-    def _f(s):
-        return pallas_forward(s)
+    def _f(s, a):
+        return pallas_forward(s, a)
 
-    def _f_fwd(s):
-        return pallas_forward(s), s
+    def _f_fwd(s, a):
+        return pallas_forward(s, a), (s, a)
 
-    def _f_bwd(s, cotangent):
-        return (pallas_backward(s, cotangent),)
+    def _f_bwd(residual, cotangent):
+        s, a = residual
+        state_bar = pallas_backward(s, a, cotangent)
+
+        def _zero(x):  # correctly-typed zero cotangent (float0 for non-inexact)
+            x = jnp.asarray(x)
+            if jnp.issubdtype(x.dtype, jnp.inexact):
+                return jnp.zeros_like(x)
+            return jnp.zeros(x.shape, dtype=jax.dtypes.float0)
+
+        return (state_bar, jax.tree_util.tree_map(_zero, a))
 
     _f.defvjp(_f_fwd, _f_bwd)
-    return _f(state)
+    return _f(state, aux)
