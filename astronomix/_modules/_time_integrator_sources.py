@@ -8,6 +8,7 @@ from astronomix._modules._cooling.cooling_options import SIMPLE_MIXING_LAYER_COO
 from astronomix._modules._gravity._gravity import _compute_total_potential, _fd_gravity_source, _gravitational_source_term_along_axis
 from astronomix._modules._stellar_wind.stellar_wind import _wind_ei3D_source
 from astronomix._modules._viscosity._viscosity import fd_viscosity_source
+from astronomix._modules._conduction._conduction import fd_conduction_source
 from astronomix.data_classes.simulation_helper_data import HelperData
 from astronomix.option_classes.simulation_config import FINITE_DIFFERENCE, FINITE_VOLUME, STATE_TYPE, SimulationConfig
 from astronomix.option_classes.simulation_params import SimulationParams
@@ -163,5 +164,9 @@ def _time_integrator_sources(
 
     if config.diffusion and config.solver_mode == FINITE_DIFFERENCE:
         S += fd_viscosity_source(primitive_state, params, config, registered_variables) * dt
+
+    # thermal conduction: kappa * laplacian(T) added to the energy equation
+    if config.thermal_conduction and config.solver_mode == FINITE_DIFFERENCE:
+        S += fd_conduction_source(primitive_state, params, config, registered_variables) * dt
 
     return S

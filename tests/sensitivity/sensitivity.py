@@ -464,7 +464,7 @@ def run_adjoint_test(dim, ic_type):
     axs[1].grid(True, linestyle='--', alpha=0.6)
     
     fig.tight_layout()
-    grad_plot_path = f'figures/gradient_{dim}d_{ic_type}.png'
+    grad_plot_path = f'figures/gradient_{dim}d_{ic_type}.svg'
     fig.savefig(grad_plot_path, bbox_inches='tight')
     plt.close(fig)
     print(f"Success! Evolution & Gradient plots saved to figures/ for {dim}D {ic_type}")
@@ -544,11 +544,18 @@ def run_gradient_convergence_test():
             **styles[label],
         )
 
+    # Short reference-slope triangles placed next to the curves they describe:
+    # the -2 line tracks the (shallow) finite-volume row and the -5 line tracks
+    # the (steep) finite-difference row. Keep x_span ~ one octave so the
+    # indicators stay inside the plotted N range instead of running off-axis.
     add_power_law_indicators(
         ax_err,
-        anchor=(64.0, 10.0),
+        anchor=(48.0, 1.0),
         exponents=[-2, -5],
-        x_span=32.0,
+        scales=[0.6, 8e-4],
+        x_span=2.0,
+        x_label='N',
+        text_kwargs=dict(fontsize=11, ha='left', va='center'),
     )
 
     ax_err.set_xlabel('Grid Resolution N', fontsize=12)
@@ -561,8 +568,8 @@ def run_gradient_convergence_test():
 
     os.makedirs("figures", exist_ok=True)
     fig_err.tight_layout()
-    plot_path = "figures/gradient_convergence_test.png"
-    fig_err.savefig(plot_path, dpi=200)
+    plot_path = "figures/gradient_convergence_test.svg"
+    fig_err.savefig(plot_path)
     plt.close(fig_err)
     print(f"Success! Convergence plot saved to {plot_path}")
 

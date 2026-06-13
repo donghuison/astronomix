@@ -6,7 +6,7 @@ from jax.sharding import PartitionSpec
 import jax.numpy as jnp
 
 
-from typing import Union
+from typing import Any, NamedTuple, Union
 
 # runtime debugging
 from jax.experimental import checkify
@@ -34,6 +34,7 @@ from astronomix.data_classes.simulation_snapshot_data import SnapshotData
 # astronomix functions
 from astronomix._finite_volume._state_evolution.evolve_state import _evolve_state_fv
 from astronomix._modules._iteration_level_updates import _iteration_level_updates
+from astronomix._modules._turbulent_forcing._turbulent_forcing import _init_ou_forcing_state
 from astronomix._finite_volume._timestep_estimation._timestep_estimator import (
     _cfl_time_step,
     _source_term_aware_time_step,
@@ -59,6 +60,25 @@ from astronomix.time_stepping._time_loop import (
 
 # timing
 from timeit import default_timer as timer
+
+
+class LoopState(NamedTuple):
+    """The physics evolving-state threaded through the generic time-loop driver.
+
+    The driver (``astronomix.time_stepping._time_loop.integrate``) treats this
+    as an opaque pytree; only the closures here unpack it. Holding the PRNG key
+    and the persistent Ornstein-Uhlenbeck forcing field here (rather than
+    overloading a bare tuple slot) keeps the carry explicit and extensible.
+
+    Attributes:
+        primitive_state: The (padded) primitive fluid state being evolved.
+        key: The PRNG key advanced by stochastic per-step modules (forcing, ...).
+        forcing: The persistent OU forcing field ``f`` (shape (3, nx, ny, nz)),
+            or ``None`` when OU forcing is inactive.
+    """
+    primitive_state: Any
+    key: Any
+    forcing: Any = None
 
 
 # @jaxtyped(typechecker=typechecker)
@@ -398,7 +418,9 @@ def _time_integration(
         end time, runs the per-step modules and evolves the state.  Returns
         ``(dt, new_state)``; the driver advances the time.
         """
-        key, primitive_state = state
+        primitive_state = state.primitive_state
+        key = state.key
+        forcing = state.forcing
 
         # determine the time step size
         if not config.fixed_timestep:
@@ -449,8 +471,8 @@ def _time_integration(
             dt = jnp.minimum(dt, params.t_end - time)
 
         # modules that run every time step
-        key, primitive_state = _iteration_level_updates(
-            primitive_state, key, dt, config, params, helper_data_pad,
+        key, forcing, primitive_state = _iteration_level_updates(
+            primitive_state, key, forcing, dt, config, params, helper_data_pad,
             registered_variables, time + dt,
         )
 
@@ -466,11 +488,11 @@ def _time_integration(
                 helper_data_pad, registered_variables,
             )
 
-        return dt, (key, primitive_state)
+        return dt, LoopState(primitive_state, key, forcing)
 
     def _record_snapshot(time, state, store, idx):
         """Record snapshot ``idx`` (the requested diagnostics)."""
-        _, primitive_state = state
+        primitive_state = state.primitive_state
 
         if config.boundary_handling != PERIODIC_ROLL:
             unpad_primitive_state = _unpad(primitive_state, config)
@@ -505,7 +527,7 @@ def _time_integration(
         ``jax.debug.callback`` internally, and should only pass the slice /
         summary statistics actually needed to avoid moving large arrays.
         """
-        _, primitive_state = state
+        primitive_state = state.primitive_state
         snapshot_callable(time, primitive_state, registered_variables)
         return store
 
@@ -529,6 +551,9 @@ def _time_integration(
             record=_record_snapshot,
             should_record=_should_record_snapshot,
             record_final=True,
+            # Reserve the last buffer slot for the true final state at t_end, so
+            # it is always written (the evenly spaced grid never lands on t_end).
+            final_index=config.num_snapshots - 1,
         )
     elif config.activate_snapshot_callback:
         snapshot_spec = SnapshotSpec(
@@ -557,7 +582,18 @@ def _time_integration(
     else:
         raise ValueError("Unknown differentiation mode.")
 
-    initial_loop_state = (jax.random.key(config.random_seed), primitive_state)
+    # Initial physics evolving-state. The OU forcing (when active) needs a
+    # persistent solenoidal field seeded from the PRNG key; otherwise the
+    # forcing slot stays None and costs nothing in the carry.
+    key0 = jax.random.key(config.random_seed)
+    if (config.turbulent_forcing_config.turbulent_forcing
+            and config.turbulent_forcing_config.ou_forcing):
+        key0, forcing0 = _init_ou_forcing_state(
+            key0, config, params.turbulent_forcing_params
+        )
+    else:
+        forcing0 = None
+    initial_loop_state = LoopState(primitive_state, key0, forcing0)
 
     _, loop_state, snapshot_store, num_iterations = integrate(
         initial_loop_state,
@@ -570,7 +606,7 @@ def _time_integration(
         progress=_show_progress if config.progress_bar else None,
     )
 
-    _, primitive_state = loop_state
+    primitive_state = loop_state.primitive_state
 
     # -------------------------------------------------------------
     # =================== ↑ loop-level logic ↑ ====================

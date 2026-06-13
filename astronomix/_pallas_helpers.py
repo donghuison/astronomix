@@ -254,7 +254,10 @@ def _pallas_call_sharded(
     halo_3 = tuple(halo) + (0,) * max(0, 3 - len(halo))
     halo_padded = _round_halo_up_to_block(halo_3[:ndim], block_3[:ndim])
 
-    from jax.experimental.shard_map import shard_map
+    try:
+        from jax.shard_map import shard_map  # jax >= 0.8 (promoted out of experimental)
+    except ImportError:  # jax < 0.8
+        from jax.experimental.shard_map import shard_map
 
     def body(*all_args):
         state_arrays = list(all_args[: len(state_inputs)])
@@ -393,3 +396,37 @@ def diffable_pallas_call_n(primals, *, pallas_branch, native_branch):
         return primal_out, tangent_out
 
     return _f(*primals)
+
+
+def pallas_vjp_call(state, *, pallas_forward, pallas_backward):
+    """Run ``pallas_forward(state)`` with a ``jax.custom_vjp`` boundary whose
+    reverse rule is a *native Pallas adjoint kernel* ``pallas_backward``.
+
+    Unlike :func:`diffable_pallas_call` (which routes the tangent — and hence
+    the transposed gradient — through native JAX), this keeps the entire
+    backward pass on the Pallas/GPU backend: ``pallas_backward(state, cot)``
+    returns the input cotangent ``d(loss)/d(state)`` directly from a
+    hand-built adjoint kernel.
+
+    Differentiates w.r.t. ``state`` only (everything else — params, config,
+    axis — is closed over by the two branches and treated as non-differentiable;
+    this matches the inverse-problem regime, which differentiates w.r.t. the
+    state, not the physical constants).
+
+    NOTE: ``jax.custom_vjp`` supports reverse-mode only — ``jax.jvp`` /
+    forward-mode AD on this boundary raises.  Use it for reverse-mode
+    (``jax.grad`` / ``differentiation_mode = BACKWARDS``); for forward-mode keep
+    :func:`diffable_pallas_call`.
+    """
+    @jax.custom_vjp
+    def _f(s):
+        return pallas_forward(s)
+
+    def _f_fwd(s):
+        return pallas_forward(s), s
+
+    def _f_bwd(s, cotangent):
+        return (pallas_backward(s, cotangent),)
+
+    _f.defvjp(_f_fwd, _f_bwd)
+    return _f(state)
