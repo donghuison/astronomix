@@ -746,9 +746,10 @@ def _weno_hydro_flux_from_window_adjoint(
         dq = [qp[i + 1] - qp[i] for i in range(5)]
         lams = [lam_of(fl_st[k], mode) for k in range(6)]
         absl = [jnp.abs(x) for x in lams]
-        amx = absl[0]
+        amxs = [absl[0]]
         for k in range(1, 6):
-            amx = jnp.maximum(amx, absl[k])
+            amxs.append(jnp.maximum(amxs[-1], absl[k]))
+        amx = amxs[-1]
         ap = 0.5 * (d[0] + amx * dq[0]); bp = 0.5 * (d[1] + amx * dq[1])
         cp = 0.5 * (d[2] + amx * dq[2]); dp = 0.5 * (d[3] + amx * dq[3])
         am = 0.5 * (d[4] - amx * dq[4]); bm = 0.5 * (d[3] - amx * dq[3])
@@ -807,10 +808,20 @@ def _weno_hydro_flux_from_window_adjoint(
         for k in range(6):
             left_project_adj(mode, f_st[k], fp, s_b[k], fbar_cell[k], fp_bar)
             left_project_adj(mode, q_stencil[k], fp, qp_b[k], qbar[k], fp_bar)
-        # amx = max_k |lambda_k| : route to the cell(s) achieving the max
+        # amx = max_k |lambda_k|, built as a fold of jnp.maximum.  Reverse the
+        # fold exactly as jax does (lax.max sends the cotangent to the SECOND
+        # operand on ties) so the sub-gradient matches the native VJP at
+        # eigenvalue ties -- e.g. the u=0 contact wave of a shock tube, where
+        # all |lambda|=0 and the naive "route to every argmax" is wrong.
+        acc = amx_b
+        absl_bar = [0.0] * 6
+        for k in range(5, 0, -1):
+            prev_gets = amxs[k - 1] > absl[k]
+            absl_bar[k] = absl_bar[k] + jnp.where(prev_gets, 0.0, acc)
+            acc = jnp.where(prev_gets, acc, 0.0)
+        absl_bar[0] = absl_bar[0] + acc
         for k in range(6):
-            mask = jnp.where(absl[k] >= amx, 1.0, 0.0)
-            lam_b = amx_b * jnp.sign(lams[k]) * mask
+            lam_b = absl_bar[k] * jnp.sign(lams[k])
             fl_bar[k][5] += lam_b
             if mode == 0:
                 fl_bar[k][11] += lam_b * (-1.0)

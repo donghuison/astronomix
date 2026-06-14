@@ -307,22 +307,24 @@ def plot_results(results, figure_path):
     fig, axs = plt.subplots(1, 3, figsize=(16, 5))
     ax_rt, ax_recomp, ax_mem = axs
 
-    # Same colour per solver (FV / FD), distinct style per backend
-    # (JAX solid / circle, Pallas dashed / square) so the backward-pass cost
-    # of the two backends can be read off against each other directly.
+    # Consistent FD-pair style (matches the sensitivity figures): FD blue,
+    # FV orange; FD (JAX) thick solid / 'o', FD (Pallas) thinner dashed / 'x'
+    # drawn on top, so the two FD backends stay visible where they overlap.
     def _style(label):
-        color = "C1" if label.startswith("FD") else "C0"
+        color = "C0" if label.startswith("FD") else "C1"
         if "Pallas" in label:
-            return dict(color=color, linestyle="--", marker="s")
-        return dict(color=color, linestyle="-", marker="o")
+            return dict(color=color, linestyle="--", linewidth=1.6, marker="x",
+                        markersize=7, zorder=3)
+        return dict(color=color, linestyle="-", linewidth=3.2, marker="o",
+                    markersize=6, zorder=2)
 
     c_max_global = 0
     for label, data in results.items():
         c_arr = np.array(data["checkpoints"])
         c_max_global = max(c_max_global, int(c_arr.max()))
         st = _style(label)
-        ax_rt.plot(c_arr, data["runtime_s"], linewidth=1.5, label=label, **st)
-        ax_mem.plot(c_arr, data["memory_MB"], linewidth=1.5, label=label, **st)
+        ax_rt.plot(c_arr, data["runtime_s"], label=label, **st)
+        ax_mem.plot(c_arr, data["memory_MB"], label=label, **st)
 
     N_values = {data["N_iters"] for data in results.values()}
     if len(N_values) != 1:

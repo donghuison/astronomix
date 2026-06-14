@@ -354,14 +354,16 @@ def run_adjoint_test(dim, ic_type, compare_backends=False):
     # uses the wired native Pallas adjoint (periodic BCs here, so the fast GPU
     # adjoint kernel applies); FD/FV (JAX) use the native backward.  All three
     # should land on the exact Fourier gradient.
+    # Consistent FD-pair style: the two FD backends share a colour, FD (JAX) uses
+    # 'o' and FD (Pallas) 'x' drawn on top, so both are visible where they overlap.
     grad_backend_specs = [
-        ("FD (JAX)",    FINITE_DIFFERENCE, NATIVE_JAX, 'tab:blue'),
-        ("FD (Pallas)", FINITE_DIFFERENCE, PALLAS,     'tab:green'),
-        ("FV (JAX)",    FINITE_VOLUME,     NATIVE_JAX, 'tab:purple'),
+        ("FD (JAX)",    FINITE_DIFFERENCE, NATIVE_JAX, dict(color='tab:blue',  marker='o', s=20, zorder=2)),
+        ("FD (Pallas)", FINITE_DIFFERENCE, PALLAS,     dict(color='tab:blue',  marker='x', s=26, zorder=3, linewidths=1.3)),
+        ("FV (JAX)",    FINITE_VOLUME,     NATIVE_JAX, dict(color='tab:green', marker='.', s=18, zorder=1)),
     ]
     ad_grads_by_backend = {}
     if compare_backends:
-        for lab, sm, be, _c in grad_backend_specs:
+        for lab, sm, be, _st in grad_backend_specs:
             cfg_b, params_b = get_config_and_params(dim, N, L, t_end, solver_mode=sm)
             if be == PALLAS:
                 cfg_b = cfg_b._replace(backend=PALLAS, pallas_use_triton=True, pallas_interpret=False)
@@ -482,9 +484,9 @@ def run_adjoint_test(dim, ic_type, compare_backends=False):
     
     # Grad: Density
     if compare_backends:
-        for lab, _sm, _be, col in grad_backend_specs:
-            axs[0].scatter(x_plot, y_ad_by_backend[lab][0], s=16, color=col,
-                           alpha=0.5, label=f'AD: {lab}')
+        for lab, _sm, _be, st in grad_backend_specs:
+            axs[0].scatter(x_plot, y_ad_by_backend[lab][0], alpha=0.55,
+                           label=f'AD: {lab}', **st)
     else:
         axs[0].scatter(x_plot, y_ad_rho, s=20, color='blue', alpha=0.5, label='JAX AD Gradients')
     axs[0].plot(x_line, y_ana_rho_line, '-', color='orange', linewidth=3, label='Exact Fourier Gradient')
@@ -495,9 +497,9 @@ def run_adjoint_test(dim, ic_type, compare_backends=False):
     
     # Grad: Velocity
     if compare_backends:
-        for lab, _sm, _be, col in grad_backend_specs:
-            axs[1].scatter(x_plot, y_ad_by_backend[lab][1], s=16, color=col,
-                           alpha=0.5, label=f'AD: {lab}')
+        for lab, _sm, _be, st in grad_backend_specs:
+            axs[1].scatter(x_plot, y_ad_by_backend[lab][1], alpha=0.55,
+                           label=f'AD: {lab}', **st)
     else:
         axs[1].scatter(x_plot, y_ad_v, s=20, color='green', alpha=0.5, label='JAX AD Gradients')
     axs[1].plot(x_line, y_ana_v_line, '-', color='red', linewidth=3, label='Exact Fourier Gradient')
@@ -576,17 +578,16 @@ def run_gradient_convergence_test():
     fig_err, ax_err = plt.subplots(1, 1, figsize=(8, 6))
     N_arr = np.array(N_values)
 
+    # Consistent FD-pair style (see the other figures): the two FD backends share
+    # a colour; FD (JAX) is a thick solid line / 'o', FD (Pallas) a thinner dashed
+    # line / 'x' drawn on top, so both stay visible where they overlap.
     styles = {
-        "Finite Difference (JAX)":    dict(color='tab:blue',   marker='o', linestyle='-'),
-        "Finite Volume (JAX)":        dict(color='tab:orange', marker='o', linestyle='-'),
-        "Finite Difference (Pallas)": dict(color='tab:blue',   marker='x', linestyle='--'),
-        "Finite Volume (Pallas)":     dict(color='tab:orange', marker='x', linestyle='--'),
+        "Finite Difference (JAX)":    dict(color='tab:blue',   marker='o', linestyle='-',  linewidth=3.4, markersize=6, zorder=2),
+        "Finite Volume (JAX)":        dict(color='tab:orange', marker='o', linestyle='-',  linewidth=2.2, markersize=6, zorder=2),
+        "Finite Difference (Pallas)": dict(color='tab:blue',   marker='x', linestyle='--', linewidth=1.6, markersize=7, zorder=3),
     }
     for label, _, _ in backends:
-        ax_err.loglog(
-            N_arr, errors_dict[label], linewidth=2, label=label,
-            **styles[label],
-        )
+        ax_err.loglog(N_arr, errors_dict[label], label=label, **styles[label])
 
     # Short reference-slope triangles placed next to the curves they describe:
     # the -2 line tracks the (shallow) finite-volume row and the -5 line tracks
@@ -605,8 +606,12 @@ def run_gradient_convergence_test():
     ax_err.set_xlabel('Grid Resolution N', fontsize=12)
     ax_err.set_ylabel(r'Average $L_1$ Error ($\partial J/\partial U_0$ vs Exact)', fontsize=12)
     ax_err.set_title('AD Gradient Convergence to Exact Analytical Fourier Operator', fontsize=14)
+    # Show only the integer N ticks; suppress the default log minor-tick labels
+    # (2x10^1, 3x10^1, ...) that otherwise overlap the 16/32/64/... labels.
+    import matplotlib.ticker as mticker
     ax_err.set_xticks(N_values)
     ax_err.set_xticklabels([str(n) for n in N_values])
+    ax_err.xaxis.set_minor_formatter(mticker.NullFormatter())
     ax_err.legend(loc='lower left', fontsize=9)
     ax_err.grid(True, which="both", ls="-", alpha=0.2)
 

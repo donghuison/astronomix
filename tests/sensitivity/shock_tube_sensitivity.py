@@ -70,10 +70,13 @@ from astronomix.option_classes.simulation_params import SimulationParams
 def make_config_and_params(N, L, t_end, num_timesteps, solver_mode, backend=NATIVE_JAX):
     """1D open-boundary config with a fixed timestep so J(theta) has no CFL kinks.
 
-    With ``backend=PALLAS`` the FD forward runs the Pallas WENO kernel.  The
-    block (4,1,1) divides the ghost-padded 1D shape (N=200 -> 200+2*ngc, both
-    multiples of 4).  These open boundaries use the native backward (the Pallas
-    adjoint is periodic-only); the Pallas *forward* is still exercised.
+    With ``backend=PALLAS`` the FD forward runs the Pallas WENO kernel and the
+    backward runs the native Pallas adjoint (the kernel transposes the periodic
+    custom_roll stencil, correct for these ghost-cell boundaries too).  Block
+    (4,1,1) divides the 1D shape.  At the shock the WENO gradient is
+    FP-ill-conditioned, so FD (Pallas) AD can differ from FD (JAX) by a
+    sub-gradient amount -- the kink-immune one-sided / random-direction checks
+    below arbitrate.
     """
     config = SimulationConfig(
         solver_mode=solver_mode,
@@ -380,13 +383,22 @@ def run_shock_tube_sensitivity_test():
     # makes that scaling explicit; deviation from it would indicate kink
     # contamination or an AD bug.
     fig, ax = plt.subplots(1, 1, figsize=(8, 6))
-    backend_colors = {label: f"C{i}" for i, (label, _, _) in enumerate(backends)}
+
+    # Consistent FD-pair style (matches the other figures): FD blue / FV orange;
+    # FD (JAX) thick solid, FD (Pallas) thinner dashed on top, so the two FD
+    # curves stay visible where they overlap.
+    def _stp(label):
+        color = 'tab:blue' if label.startswith('FD') else 'tab:orange'
+        if 'Pallas' in label:
+            return dict(color=color, linestyle='--', linewidth=1.6, marker='x',
+                        markersize=8, zorder=3)
+        return dict(color=color, linestyle='-', linewidth=3.2, marker='^',
+                    markersize=7, zorder=2)
+
     h_arr = np.array(h_values, dtype=float)
     for label, _, _ in backends:
-        c = backend_colors[label]
         ys_min = np.array([results[label]["rel_errs_minside"][h] for h in h_values])
-        ax.loglog(h_arr, ys_min, marker='^', linewidth=2,
-                  color=c, label=f"{label}: min one-sided FD")
+        ax.loglog(h_arr, ys_min, label=f"{label}: min one-sided FD", **_stp(label))
 
     # Reference O(h) (slope +1) truncation line, anchored at the tightest
     # min-one-sided value across backends to lie just under the data.
