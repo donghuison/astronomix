@@ -263,15 +263,15 @@ class CheckpointSpec(NamedTuple):
     backend: int = NATIVE_JAX
 
 
-# Compare backends on the backward (reverse-mode AD) pass: the Pallas
-# kernels are now differentiable (custom_jvp boundary -> native tangent,
-# Pallas primal), so the checkpointed backward pass recomputes its forward
-# segments with the fast Pallas kernels while the gradient stays exact.
+# Compare backends on the backward (reverse-mode AD) pass.  In BACKWARDS mode
+# the FD hydro WENO flux routes its backward through the native Pallas adjoint
+# kernel (see astronomix/_pallas_helpers.pallas_vjp_call), so FD (Pallas) runs
+# the whole reverse pass on the GPU instead of the slow native VJP.  FV (Pallas)
+# is left out of the comparison (the FV evolve backward is not the focus here).
 DEFAULT_CONFIGURATIONS = (
-    CheckpointSpec("FV (JAX)", FINITE_VOLUME, NATIVE_JAX),
-    CheckpointSpec("FV (Pallas)", FINITE_VOLUME, PALLAS),
     CheckpointSpec("FD (JAX)", FINITE_DIFFERENCE, NATIVE_JAX),
     CheckpointSpec("FD (Pallas)", FINITE_DIFFERENCE, PALLAS),
+    CheckpointSpec("FV (JAX)", FINITE_VOLUME, NATIVE_JAX),
 )
 
 

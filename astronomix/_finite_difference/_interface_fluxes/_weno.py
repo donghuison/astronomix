@@ -121,7 +121,7 @@ from astronomix._fluid_equations._fluxes_mhd import _euler_flux_isothermal_x, _m
 from astronomix._fluid_equations._equations import primitive_state_from_conserved
 from astronomix._fluid_equations._fluxes import _euler_flux
 from astronomix._stencil_operations._stencil_operations import _shift
-from astronomix.option_classes.simulation_config import BACKWARDS, IDEAL_GAS, ISOTHERMAL, PALLAS, SimulationConfig
+from astronomix.option_classes.simulation_config import BACKWARDS, IDEAL_GAS, ISOTHERMAL, PALLAS, PERIODIC_ROLL, SimulationConfig
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 
@@ -521,10 +521,18 @@ def _weno_flux_axis_dispatch(
     kernel, rather than transposing the native tangent.  The Pallas reverse path
     differentiates w.r.t. the conserved STATE only (params are physical
     constants for the flux) and is single-device; correct 3D y/z gradients need
-    jax >= ~0.8 (older jaxlib miscompiles the adjoint kernel on Triton)."""
+    jax >= ~0.8 (older jaxlib miscompiles the adjoint kernel on Triton).
+
+    The Pallas adjoint kernel assumes PERIODIC wrap (it is the exact transpose of
+    the modular-indexed forward kernel), so it is only used for ``PERIODIC_ROLL``
+    boundary handling, where it is validated bit-exact.  With ghost-cell
+    (open/reflective) boundaries the periodic scatter would mis-attribute
+    boundary gradients, so those fall back to the native-tangent backward
+    (``diffable_pallas_call``), which stays correct."""
     if _hydro_pallas_flux_supported(conserved_state, config):
         if axis == 0 or (axis == 1 and int(config.dimensionality) >= 2) or (axis == 2 and int(config.dimensionality) == 3):
-            if config.differentiation_mode == BACKWARDS:
+            if (config.differentiation_mode == BACKWARDS
+                    and config.boundary_handling == PERIODIC_ROLL):
                 return pallas_vjp_call(
                     conserved_state,
                     params,

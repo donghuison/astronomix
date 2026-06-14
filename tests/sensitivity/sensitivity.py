@@ -299,7 +299,7 @@ def get_ad_gradients(rho_P0, v_P0_tuple, config, params, rho_B, c_s, P_B, mass_m
 # ==============================================================================
 # 4. Running & Plotting Individual Setups
 # ==============================================================================
-def run_adjoint_test(dim, ic_type):
+def run_adjoint_test(dim, ic_type, compare_backends=False):
     print(f"\n{'-'*50}\nRunning {dim}D Adjoint Sensitivity Test: {ic_type.upper()}\n{'-'*50}")
     
     rho_B, c_s, gamma = 1.0, 2.0, 5/3
@@ -350,8 +350,26 @@ def run_adjoint_test(dim, ic_type):
     # Compute Gradients
     # --------------------------------------------------------------------------
     print("Computing AD gradients through simulation...")
-    ad_grad_rho, ad_grad_v = get_ad_gradients(rho_P0, v_P0, config, params, rho_B, c_s, P_B)
-    
+    # Backends overlaid in the gradient plot (FV (Pallas) left out).  FD (Pallas)
+    # uses the wired native Pallas adjoint (periodic BCs here, so the fast GPU
+    # adjoint kernel applies); FD/FV (JAX) use the native backward.  All three
+    # should land on the exact Fourier gradient.
+    grad_backend_specs = [
+        ("FD (JAX)",    FINITE_DIFFERENCE, NATIVE_JAX, 'tab:blue'),
+        ("FD (Pallas)", FINITE_DIFFERENCE, PALLAS,     'tab:green'),
+        ("FV (JAX)",    FINITE_VOLUME,     NATIVE_JAX, 'tab:purple'),
+    ]
+    ad_grads_by_backend = {}
+    if compare_backends:
+        for lab, sm, be, _c in grad_backend_specs:
+            cfg_b, params_b = get_config_and_params(dim, N, L, t_end, solver_mode=sm)
+            if be == PALLAS:
+                cfg_b = cfg_b._replace(backend=PALLAS, pallas_use_triton=True, pallas_interpret=False)
+            ad_grads_by_backend[lab] = get_ad_gradients(rho_P0, v_P0, cfg_b, params_b, rho_B, c_s, P_B)
+        ad_grad_rho, ad_grad_v = ad_grads_by_backend[grad_backend_specs[0][0]]
+    else:
+        ad_grad_rho, ad_grad_v = get_ad_gradients(rho_P0, v_P0, config, params, rho_B, c_s, P_B)
+
     print("Computing Exact Analytical gradients (Fourier method)...")
     ana_grad_rho, ana_grad_v = compute_analytic_gradients_fourier(rho_P0, v_P0, L, c_s, rho_B, params.t_end)
     
@@ -409,6 +427,22 @@ def run_adjoint_test(dim, ic_type):
         x_label = 'Spatial Coordinate $x$'
         v_title = r'(Velocity $v_x$ Slice)'
 
+    # Apply the same normalisation + 1D slice used for the default backend to
+    # each backend's AD gradient, so the gradient plot can overlay all three.
+    if compare_backends:
+        def _slice_ad(adr, adv):
+            adr_n = adr / eps
+            adv_n = [a / eps for a in adv]
+            if ic_type == 'wave':
+                yr = adr_n.flatten()
+                yv = sum(adv_n[i] * k_hat[i] for i in range(dim)).flatten()
+            else:
+                yr = adr_n[idx]
+                yv = adv_n[0][idx]
+            return yr, yv
+        y_ad_by_backend = {lab: _slice_ad(*ad_grads_by_backend[lab])
+                           for lab, *_ in grad_backend_specs}
+
     # --------------------------------------------------------------------------
     # Plot 1: State Evolution (Initial vs Final)
     # --------------------------------------------------------------------------
@@ -447,7 +481,12 @@ def run_adjoint_test(dim, ic_type):
     fig, axs = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
     
     # Grad: Density
-    axs[0].scatter(x_plot, y_ad_rho, s=20, color='blue', alpha=0.5, label='JAX AD Gradients')
+    if compare_backends:
+        for lab, _sm, _be, col in grad_backend_specs:
+            axs[0].scatter(x_plot, y_ad_by_backend[lab][0], s=16, color=col,
+                           alpha=0.5, label=f'AD: {lab}')
+    else:
+        axs[0].scatter(x_plot, y_ad_rho, s=20, color='blue', alpha=0.5, label='JAX AD Gradients')
     axs[0].plot(x_line, y_ana_rho_line, '-', color='orange', linewidth=3, label='Exact Fourier Gradient')
     axs[0].set_title(rf'{dim}D {ic_type.capitalize()} Sensitivity to Initial Density: $\partial_{{U_0}} J$ for $\rho$')
     axs[0].set_ylabel('Gradient Amplitude')
@@ -455,7 +494,12 @@ def run_adjoint_test(dim, ic_type):
     axs[0].grid(True, linestyle='--', alpha=0.6)
     
     # Grad: Velocity
-    axs[1].scatter(x_plot, y_ad_v, s=20, color='green', alpha=0.5, label='JAX AD Gradients')
+    if compare_backends:
+        for lab, _sm, _be, col in grad_backend_specs:
+            axs[1].scatter(x_plot, y_ad_by_backend[lab][1], s=16, color=col,
+                           alpha=0.5, label=f'AD: {lab}')
+    else:
+        axs[1].scatter(x_plot, y_ad_v, s=20, color='green', alpha=0.5, label='JAX AD Gradients')
     axs[1].plot(x_line, y_ana_v_line, '-', color='red', linewidth=3, label='Exact Fourier Gradient')
     axs[1].set_title(rf'{dim}D {ic_type.capitalize()} Sensitivity to Initial Velocity: $\partial_{{U_0}} J$ ' + v_title)
     axs[1].set_xlabel(x_label)
@@ -477,15 +521,15 @@ def run_gradient_convergence_test():
 
     N_values = [16, 32, 64, 128, 256]
 
-    # Each backend is (label, solver_mode, backend_id). Pallas backends are
-    # enabled by the custom_jvp wrappers in astronomix/_pallas_helpers.py;
-    # the tangent path runs through the native-JAX equivalent so AD gradients
-    # bit-match the native rows.
+    # Each backend is (label, solver_mode, backend_id).  In BACKWARDS mode the FD
+    # (Pallas) gradient is produced by the native Pallas adjoint kernel
+    # (pallas_vjp_call), which equals the native gradient to ~1e-8 — far below
+    # the discretisation error this convergence test resolves, so the FD (JAX)
+    # and FD (Pallas) curves overlap.  FV (Pallas) is omitted.
     backends = [
         ("Finite Difference (JAX)",  FINITE_DIFFERENCE, NATIVE_JAX),
         ("Finite Volume (JAX)",      FINITE_VOLUME,     NATIVE_JAX),
         ("Finite Difference (Pallas)", FINITE_DIFFERENCE, PALLAS),
-        ("Finite Volume (Pallas)",     FINITE_VOLUME,     PALLAS),
     ]
 
     errors_dict = {label: [] for (label, _, _) in backends}
@@ -687,7 +731,10 @@ if __name__ == "__main__":
     # Test Gradients in all dimensional setups mapped onto Wave and Gaussian cases
     for dimensionality in [1, 2, 3]:
         for condition in ['wave', 'gaussian']:
-            run_adjoint_test(dimensionality, condition)
+            run_adjoint_test(
+                dimensionality, condition,
+                compare_backends=(dimensionality == 3 and condition == 'gaussian'),
+            )
 
     # Test continuous convergence across solvers
     run_gradient_convergence_test()

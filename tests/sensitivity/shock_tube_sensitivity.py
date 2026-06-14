@@ -57,7 +57,7 @@ from astronomix import CARTESIAN
 from astronomix import get_helper_data, time_integration, get_registered_variables
 from astronomix.initial_condition_generation.construct_primitive_state import construct_primitive_state
 from astronomix.option_classes.simulation_config import (
-    BACKWARDS, FINITE_DIFFERENCE, FINITE_VOLUME,
+    BACKWARDS, FINITE_DIFFERENCE, FINITE_VOLUME, NATIVE_JAX, PALLAS,
     OPEN_BOUNDARY, SimulationConfig, finalize_config,
     BoundarySettings1D,
 )
@@ -67,14 +67,24 @@ from astronomix.option_classes.simulation_params import SimulationParams
 # ==============================================================================
 # 1. Configuration and parameterized IC
 # ==============================================================================
-def make_config_and_params(N, L, t_end, num_timesteps, solver_mode):
-    """1D open-boundary config with a fixed timestep so J(theta) has no CFL kinks."""
+def make_config_and_params(N, L, t_end, num_timesteps, solver_mode, backend=NATIVE_JAX):
+    """1D open-boundary config with a fixed timestep so J(theta) has no CFL kinks.
+
+    With ``backend=PALLAS`` the FD forward runs the Pallas WENO kernel.  The
+    block (4,1,1) divides the ghost-padded 1D shape (N=200 -> 200+2*ngc, both
+    multiples of 4).  These open boundaries use the native backward (the Pallas
+    adjoint is periodic-only); the Pallas *forward* is still exercised.
+    """
     config = SimulationConfig(
         solver_mode=solver_mode,
         geometry=CARTESIAN,
         progress_bar=False,
         self_gravity=False,
         differentiation_mode=BACKWARDS,
+        backend=backend,
+        pallas_block_shape=(4, 1, 1),
+        pallas_use_triton=True,
+        pallas_interpret=False,
         mhd=False,
         dimensionality=1,
         box_size=L,
@@ -229,15 +239,16 @@ def run_shock_tube_sensitivity_test():
     n_random_dirs = 4
 
     backends = [
-        ("Finite Volume",     FINITE_VOLUME),
-        ("Finite Difference", FINITE_DIFFERENCE),
+        ("FD (JAX)",    FINITE_DIFFERENCE, NATIVE_JAX),
+        ("FD (Pallas)", FINITE_DIFFERENCE, PALLAS),
+        ("FV (JAX)",    FINITE_VOLUME,     NATIVE_JAX),
     ]
 
     results = {}
 
-    for label, solver_mode in backends:
+    for label, solver_mode, backend in backends:
         print(f"\n=== {label} ===")
-        config, params = make_config_and_params(N, L, t_end, num_timesteps, solver_mode)
+        config, params = make_config_and_params(N, L, t_end, num_timesteps, solver_mode, backend=backend)
         registered_variables = get_registered_variables(config)
         helper_data = get_helper_data(config)
 
@@ -311,7 +322,7 @@ def run_shock_tube_sensitivity_test():
     h_values_plot = [h for h in (1e-4, 1e-6) if h in h_values]
     cmap = plt.cm.viridis(np.linspace(0.2, 0.8, len(h_values_plot)))
     tiny = 1e-30
-    for col, (label, _) in enumerate(backends):
+    for col, (label, _, _) in enumerate(backends):
         g_ad = results[label]["g_ad"]
 
         # For each h, build the per-parameter min-one-sided gradient: pick
@@ -369,9 +380,9 @@ def run_shock_tube_sensitivity_test():
     # makes that scaling explicit; deviation from it would indicate kink
     # contamination or an AD bug.
     fig, ax = plt.subplots(1, 1, figsize=(8, 6))
-    backend_colors = {label: f"C{i}" for i, (label, _) in enumerate(backends)}
+    backend_colors = {label: f"C{i}" for i, (label, _, _) in enumerate(backends)}
     h_arr = np.array(h_values, dtype=float)
-    for label, _ in backends:
+    for label, _, _ in backends:
         c = backend_colors[label]
         ys_min = np.array([results[label]["rel_errs_minside"][h] for h in h_values])
         ax.loglog(h_arr, ys_min, marker='^', linewidth=2,
@@ -381,7 +392,7 @@ def run_shock_tube_sensitivity_test():
     # min-one-sided value across backends to lie just under the data.
     h_anchor = min(h_values)
     y_anchor = min(results[label]["rel_errs_minside"][h_anchor]
-                   for label, _ in backends)
+                   for label, _, _ in backends)
     ax.loglog(h_arr, y_anchor * (h_arr / h_anchor),
               linestyle='--', color='gray', linewidth=1.5,
               label=r'$\propto h$ (one-sided FD truncation)')
@@ -403,7 +414,7 @@ def run_shock_tube_sensitivity_test():
     if len(backends) == 1:
         axs = [axs]
     dir_cmap = plt.cm.plasma(np.linspace(0.15, 0.85, n_random_dirs))
-    for ax, (label, _) in zip(axs, backends):
+    for ax, (label, _, _) in zip(axs, backends):
         for k, row in enumerate(results[label]["dir_rows"]):
             ys = [row["rel"][h] for h in dir_h_values]
             ax.loglog(dir_h_values, ys, marker='o', color=dir_cmap[k],
@@ -429,18 +440,18 @@ def run_shock_tube_sensitivity_test():
     # ----- Summary -------------------------------------------------------------
     print(f"\n{'-'*60}\nSummary\n{'-'*60}")
     print("Per-axis (axis-aligned) test, central FD:")
-    for label, _ in backends:
+    for label, _, _ in backends:
         best_h = min(results[label]["rel_errs"], key=results[label]["rel_errs"].get)
         print(f"  {label:<22s}: best h = {best_h:.0e}, "
               f"||g_AD - g_FD||/||g_AD|| = {results[label]['rel_errs'][best_h]:.3e}")
     print("Per-axis (axis-aligned) test, min-one-sided FD (kink-immune):")
-    for label, _ in backends:
+    for label, _, _ in backends:
         re = results[label]["rel_errs_minside"]
         best_h = min(re, key=re.get)
         print(f"  {label:<22s}: best h = {best_h:.0e}, "
               f"||min-side residual||/||g_AD|| = {re[best_h]:.3e}")
     print("\nRandom-direction directional derivative (smooth-slice arbitration):")
-    for label, _ in backends:
+    for label, _, _ in backends:
         best_per_dir = [min(row["rel"].values())
                         for row in results[label]["dir_rows"]]
         print(f"  {label:<22s}: best-of-h rel. err per direction "
