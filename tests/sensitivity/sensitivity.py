@@ -354,12 +354,12 @@ def run_adjoint_test(dim, ic_type, compare_backends=False):
     # uses the wired native Pallas adjoint (periodic BCs here, so the fast GPU
     # adjoint kernel applies); FD/FV (JAX) use the native backward.  All three
     # should land on the exact Fourier gradient.
-    # Consistent FD-pair style: the two FD backends share a colour, FD (JAX) uses
-    # 'o' and FD (Pallas) 'x' drawn on top, so both are visible where they overlap.
+    # Distinct backend colours (FV green here to avoid clashing with the orange
+    # exact-gradient line); FD (JAX) 'o' and FD (Pallas) 'x' on top stay visible.
     grad_backend_specs = [
-        ("FD (JAX)",    FINITE_DIFFERENCE, NATIVE_JAX, dict(color='tab:blue',  marker='o', s=20, zorder=2)),
-        ("FD (Pallas)", FINITE_DIFFERENCE, PALLAS,     dict(color='tab:blue',  marker='x', s=26, zorder=3, linewidths=1.3)),
-        ("FV (JAX)",    FINITE_VOLUME,     NATIVE_JAX, dict(color='tab:green', marker='.', s=18, zorder=1)),
+        ("FD (JAX)",    FINITE_DIFFERENCE, NATIVE_JAX, dict(color='cornflowerblue', marker='o', s=20, zorder=2)),
+        ("FD (Pallas)", FINITE_DIFFERENCE, PALLAS,     dict(color='darkviolet',     marker='x', s=26, zorder=3, linewidths=1.3)),
+        ("FV (JAX)",    FINITE_VOLUME,     NATIVE_JAX, dict(color='tab:green',      marker='.', s=18, zorder=1)),
     ]
     ad_grads_by_backend = {}
     if compare_backends:
@@ -578,13 +578,13 @@ def run_gradient_convergence_test():
     fig_err, ax_err = plt.subplots(1, 1, figsize=(8, 6))
     N_arr = np.array(N_values)
 
-    # Consistent FD-pair style (see the other figures): the two FD backends share
-    # a colour; FD (JAX) is a thick solid line / 'o', FD (Pallas) a thinner dashed
-    # line / 'x' drawn on top, so both stay visible where they overlap.
+    # Consistent backend colours (see the other figures): FD (JAX) light blue,
+    # FD (Pallas) violet, FV (JAX) orange; FD (JAX) thick solid / 'o',
+    # FD (Pallas) thinner dashed / 'x' on top, so both stay visible on overlap.
     styles = {
-        "Finite Difference (JAX)":    dict(color='tab:blue',   marker='o', linestyle='-',  linewidth=3.4, markersize=6, zorder=2),
-        "Finite Volume (JAX)":        dict(color='tab:orange', marker='o', linestyle='-',  linewidth=2.2, markersize=6, zorder=2),
-        "Finite Difference (Pallas)": dict(color='tab:blue',   marker='x', linestyle='--', linewidth=1.6, markersize=7, zorder=3),
+        "Finite Difference (JAX)":    dict(color='cornflowerblue', marker='o', linestyle='-',  linewidth=3.0, markersize=6, zorder=2),
+        "Finite Volume (JAX)":        dict(color='tab:orange',     marker='o', linestyle='-',  linewidth=2.2, markersize=6, zorder=2),
+        "Finite Difference (Pallas)": dict(color='darkviolet',     marker='x', linestyle='--', linewidth=1.8, markersize=7, zorder=3),
     }
     for label, _, _ in backends:
         ax_err.loglog(N_arr, errors_dict[label], label=label, **styles[label])

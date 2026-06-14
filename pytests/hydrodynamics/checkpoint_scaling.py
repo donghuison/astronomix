@@ -307,16 +307,19 @@ def plot_results(results, figure_path):
     fig, axs = plt.subplots(1, 3, figsize=(16, 5))
     ax_rt, ax_recomp, ax_mem = axs
 
-    # Consistent FD-pair style (matches the sensitivity figures): FD blue,
-    # FV orange; FD (JAX) thick solid / 'o', FD (Pallas) thinner dashed / 'x'
-    # drawn on top, so the two FD backends stay visible where they overlap.
+    # Consistent backend colours across all figures: FD (JAX) light blue,
+    # FD (Pallas) violet, FV (JAX) orange.  FD (JAX) is a thick solid line / 'o',
+    # FD (Pallas) a thinner dashed line / 'x' drawn on top, so the two FD curves
+    # stay clearly distinguishable where they overlap.
     def _style(label):
-        color = "C0" if label.startswith("FD") else "C1"
-        if "Pallas" in label:
-            return dict(color=color, linestyle="--", linewidth=1.6, marker="x",
-                        markersize=7, zorder=3)
-        return dict(color=color, linestyle="-", linewidth=3.2, marker="o",
-                    markersize=6, zorder=2)
+        if label.startswith("FD"):
+            if "Pallas" in label:
+                return dict(color="darkviolet", linestyle="--", linewidth=1.8,
+                            marker="x", markersize=7, zorder=3)
+            return dict(color="cornflowerblue", linestyle="-", linewidth=3.0,
+                        marker="o", markersize=6, zorder=2)
+        return dict(color="tab:orange", linestyle="-", linewidth=2.2,
+                    marker="o", markersize=6, zorder=2)
 
     c_max_global = 0
     for label, data in results.items():

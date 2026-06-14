@@ -384,16 +384,18 @@ def run_shock_tube_sensitivity_test():
     # contamination or an AD bug.
     fig, ax = plt.subplots(1, 1, figsize=(8, 6))
 
-    # Consistent FD-pair style (matches the other figures): FD blue / FV orange;
-    # FD (JAX) thick solid, FD (Pallas) thinner dashed on top, so the two FD
-    # curves stay visible where they overlap.
+    # Distinct backend colours (matches the other figures): FD (JAX) light blue,
+    # FD (Pallas) violet, FV (JAX) orange; FD (JAX) thick solid, FD (Pallas)
+    # thinner dashed on top, so the two FD curves stay visible on overlap.
     def _stp(label):
-        color = 'tab:blue' if label.startswith('FD') else 'tab:orange'
-        if 'Pallas' in label:
-            return dict(color=color, linestyle='--', linewidth=1.6, marker='x',
-                        markersize=8, zorder=3)
-        return dict(color=color, linestyle='-', linewidth=3.2, marker='^',
-                    markersize=7, zorder=2)
+        if label.startswith('FD'):
+            if 'Pallas' in label:
+                return dict(color='darkviolet', linestyle='--', linewidth=1.8,
+                            marker='x', markersize=8, zorder=3)
+            return dict(color='cornflowerblue', linestyle='-', linewidth=3.0,
+                        marker='^', markersize=7, zorder=2)
+        return dict(color='tab:orange', linestyle='-', linewidth=2.2,
+                    marker='^', markersize=7, zorder=2)
 
     h_arr = np.array(h_values, dtype=float)
     for label, _, _ in backends:
