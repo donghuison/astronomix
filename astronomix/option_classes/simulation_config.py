@@ -114,6 +114,10 @@ DYNAMIC_VISCOSITY = 1
 IDEAL_GAS = 0
 ISOTHERMAL = 1
 
+# Snapshot storage modes
+ON_DEVICE = 0
+TO_DISK = 1
+
 # ============================================================
 
 # ===================== type definitions =====================
@@ -441,6 +445,20 @@ class SimulationConfig(NamedTuple):
     #: Snapshot settings
     snapshot_settings: SnapshotSettings = SnapshotSettings()
 
+    #: Where the snapshots are stored. ``ON_DEVICE`` (default) keeps the
+    #: snapshot diagnostics in preallocated device buffers and returns them
+    #: at the end (the classic behaviour). ``TO_DISK`` instead streams each
+    #: snapshot to disk via Orbax: the run is split into segments between the
+    #: snapshot times, and the loop carry (primitive state, PRNG key, OU
+    #: forcing field) plus the time is written to ``snapshot_storage_path``
+    #: after each segment. Each device writes its own shard, so this scales
+    #: to multiple devices / nodes. TO_DISK is forward-mode only.
+    snapshot_storage_mode: int = ON_DEVICE
+
+    #: Directory the Orbax checkpoints are written to / read from when
+    #: ``snapshot_storage_mode == TO_DISK``. Required in that mode.
+    snapshot_storage_path: Union[str, NoneType] = None
+
     #: Call a user given function on the snapshot data,
     #: e.g. for saving or plotting. Must have signature
     #: callback(time, state, registered_variables).
@@ -678,6 +696,20 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
         and config.riemann_solver != RIEMANN_SPLIT
     ):
         print("Consider using RIEMANN_SPLIT as the self_gravity_version.")
+
+    # disk-snapshot (Orbax) mode requirements
+    if config.snapshot_storage_mode == TO_DISK:
+        if not config.snapshot_storage_path:
+            raise ValueError(
+                "snapshot_storage_mode == TO_DISK requires a non-empty "
+                "snapshot_storage_path (the directory the Orbax checkpoints "
+                "are written to)."
+            )
+        if config.differentiation_mode != FORWARDS:
+            raise ValueError(
+                "snapshot_storage_mode == TO_DISK is forward-mode only; "
+                "set differentiation_mode = FORWARDS."
+            )
 
     return config
 

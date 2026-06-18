@@ -83,6 +83,7 @@ def integrate(
     t_end,
     *,
     backend: int,
+    t_start=0.0,
     num_steps: Optional[int] = None,
     num_checkpoints: Optional[int] = None,
     snapshots: Optional[SnapshotSpec] = None,
@@ -96,6 +97,7 @@ def integrate(
         t_end: Integration end time.
         backend: One of ``FIXED_STEP`` / ``ADAPTIVE_WHILE`` /
             ``ADAPTIVE_CHECKPOINTED``.
+        t_start: Initial integration time (the loop clock starts here).
         num_steps: Number of steps for ``FIXED_STEP``.
         num_checkpoints: Checkpoint count for ``ADAPTIVE_CHECKPOINTED``.
         snapshots: A :class:`SnapshotSpec`, or ``None`` to disable collection.
@@ -138,9 +140,9 @@ def integrate(
         return (t, state, idx, n_iter)
 
     if has_snap:
-        carry = (0.0, state, 0, 0, snapshots.store)
+        carry = (t_start, state, 0, 0, snapshots.store)
     else:
-        carry = (0.0, state, 0, 0)
+        carry = (t_start, state, 0, 0)
 
     if backend == FIXED_STEP:
         carry = jax.lax.fori_loop(0, num_steps, lambda _i, c: body(c), carry)

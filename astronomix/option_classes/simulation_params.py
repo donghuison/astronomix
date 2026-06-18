@@ -81,6 +81,12 @@ class SimulationParams(NamedTuple):
     #: The maximum time step.
     dt_max: float = jnp.inf
 
+    #: The initial (clock) time of the simulation. The time loop starts
+    #: integrating from here and the snapshot grid spans [t_start, t_end].
+    #: Defaults to 0.0; set to a checkpoint's time to resume a run (see
+    #: astronomix.setup_helpers.restart_from_latest_checkpoint).
+    t_start: float = 0.0
+
     #: The final time of the simulation.
     t_end: float = 0.2
 
