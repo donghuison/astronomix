@@ -2,7 +2,7 @@
 from astronomix._modules._cnn_mhd_corrector._cnn_mhd_corrector import _cnn_mhd_corrector
 from astronomix._modules._cooling._cooling import update_pressure_by_cooling
 from astronomix._modules._cosmic_rays.cr_injection import inject_crs_at_strongest_shock
-from astronomix._modules._frame_tracking import _frame_tracking
+from astronomix._modules._frame_tracking._frame_tracking import _frame_tracking
 from astronomix._modules._neural_net_force._neural_net_force import _neural_net_force
 from astronomix._modules._stellar_wind.stellar_wind import _wind_injection
 from astronomix._modules._turbulent_forcing._turbulent_forcing import _apply_forcing, _apply_ou_forcing

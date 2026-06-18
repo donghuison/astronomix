@@ -70,6 +70,15 @@ from astronomix.option_classes.simulation_params import SimulationParams
 def make_config_and_params(N, L, t_end, num_timesteps, solver_mode, backend=NATIVE_JAX):
     """1D open-boundary config with a fixed timestep so J(theta) has no CFL kinks.
 
+    A fixed dt is deliberate: under adaptive CFL the step count n(theta) =
+    ceil(t_end / dt(theta)) is piecewise-constant in theta, so crossing a
+    threshold injects an O(dt) jump into J(theta).  The AD gradient is unaffected
+    (it differentiates the smooth branch), but the finite-difference baseline
+    cannot tell such a jump from a real derivative, so the AD-vs-FD agreement
+    degrades by 1-3 orders of magnitude and the random-direction arbitration no
+    longer reaches round-off.  Fixing dt isolates the limiter / Riemann
+    sub-gradient -- the only non-smoothness this test is meant to probe.
+
     With ``backend=PALLAS`` the FD forward runs the Pallas WENO kernel and the
     backward runs the native Pallas adjoint (the kernel transposes the periodic
     custom_roll stencil, correct for these ghost-cell boundaries too).  Block
