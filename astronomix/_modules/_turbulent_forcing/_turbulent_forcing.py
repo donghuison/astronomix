@@ -170,6 +170,18 @@ def _apply_ou_forcing(
     primitive_state = primitive_state.at[vy_i].add(F0 * f[1] * dt)
     primitive_state = primitive_state.at[vz_i].add(F0 * f[2] * dt)
 
+    # conservative vacuum protection (HOW-MHD `prot`, called after forcing every
+    # step in forc.f): neighbour-redistribute sub-threshold (vacuum) cells. Was
+    # only wired into the white-forcing path; the OU path missed it entirely.
+    if config.turbulent_forcing_config.vacuum_protection:
+        primitive_state = _vacuum_protection(
+            primitive_state,
+            turbulent_forcing_params.protection_density_threshold,
+            turbulent_forcing_params.protection_max_velocity,
+            config,
+            registered_variables,
+        )
+
     return (key, f), primitive_state
 
 

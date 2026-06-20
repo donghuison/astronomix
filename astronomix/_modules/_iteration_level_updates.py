@@ -5,10 +5,10 @@ from astronomix._modules._cosmic_rays.cr_injection import inject_crs_at_stronges
 from astronomix._modules._frame_tracking._frame_tracking import _frame_tracking
 from astronomix._modules._neural_net_force._neural_net_force import _neural_net_force
 from astronomix._modules._stellar_wind.stellar_wind import _wind_injection
-from astronomix._modules._turbulent_forcing._turbulent_forcing import _apply_forcing, _apply_ou_forcing
+from astronomix._modules._turbulent_forcing._turbulent_forcing import _apply_forcing, _apply_ou_forcing, _vacuum_protection
 from astronomix._modules._viscosity._viscosity import fv_viscosity_update
 from astronomix.data_classes.simulation_helper_data import HelperData
-from astronomix.option_classes.simulation_config import FINITE_DIFFERENCE, FINITE_VOLUME, IDEAL_GAS, STATE_TYPE, SimulationConfig
+from astronomix.option_classes.simulation_config import FINITE_DIFFERENCE, FINITE_VOLUME, IDEAL_GAS, POSITIVITY_HARD_FLOOR, POSITIVITY_REDISTRIBUTE, STATE_TYPE, SimulationConfig
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.shock_finder.shock_finder import shock_criteria
 from astronomix.variable_registry.registered_variables import RegisteredVariables
@@ -160,8 +160,11 @@ def _iteration_level_updates(
             helper_data,
         )
 
-    # better safe than sorry
-    if config.enforce_positivity:
+    # per-step positivity (primitive state). HARD_FLOOR clamps density (and
+    # pressure for ideal gas); REDISTRIBUTE applies the conservative `prot`
+    # neighbour redistribution, but is skipped when turbulent forcing already
+    # runs `prot` each step (vacuum_protection) to avoid a redundant pass.
+    if config.positivity_per_step_mode == POSITIVITY_HARD_FLOOR:
         primitive_state = primitive_state.at[registered_variables.density_index].set(
             jnp.maximum(
                 primitive_state[registered_variables.density_index], params.minimum_density
@@ -172,6 +175,19 @@ def _iteration_level_updates(
                 jnp.maximum(
                     primitive_state[registered_variables.pressure_index], params.minimum_pressure
                 )
+            )
+    elif config.positivity_per_step_mode == POSITIVITY_REDISTRIBUTE:
+        _forcing_runs_prot = (
+            config.turbulent_forcing_config.turbulent_forcing
+            and config.turbulent_forcing_config.vacuum_protection
+        )
+        if not _forcing_runs_prot:
+            primitive_state = _vacuum_protection(
+                primitive_state,
+                params.minimum_density,
+                params.positivity_max_velocity,
+                config,
+                registered_variables,
             )
 
     return key, forcing, primitive_state

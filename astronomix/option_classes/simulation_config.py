@@ -24,6 +24,21 @@ from astronomix._modules._turbulent_forcing._turbulent_forcing_options import Tu
 NATIVE_JAX = 0
 PALLAS = 1
 
+# positivity-enforcement modes (used by ``positivity_per_stage_mode`` /
+# ``positivity_per_step_mode``).  HARD_FLOOR clamps density (and, for ideal
+# gas, pressure) pointwise — cheap, non-conservative, matches the *adiabatic*
+# HOW-MHD ``prot.f``.  REDISTRIBUTE neighbour-averages density+momentum (and
+# energy) over the valid 3x3x3 neighbourhood of sub-threshold cells — much
+# gentler at strong shocks than a hard floor (no sharp floored cell), matches
+# the *isothermal* HOW-MHD ``prot.f`` (not strictly mass-conserving: like
+# ``prot.f`` it copies neighbour values without debiting the donors).
+POSITIVITY_NONE = 0
+POSITIVITY_HARD_FLOOR = 1
+POSITIVITY_REDISTRIBUTE = 2
+#: internal sentinel: derive the mode from the legacy ``enforce_positivity``
+#: bool (True -> HARD_FLOOR, False -> NONE).  Resolved in ``finalize_config``.
+POSITIVITY_FOLLOW_LEGACY = -1
+
 # solver modes
 FINITE_VOLUME = 0
 FINITE_DIFFERENCE = 1
@@ -312,6 +327,18 @@ class SimulationConfig(NamedTuple):
     #: FINITE DIFFERENCE MODE.
     enforce_positivity: bool = True
 
+    #: Positivity enforcement applied inside every SSPRK/LSRK stage (on the
+    #: conserved state — the CFL lever for strong shocks). One of
+    #: ``POSITIVITY_{NONE,HARD_FLOOR,REDISTRIBUTE}``.
+    positivity_per_stage_mode: int = POSITIVITY_FOLLOW_LEGACY
+
+    #: Positivity enforcement applied once per step before the evolve (on the
+    #: primitive state). One of ``POSITIVITY_{NONE,HARD_FLOOR,REDISTRIBUTE}``.
+    #: NOTE: with turbulent forcing + ``vacuum_protection`` the conservative
+    #: ``prot`` redistribution already runs once per step, so a per-step
+    #: REDISTRIBUTE here is redundant and is automatically skipped.
+    positivity_per_step_mode: int = POSITIVITY_FOLLOW_LEGACY
+
     #: Self gravity switch, currently only
     #: for periodic boundaries.
     self_gravity: bool = False
@@ -501,6 +528,15 @@ class SimulationConfig(NamedTuple):
 
 def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
     """Finalizes the simulation configuration."""
+
+    # Resolve the positivity-mode sentinels from the legacy ``enforce_positivity``
+    # bool so downstream call sites read concrete modes. Legacy True -> HARD_FLOOR
+    # at both the per-stage and per-step sites (the historical behaviour).
+    _legacy = POSITIVITY_HARD_FLOOR if config.enforce_positivity else POSITIVITY_NONE
+    if config.positivity_per_stage_mode == POSITIVITY_FOLLOW_LEGACY:
+        config = config._replace(positivity_per_stage_mode=_legacy)
+    if config.positivity_per_step_mode == POSITIVITY_FOLLOW_LEGACY:
+        config = config._replace(positivity_per_step_mode=_legacy)
 
     # num_cells = state_shape[-1]
     # config = config._replace(num_cells=num_cells)

@@ -78,6 +78,11 @@ class SimulationParams(NamedTuple):
     #: config.enforce_positivity IS TRUE.
     minimum_pressure: float = 1e-14
 
+    #: Velocity ceiling applied to cells fixed by the REDISTRIBUTE positivity
+    #: mode (mirrors HOW-MHD ``velpmx1``). Only used when a positivity mode is
+    #: ``POSITIVITY_REDISTRIBUTE``.
+    positivity_max_velocity: float = 50.0
+
     #: The maximum time step.
     dt_max: float = jnp.inf
 

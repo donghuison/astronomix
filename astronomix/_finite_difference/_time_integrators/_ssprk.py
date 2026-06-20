@@ -13,6 +13,7 @@ from typing import Union
 
 from astronomix._fluid_equations._enforce_positivity import (
     _enforce_positivity,
+    _apply_stage_positivity,
 )
 from astronomix._finite_difference._interface_fluxes._weno import (
     _hydro_pallas_flux_supported,
@@ -189,12 +190,11 @@ def _ssprk4_with_ct(
 
     def pre_stage(u):
         q, bx, by, bz = u
-        if config.enforce_positivity:
-            q = _enforce_positivity(
-                q, config, gamma,
-                params.minimum_density, params.minimum_pressure,
-                registered_variables,
-            )
+        q = _apply_stage_positivity(
+            q, config.positivity_per_stage_mode, config, gamma,
+            params.minimum_density, params.minimum_pressure,
+            params.positivity_max_velocity, registered_variables,
+        )
         if config.boundary_handling == GHOST_CELLS:
             q = _boundary_handler(
                 q, config, registered_variables, params, CONSERVATIVE_GAS_STATE
@@ -213,12 +213,11 @@ def _ssprk4_with_ct(
         q = update_cell_center_fields(
             q, bx, by, bz, config, registered_variables
         )
-        if config.enforce_positivity:
-            q = _enforce_positivity(
-                q, config, gamma,
-                params.minimum_density, params.minimum_pressure,
-                registered_variables,
-            )
+        q = _apply_stage_positivity(
+            q, config.positivity_per_stage_mode, config, gamma,
+            params.minimum_density, params.minimum_pressure,
+            params.positivity_max_velocity, registered_variables,
+        )
         return (q, bx, by, bz)
 
     return ssprk4(
@@ -374,12 +373,11 @@ def _ssprk4_hydro(
     density_fluxes_needed = _hydro_density_fluxes_needed(config)
 
     def pre_stage(q):
-        if config.enforce_positivity:
-            q = _enforce_positivity(
-                q, config, gamma,
-                params.minimum_density, params.minimum_pressure,
-                registered_variables,
-            )
+        q = _apply_stage_positivity(
+            q, config.positivity_per_stage_mode, config, gamma,
+            params.minimum_density, params.minimum_pressure,
+            params.positivity_max_velocity, registered_variables,
+        )
         if config.boundary_handling == GHOST_CELLS:
             q = _boundary_handler(
                 q, config, registered_variables, params, CONSERVATIVE_GAS_STATE
@@ -400,12 +398,11 @@ def _ssprk4_hydro(
         )
 
     def finalize(q):
-        if config.enforce_positivity:
-            q = _enforce_positivity(
-                q, config, gamma,
-                params.minimum_density, params.minimum_pressure,
-                registered_variables,
-            )
+        q = _apply_stage_positivity(
+            q, config.positivity_per_stage_mode, config, gamma,
+            params.minimum_density, params.minimum_pressure,
+            params.positivity_max_velocity, registered_variables,
+        )
         return q
 
     return ssprk4(conserved_state, dt, rhs=rhs, pre_stage=pre_stage, finalize=finalize)
@@ -445,12 +442,11 @@ def _lsrk4_hydro(
     dtdz = dt / grid_spacing
 
     def pre_stage(q):
-        if config.enforce_positivity:
-            q = _enforce_positivity(
-                q, config, gamma,
-                params.minimum_density, params.minimum_pressure,
-                registered_variables,
-            )
+        q = _apply_stage_positivity(
+            q, config.positivity_per_stage_mode, config, gamma,
+            params.minimum_density, params.minimum_pressure,
+            params.positivity_max_velocity, registered_variables,
+        )
         if config.boundary_handling == GHOST_CELLS:
             q = _boundary_handler(
                 q, config, registered_variables, params, CONSERVATIVE_GAS_STATE
@@ -527,12 +523,11 @@ def _lsrk4_hydro(
         return a_coef * dq + rhs
 
     def finalize(q):
-        if config.enforce_positivity:
-            q = _enforce_positivity(
-                q, config, gamma,
-                params.minimum_density, params.minimum_pressure,
-                registered_variables,
-            )
+        q = _apply_stage_positivity(
+            q, config.positivity_per_stage_mode, config, gamma,
+            params.minimum_density, params.minimum_pressure,
+            params.positivity_max_velocity, registered_variables,
+        )
         return q
 
     return lsrk4(
@@ -715,12 +710,11 @@ def _lsrk4_with_ct(
 
     def pre_stage(u):
         q, bx, by, bz = u
-        if config.enforce_positivity:
-            q = _enforce_positivity(
-                q, config, gamma,
-                params.minimum_density, params.minimum_pressure,
-                registered_variables,
-            )
+        q = _apply_stage_positivity(
+            q, config.positivity_per_stage_mode, config, gamma,
+            params.minimum_density, params.minimum_pressure,
+            params.positivity_max_velocity, registered_variables,
+        )
         if config.boundary_handling == GHOST_CELLS:
             q = _boundary_handler(
                 q, config, registered_variables, params, CONSERVATIVE_GAS_STATE,
@@ -750,12 +744,11 @@ def _lsrk4_with_ct(
         q = update_cell_center_fields(
             q, bx, by, bz, config, registered_variables,
         )
-        if config.enforce_positivity:
-            q = _enforce_positivity(
-                q, config, gamma,
-                params.minimum_density, params.minimum_pressure,
-                registered_variables,
-            )
+        q = _apply_stage_positivity(
+            q, config.positivity_per_stage_mode, config, gamma,
+            params.minimum_density, params.minimum_pressure,
+            params.positivity_max_velocity, registered_variables,
+        )
         return (q, bx, by, bz)
 
     return lsrk4(
