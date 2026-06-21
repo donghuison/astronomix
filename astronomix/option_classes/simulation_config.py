@@ -339,6 +339,15 @@ class SimulationConfig(NamedTuple):
     #: REDISTRIBUTE here is redundant and is automatically skipped.
     positivity_per_step_mode: int = POSITIVITY_FOLLOW_LEGACY
 
+    #: Vacuum-rest velocity recovery. When True, the density-floor enforcement
+    #: zeros the momentum in cells whose density is below ``minimum_density``, so
+    #: the recovered velocity is ``v = 0`` instead of ``momentum / rho_floored``
+    #: (which spikes to huge values in near-vacuum cells and is the usual cause
+    #: of high-Mach blow-up). A floored cell is effectively vacuum and has no
+    #: well-defined velocity, so resting it is physical — and it lets
+    #: ``minimum_density`` be lowered by orders of magnitude without instability.
+    positivity_vacuum_rest: bool = False
+
     #: NaN/inf backstop for the positivity floor. ``jnp.maximum(NaN, floor)`` is
     #: NaN, so a non-finite cell would survive the floor and propagate; when True,
     #: non-finite conserved entries are reset to zero before the density/pressure

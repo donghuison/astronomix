@@ -87,6 +87,24 @@ def _enforce_positivity_native_impl(
 
     rho = conserved_state[registered_variables.density_index]
 
+    # Vacuum-rest: cells below the density floor are effectively vacuum; zero
+    # their momentum so the recovered velocity is 0 rather than
+    # momentum / minimum_density (which spikes and triggers high-Mach blow-up).
+    # Done before the floor + energy recovery so the kinetic energy is consistent.
+    if config.positivity_vacuum_rest:
+        floored = rho < minimum_density
+        mom = registered_variables.momentum_index
+        if config.dimensionality == 1:
+            mom_indices = (mom,)
+        elif config.dimensionality == 2:
+            mom_indices = (mom.x, mom.y)
+        else:
+            mom_indices = (mom.x, mom.y, mom.z)
+        for mi in mom_indices:
+            conserved_state = conserved_state.at[mi].set(
+                jnp.where(floored, 0.0, conserved_state[mi])
+            )
+
     # enforce minimum density
     rho = jnp.maximum(rho, minimum_density)
 

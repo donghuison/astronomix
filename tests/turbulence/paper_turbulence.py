@@ -95,6 +95,8 @@ def main():
     p.add_argument("--dual_energy", type=int, default=0, help="dual-energy formalism (adiabatic): 0 off, 1 on")
     p.add_argument("--vmaxcap", type=float, default=float("inf"),
                    help="per-stage positivity velocity cap (REDISTRIBUTE only); inf = off")
+    p.add_argument("--vacuum_rest", type=int, default=0,
+                   help="zero momentum (v=0) in floored cells so a low rhomin stays stable: 0 off, 1 on")
     p.add_argument("--outdir", type=str, default="data_paper")
     p.add_argument("--norm", choices=["vrms1", "paper"], default="vrms1",
                    help="vrms1: a=1/M_turb, drive v_rms~1 (cheap, dimensionless). "
@@ -154,6 +156,7 @@ def main():
         positivity_per_stage_mode=_POS[args.stage_mode],
         positivity_per_step_mode=_POS[args.step_mode],
         dual_energy=bool(args.dual_energy),
+        positivity_vacuum_rest=bool(args.vacuum_rest),
         return_snapshots=True,
         num_snapshots=args.nsnap,
         snapshot_settings=SnapshotSettings(return_states=True),

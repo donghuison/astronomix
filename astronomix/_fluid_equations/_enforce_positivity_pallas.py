@@ -127,6 +127,14 @@ def _enforce_positivity_pallas_local(
         BY = int(registered_variables.magnetic_index.y)
         BZ = int(registered_variables.magnetic_index.z)
 
+    vacuum_rest = bool(config.positivity_vacuum_rest)
+    if ndim == 1:
+        MOM_VARS = (MX,)
+    elif ndim == 2:
+        MOM_VARS = (MX, MY)
+    else:
+        MOM_VARS = (MX, MY, MZ)
+
     if ndim == 1:
         block_shape = (nvars, bx_blk)
         out_spec = pl.BlockSpec(block_shape, lambda bi, bj, bk: (0, bi))
@@ -179,14 +187,24 @@ def _enforce_positivity_pallas_local(
         rho = read(DENSITY)
         rho_floored = jnp.maximum(rho, rhomin)
 
+        # Vacuum-rest: cells below the floor are vacuum -> zero their momentum so
+        # the recovered velocity is 0 rather than momentum / rho_floored.
+        below = rho < rhomin
+
+        def mom_read(var):
+            val = read(var)
+            if vacuum_rest:
+                val = jnp.where(below, 0.0, val)
+            return val
+
         if is_ideal:
-            mx = read(MX)
+            mx = mom_read(MX)
             v2 = (mx * mx) / (rho_floored * rho_floored)
             if ndim >= 2:
-                my = read(MY)
+                my = mom_read(MY)
                 v2 = v2 + (my * my) / (rho_floored * rho_floored)
             if ndim == 3:
-                mz = read(MZ)
+                mz = mom_read(MZ)
                 v2 = v2 + (mz * mz) / (rho_floored * rho_floored)
             energy = read(E)
             if is_mhd:
@@ -209,6 +227,8 @@ def _enforce_positivity_pallas_local(
                 q_out_ref[var, ...] = rho_floored
             elif is_ideal and var == E:
                 q_out_ref[var, ...] = energy_floored
+            elif vacuum_rest and var in MOM_VARS:
+                q_out_ref[var, ...] = mom_read(var)
             else:
                 q_out_ref[var, ...] = read(var)
 
