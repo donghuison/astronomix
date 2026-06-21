@@ -76,6 +76,15 @@ def _enforce_positivity_native_impl(
     minimum_pressure: Union[float, Float[Array, ""]],
     registered_variables: RegisteredVariables,
 ) -> STATE_TYPE:
+    # Optional NaN/inf backstop: jnp.maximum(NaN, floor) = NaN, so a non-finite
+    # cell would otherwise survive the floor and propagate. Reset any non-finite
+    # entry to zero first; the density/pressure floors below then turn it into a
+    # valid floor state (rho -> minimum_density, momentum 0, pressure floored).
+    if config.positivity_nan_safe:
+        conserved_state = jnp.nan_to_num(
+            conserved_state, nan=0.0, posinf=0.0, neginf=0.0
+        )
+
     rho = conserved_state[registered_variables.density_index]
 
     # enforce minimum density

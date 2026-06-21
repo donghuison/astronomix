@@ -30,10 +30,12 @@ def _mhd_flux_x(
     gamma: Union[float, Float[Array, ""]],
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
+    internal_energy_density=None,
 ) -> STATE_TYPE:
 
     primitive_state = primitive_state_from_conserved_mhd(
-        conserved_state, minimum_density, minimum_pressure, gamma, config, registered_variables
+        conserved_state, minimum_density, minimum_pressure, gamma, config, registered_variables,
+        internal_energy_density=internal_energy_density,
     )
     
     # retrieve necessary quantities

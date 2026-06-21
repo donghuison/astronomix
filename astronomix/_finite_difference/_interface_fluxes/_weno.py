@@ -131,10 +131,17 @@ def _weno_flux_x_native(
     params: SimulationParams,
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
+    internal_energy_density=None,
 ):
     """
     WENO flux reconstruction.
+
+    ``internal_energy_density`` (dual-energy ``g``, aligned with ``conserved_state``
+    along the active axis), when given, is used by the cell-centred pressure
+    recovery in both the physical flux and the eigenstructure so the
+    reconstruction never sees the cancellation-corrupted pressure.
     """
+    dual_eta = config.dual_energy_eta
 
     # if jax.config.jax_enable_x64:
     #     epsilon = 1e-8
@@ -159,7 +166,8 @@ def _weno_flux_x_native(
                 pgmin,
                 gamma,
                 config,
-                registered_variables
+                registered_variables,
+                internal_energy_density=internal_energy_density,
             )
         else:
             F =  _euler_flux(
@@ -197,8 +205,8 @@ def _weno_flux_x_native(
         # get eigenstructure for this mode
         if config.equation_of_state == IDEAL_GAS:
             if config.mhd:
-                lambdas_center = _eigen_lambdas(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
-                L_row = _eigen_L_row(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
+                lambdas_center = _eigen_lambdas(conserved_state, rhomin, pgmin, gamma, registered_variables, mode, internal_energy_density=internal_energy_density, dual_eta=dual_eta)
+                L_row = _eigen_L_row(conserved_state, rhomin, pgmin, gamma, registered_variables, mode, internal_energy_density=internal_energy_density, dual_eta=dual_eta)
             else:
                 lambdas_center = _eigen_lambdas_hydro(conserved_state, rhomin, pgmin, gamma, config, registered_variables, mode)
                 L_row = _eigen_L_row_hydro(conserved_state, rhomin, pgmin, gamma, config, registered_variables, mode)
@@ -334,7 +342,7 @@ def _weno_flux_x_native(
         # transform back and add to current flux
         if config.equation_of_state == IDEAL_GAS:
             if config.mhd:
-                R_col = _eigen_R_col(conserved_state, rhomin, pgmin, gamma, registered_variables, mode)
+                R_col = _eigen_R_col(conserved_state, rhomin, pgmin, gamma, registered_variables, mode, internal_energy_density=internal_energy_density, dual_eta=dual_eta)
             else:
                 R_col = _eigen_R_col_hydro(conserved_state, rhomin, pgmin, gamma, config, registered_variables, mode)
         elif config.equation_of_state == ISOTHERMAL:
@@ -376,12 +384,18 @@ def _weno_flux_y_native(
     params: SimulationParams,
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
+    internal_energy_density=None,
 ):
     # Transpose to make y the "x" direction
     if config.dimensionality == 2:
         qy = jnp.transpose(conserved_state, (0, 2, 1))
     elif config.dimensionality == 3:
         qy = jnp.transpose(conserved_state, (0, 2, 1, 3))
+
+    # transpose the (scalar) dual-energy field the same way (no leading var axis)
+    gy = internal_energy_density
+    if gy is not None:
+        gy = jnp.transpose(gy, (1, 0)) if config.dimensionality == 2 else jnp.transpose(gy, (1, 0, 2))
     
     # Swap components
     momentum_x = qy[registered_variables.momentum_index.x]
@@ -398,7 +412,7 @@ def _weno_flux_y_native(
         qy = qy.at[registered_variables.magnetic_index.x].set(B_y)
         qy = qy.at[registered_variables.magnetic_index.y].set(B_x)
     
-    Fy = _weno_flux_x_native(qy, params, config, registered_variables)
+    Fy = _weno_flux_x_native(qy, params, config, registered_variables, internal_energy_density=gy)
     
     # Transpose back
     if config.dimensionality == 2:
@@ -430,9 +444,14 @@ def _weno_flux_z_native(
     params: SimulationParams,
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
+    internal_energy_density=None,
 ):
     # Transpose to make z the "x" direction
     qz = jnp.transpose(conserved_state, (0, 3, 2, 1))
+
+    gz = internal_energy_density
+    if gz is not None:
+        gz = jnp.transpose(gz, (2, 1, 0))
     
     # Swap components
     momentum_x = qz[registered_variables.momentum_index.x]
@@ -449,7 +468,7 @@ def _weno_flux_z_native(
         qz = qz.at[registered_variables.magnetic_index.x].set(B_z)
         qz = qz.at[registered_variables.magnetic_index.z].set(B_x)
     
-    Fz = _weno_flux_x_native(qz, params, config, registered_variables)
+    Fz = _weno_flux_x_native(qz, params, config, registered_variables, internal_energy_density=gz)
     
     # Transpose back
     Fz = jnp.transpose(Fz, (0, 3, 2, 1))
@@ -510,6 +529,7 @@ def _weno_flux_axis_dispatch(
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
     axis: int,
+    internal_energy_density=None,
 ):
     """Pick the Pallas flux for the supported equation set, falling back to
     the native per-axis JAX flux.
@@ -530,6 +550,14 @@ def _weno_flux_axis_dispatch(
     discontinuities (shocks) the WENO gradient is inherently FP-ill-conditioned
     and may differ from the native VJP by a sub-gradient amount, exactly as the
     native WENO AD does."""
+    if internal_energy_density is not None:
+        # Coupled dual-energy recovery: the Pallas WENO kernels do not carry the
+        # internal-energy field yet, so route through the native per-axis flux
+        # (which applies the dual-energy switch in its pressure recovery).
+        return _weno_flux_native_for_axis(axis)(
+            conserved_state, params, config, registered_variables,
+            internal_energy_density=internal_energy_density,
+        )
     if _hydro_pallas_flux_supported(conserved_state, config):
         if axis == 0 or (axis == 1 and int(config.dimensionality) >= 2) or (axis == 2 and int(config.dimensionality) == 3):
             if config.differentiation_mode == BACKWARDS:
@@ -583,9 +611,11 @@ def _weno_flux_x(
     params: SimulationParams,
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
+    internal_energy_density=None,
 ):
     return _weno_flux_axis_dispatch(
         conserved_state, params, config, registered_variables, axis=0,
+        internal_energy_density=internal_energy_density,
     )
 
 
@@ -595,9 +625,11 @@ def _weno_flux_y(
     params: SimulationParams,
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
+    internal_energy_density=None,
 ):
     return _weno_flux_axis_dispatch(
         conserved_state, params, config, registered_variables, axis=1,
+        internal_energy_density=internal_energy_density,
     )
 
 
@@ -607,7 +639,9 @@ def _weno_flux_z(
     params: SimulationParams,
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
+    internal_energy_density=None,
 ):
     return _weno_flux_axis_dispatch(
         conserved_state, params, config, registered_variables, axis=2,
+        internal_energy_density=internal_energy_density,
     )

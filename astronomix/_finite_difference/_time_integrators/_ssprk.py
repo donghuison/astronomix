@@ -56,6 +56,7 @@ def _ssprk4_with_ct(
     helper_data: HelperData,
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
+    internal_energy_density=None,
 ):
     """
     Integrates the MHD equations for one time step using a 5-stage, 4th-order
@@ -108,7 +109,7 @@ def _ssprk4_with_ct(
         di = registered_variables.density_index
 
         # x-axis
-        dF_x = _weno_flux_x(current_q, params, config, registered_variables)
+        dF_x = _weno_flux_x(current_q, params, config, registered_variables, internal_energy_density=internal_energy_density)
         By_flux_x = dF_x[my]
         Bz_flux_x = dF_x[mz]
         density_flux_x = dF_x[di]
@@ -121,7 +122,7 @@ def _ssprk4_with_ct(
         # y-axis
         if config.dimensionality >= 2:
             mx = registered_variables.magnetic_index.x
-            dF_y = _weno_flux_y(current_q, params, config, registered_variables)
+            dF_y = _weno_flux_y(current_q, params, config, registered_variables, internal_energy_density=internal_energy_density)
             Bx_flux_y = dF_y[mx]
             Bz_flux_y = dF_y[mz]
             density_flux_y = dF_y[di]
@@ -139,7 +140,7 @@ def _ssprk4_with_ct(
         # z-axis
         if config.dimensionality == 3:
             mx = registered_variables.magnetic_index.x
-            dF_z = _weno_flux_z(current_q, params, config, registered_variables)
+            dF_z = _weno_flux_z(current_q, params, config, registered_variables, internal_energy_density=internal_energy_density)
             Bx_flux_z = dF_z[mx]
             By_flux_z = dF_z[my]
             density_flux_z = dF_z[di]
@@ -553,6 +554,7 @@ def _lsrk4_with_ct(
     helper_data: HelperData,
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
+    internal_energy_density=None,
 ):
     """Carpenter-Kennedy 2N-storage 5-stage 4th-order LSRK4 for MHD-CT.
 
@@ -610,7 +612,7 @@ def _lsrk4_with_ct(
         # first axis's div kernel via ``scale_in`` so ``rhs_q`` is never
         # materialised; subsequent axes accumulate (scale_in = 1.0).  The
         # native fallback path keeps the explicit ``rhs_q`` register.
-        dF_x = _weno_flux_x(current_q, params, config, registered_variables)
+        dF_x = _weno_flux_x(current_q, params, config, registered_variables, internal_energy_density=internal_energy_density)
         By_flux_x = dF_x[my]
         Bz_flux_x = dF_x[mz]
         density_flux_x = dF_x[di]
@@ -626,7 +628,7 @@ def _lsrk4_with_ct(
 
         if config.dimensionality >= 2:
             mx = registered_variables.magnetic_index.x
-            dF_y = _weno_flux_y(current_q, params, config, registered_variables)
+            dF_y = _weno_flux_y(current_q, params, config, registered_variables, internal_energy_density=internal_energy_density)
             Bx_flux_y = dF_y[mx]
             Bz_flux_y = dF_y[mz]
             density_flux_y = dF_y[di]
@@ -643,7 +645,7 @@ def _lsrk4_with_ct(
 
         if config.dimensionality == 3:
             mx = registered_variables.magnetic_index.x
-            dF_z = _weno_flux_z(current_q, params, config, registered_variables)
+            dF_z = _weno_flux_z(current_q, params, config, registered_variables, internal_energy_density=internal_energy_density)
             Bx_flux_z = dF_z[mx]
             By_flux_z = dF_z[my]
             density_flux_z = dF_z[di]

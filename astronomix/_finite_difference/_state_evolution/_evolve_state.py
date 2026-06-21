@@ -11,6 +11,7 @@ from typing import Union
 
 # general astronomix imports
 from astronomix._fluid_equations._equations_mhd import conserved_state_from_primitive_isothermal, conserved_state_from_primitive_mhd, primitive_state_from_conserved_isothermal, primitive_state_from_conserved_mhd
+from astronomix._fluid_equations._dual_energy import advect_internal_energy
 from astronomix._finite_difference._magnetic_update._constrained_transport import update_cell_center_fields
 from astronomix._finite_difference._time_integrators._ssprk import (
     _lsrk4_hydro,
@@ -42,8 +43,31 @@ def _evolve_state_fd(
     params: SimulationParams,
     helper_data: HelperData,
     registered_variables: RegisteredVariables,
+    internal_energy_density=None,
 ) -> STATE_TYPE:
-    
+
+    # Dual-energy formalism: the internal-energy density ``g`` is carried as the
+    # LAST variable of the state. Split it off so the MHD machinery sees the
+    # standard state (interface B as the last three vars), advect it with the
+    # pre-step flow, and feed it into the coupled WENO pressure recovery; it is
+    # re-synced from the recovered pressure and reattached at the end.
+    _dual = registered_variables.internal_energy_active
+    if _dual:
+        _gidx = registered_variables.internal_energy_index
+        internal_energy_density = primitive_state[_gidx]
+        primitive_state = primitive_state[:_gidx]
+        registered_variables = registered_variables._replace(
+            num_vars=_gidx, internal_energy_index=-1, internal_energy_active=False,
+        )
+        _g_cons = conserved_state_from_primitive_mhd(
+            primitive_state[:-3], gamma, registered_variables
+        )
+        internal_energy_density = advect_internal_energy(
+            internal_energy_density, _g_cons,
+            primitive_state[registered_variables.pressure_index],
+            dt, config.grid_spacing, config, registered_variables,
+        )
+
     if config.mhd:
         # NOTE: here we assume the magnetic field at interfaces
         # is stored in the last three indices of the state array
@@ -81,12 +105,14 @@ def _evolve_state_fd(
             helper_data,
             config,
             registered_variables,
+            internal_energy_density=internal_energy_density,
         )
 
         # back to primitive state
         if config.equation_of_state == IDEAL_GAS:
             primitive_state = primitive_state_from_conserved_mhd(
-                conserved_state, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables
+                conserved_state, params.minimum_density, params.minimum_pressure, gamma, config, registered_variables,
+                internal_energy_density=internal_energy_density,
             )
         elif config.equation_of_state == ISOTHERMAL:
             primitive_state = primitive_state_from_conserved_isothermal(
@@ -133,6 +159,14 @@ def _evolve_state_fd(
     if config.boundary_handling == GHOST_CELLS:
         primitive_state = _boundary_handler(
             primitive_state, config, registered_variables, params
+        )
+
+    # dual-energy: re-sync g from the recovered (switched) pressure and reattach
+    # it as the last variable so the carried state stays self-consistent.
+    if _dual:
+        g_new = primitive_state[registered_variables.pressure_index] / (gamma - 1.0)
+        primitive_state = jnp.concatenate(
+            [primitive_state, g_new[None, :]], axis=0
         )
 
     return primitive_state

@@ -160,12 +160,21 @@ def _enforce_positivity_pallas_local(
         rhomin = rhomin_ref[()]
         pmin = pmin_ref[()]
 
+        nan_safe = bool(config.positivity_nan_safe)
+
         def read(var):
             if ndim == 1:
-                return q_in_ref[var, ii]
-            if ndim == 2:
-                return q_in_ref[var, ii, jj]
-            return q_in_ref[var, ii, jj, kk]
+                val = q_in_ref[var, ii]
+            elif ndim == 2:
+                val = q_in_ref[var, ii, jj]
+            else:
+                val = q_in_ref[var, ii, jj, kk]
+            if nan_safe:
+                # Triton has no is_finite; detect NaN via (x != x) and inf via
+                # |x| >= ~f32-max, reset both to 0 (matches native nan_to_num).
+                finite = (val == val) & (jnp.abs(val) < 3.0e38)
+                val = jnp.where(finite, val, 0.0)
+            return val
 
         rho = read(DENSITY)
         rho_floored = jnp.maximum(rho, rhomin)
