@@ -339,13 +339,6 @@ class SimulationConfig(NamedTuple):
     #: REDISTRIBUTE here is redundant and is automatically skipped.
     positivity_per_step_mode: int = POSITIVITY_FOLLOW_LEGACY
 
-    #: Positivity-preserving flux limiting (Hu-Adams-Shu 2013 / Zalesak FCT) for
-    #: the finite-difference MHD WENO. When True, each interface flux is blended
-    #: toward the first-order Lax-Friedrichs flux by a per-interface factor chosen
-    #: so the updated density cannot fall below ``minimum_density`` — preventing
-    #: the WENO from driving cells to vacuum in hypersonic / low-beta flows.
-    positivity_preserving_flux: bool = False
-
     #: NaN/inf backstop for the positivity floor. ``jnp.maximum(NaN, floor)`` is
     #: NaN, so a non-finite cell would survive the floor and propagate; when True,
     #: non-finite conserved entries are reset to zero before the density/pressure

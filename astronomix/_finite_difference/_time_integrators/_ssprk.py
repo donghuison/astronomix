@@ -21,7 +21,6 @@ from astronomix._finite_difference._interface_fluxes._weno import (
     _weno_flux_y,
     _weno_flux_z,
 )
-from astronomix._finite_difference._interface_fluxes._pp_flux_limiter import pp_limit_flux_axis
 from astronomix._finite_difference._time_integrators._ssprk_pallas import (
     _div_axis_pallas_shape_ok,
     _hydro_flux_div_axis_pallas,
@@ -111,8 +110,6 @@ def _ssprk4_with_ct(
 
         # x-axis
         dF_x = _weno_flux_x(current_q, params, config, registered_variables, internal_energy_density=internal_energy_density)
-        if config.positivity_preserving_flux:
-            dF_x = pp_limit_flux_axis(dF_x, current_q, params, config, registered_variables, dtdx, 0, internal_energy_density=internal_energy_density)
         By_flux_x = dF_x[my]
         Bz_flux_x = dF_x[mz]
         density_flux_x = dF_x[di]
@@ -126,8 +123,6 @@ def _ssprk4_with_ct(
         if config.dimensionality >= 2:
             mx = registered_variables.magnetic_index.x
             dF_y = _weno_flux_y(current_q, params, config, registered_variables, internal_energy_density=internal_energy_density)
-            if config.positivity_preserving_flux:
-                dF_y = pp_limit_flux_axis(dF_y, current_q, params, config, registered_variables, dtdy, 1, internal_energy_density=internal_energy_density)
             Bx_flux_y = dF_y[mx]
             Bz_flux_y = dF_y[mz]
             density_flux_y = dF_y[di]
@@ -146,8 +141,6 @@ def _ssprk4_with_ct(
         if config.dimensionality == 3:
             mx = registered_variables.magnetic_index.x
             dF_z = _weno_flux_z(current_q, params, config, registered_variables, internal_energy_density=internal_energy_density)
-            if config.positivity_preserving_flux:
-                dF_z = pp_limit_flux_axis(dF_z, current_q, params, config, registered_variables, dtdz, 2, internal_energy_density=internal_energy_density)
             Bx_flux_z = dF_z[mx]
             By_flux_z = dF_z[my]
             density_flux_z = dF_z[di]
@@ -620,8 +613,6 @@ def _lsrk4_with_ct(
         # materialised; subsequent axes accumulate (scale_in = 1.0).  The
         # native fallback path keeps the explicit ``rhs_q`` register.
         dF_x = _weno_flux_x(current_q, params, config, registered_variables, internal_energy_density=internal_energy_density)
-        if config.positivity_preserving_flux:
-            dF_x = pp_limit_flux_axis(dF_x, current_q, params, config, registered_variables, dtdx, 0, internal_energy_density=internal_energy_density)
         By_flux_x = dF_x[my]
         Bz_flux_x = dF_x[mz]
         density_flux_x = dF_x[di]
@@ -638,8 +629,6 @@ def _lsrk4_with_ct(
         if config.dimensionality >= 2:
             mx = registered_variables.magnetic_index.x
             dF_y = _weno_flux_y(current_q, params, config, registered_variables, internal_energy_density=internal_energy_density)
-            if config.positivity_preserving_flux:
-                dF_y = pp_limit_flux_axis(dF_y, current_q, params, config, registered_variables, dtdy, 1, internal_energy_density=internal_energy_density)
             Bx_flux_y = dF_y[mx]
             Bz_flux_y = dF_y[mz]
             density_flux_y = dF_y[di]
@@ -657,8 +646,6 @@ def _lsrk4_with_ct(
         if config.dimensionality == 3:
             mx = registered_variables.magnetic_index.x
             dF_z = _weno_flux_z(current_q, params, config, registered_variables, internal_energy_density=internal_energy_density)
-            if config.positivity_preserving_flux:
-                dF_z = pp_limit_flux_axis(dF_z, current_q, params, config, registered_variables, dtdz, 2, internal_energy_density=internal_energy_density)
             Bx_flux_z = dF_z[mx]
             By_flux_z = dF_z[my]
             density_flux_z = dF_z[di]

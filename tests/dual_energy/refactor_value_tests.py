@@ -89,12 +89,12 @@ def solenoidal(N, vrms, seed=1, kmax=4):
     return v.astype(np.float32)
 
 
-def run_turb(M, dual, pp, stage_mode, cap, N=48, p0=1e-3, bguide=0.05, t_end=0.15):
+def run_turb(M, dual, stage_mode, cap, N=48, p0=1e-3, bguide=0.05, t_end=0.15):
     per = _per()
     config = SimulationConfig(
         solver_mode=FINITE_DIFFERENCE, equation_of_state=IDEAL_GAS, mhd=True,
         dimensionality=3, backend=PALLAS, box_size=StaticFloatVector(1.0, 1.0, 1.0),
-        num_cells=StaticFloatVector(N, N, N), dual_energy=dual, positivity_preserving_flux=pp,
+        num_cells=StaticFloatVector(N, N, N), dual_energy=dual,
         positivity_per_stage_mode=stage_mode, positivity_per_step_mode=stage_mode,
         boundary_settings=BoundarySettings(per, per, per), return_snapshots=False,
     )
@@ -131,10 +131,9 @@ if __name__ == "__main__":
     cs = np.sqrt(GAMMA * 1e-3); vcap = 5.0 * M * cs
     print(f"\n=== (B) M={M} 3-D turbulence robustness (vcap={vcap:.2f}) ===")
     matrix = [
-        ("plain (HARD_FLOOR, no cap)",      dict(dual=False, pp=False, stage_mode=POSITIVITY_HARD_FLOOR, cap=jnp.inf)),
-        ("REDISTRIBUTE + vcap",             dict(dual=False, pp=False, stage_mode=POSITIVITY_REDISTRIBUTE, cap=vcap)),
-        ("+ dual energy",                   dict(dual=True,  pp=False, stage_mode=POSITIVITY_REDISTRIBUTE, cap=vcap)),
-        ("+ dual + PP-flux (full stack)",   dict(dual=True,  pp=True,  stage_mode=POSITIVITY_REDISTRIBUTE, cap=vcap)),
+        ("plain (HARD_FLOOR, no cap)",  dict(dual=False, stage_mode=POSITIVITY_HARD_FLOOR, cap=jnp.inf)),
+        ("REDISTRIBUTE + vcap",         dict(dual=False, stage_mode=POSITIVITY_REDISTRIBUTE, cap=vcap)),
+        ("+ dual energy",               dict(dual=True,  stage_mode=POSITIVITY_REDISTRIBUTE, cap=vcap)),
     ]
     for label, kw in matrix:
         r = run_turb(M, **kw)
