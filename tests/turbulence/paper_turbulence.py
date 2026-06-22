@@ -92,7 +92,6 @@ def main():
                    help="per-step positivity mode (legacy=follow --hardfloor)")
     p.add_argument("--rhomin", type=float, default=0.02, help="density floor / protection threshold")
     p.add_argument("--vmax", type=float, default=50.0, help="vacuum-protection velocity ceiling")
-    p.add_argument("--dual_energy", type=int, default=0, help="dual-energy formalism (adiabatic): 0 off, 1 on")
     p.add_argument("--vmaxcap", type=float, default=float("inf"),
                    help="per-stage positivity velocity cap (REDISTRIBUTE only); inf = off")
     p.add_argument("--vacuum_rest", type=int, default=0,
@@ -155,7 +154,6 @@ def main():
         ),
         positivity_per_stage_mode=_POS[args.stage_mode],
         positivity_per_step_mode=_POS[args.step_mode],
-        dual_energy=bool(args.dual_energy),
         positivity_vacuum_rest=bool(args.vacuum_rest),
         return_snapshots=True,
         num_snapshots=args.nsnap,

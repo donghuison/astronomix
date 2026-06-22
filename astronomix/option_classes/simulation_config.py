@@ -354,18 +354,6 @@ class SimulationConfig(NamedTuple):
     #: floors so they become a valid floored state. Off by default (adds a pass).
     positivity_nan_safe: bool = False
 
-    #: Dual-energy formalism (Bryan et al. 1995 switch) for adiabatic MHD. When
-    #: True a separately-advected internal-energy density ``g`` is carried through
-    #: the time loop and used in the WENO pressure recovery wherever
-    #: ``e_E/E < dual_energy_eta``, so high-Mach / low-beta float32 cancellation
-    #: of ``e_int = E - KE - ME`` does not corrupt the pressure.
-    dual_energy: bool = False
-
-    #: Switch threshold for the dual-energy formalism: the fraction of total
-    #: energy below which the total-energy internal energy is deemed
-    #: cancellation-unreliable and the advected ``g`` is used instead.
-    dual_energy_eta: float = 1e-3
-
     #: Self gravity switch, currently only
     #: for periodic boundaries.
     self_gravity: bool = False

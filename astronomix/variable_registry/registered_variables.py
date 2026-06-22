@@ -103,15 +103,6 @@ class RegisteredVariables(NamedTuple):
     cosmic_ray_n_index: int = -1
     cosmic_ray_n_active: bool = False
 
-    #: dual-energy internal-energy density ``g = rho e`` (Bryan et al. 1995).
-    #: Stored as the LAST variable in the state array (after the interface
-    #: magnetic field) so the MHD ``[:-3]`` interface-B convention is unaffected;
-    #: ``_evolve_state_fd`` splits it off, advects it and uses it in the coupled
-    #: pressure recovery. Active only for finite-difference ideal-gas MHD with
-    #: ``config.dual_energy``.
-    internal_energy_index: int = -1
-    internal_energy_active: bool = False
-
     # here you can add more variables
 
 # TODO: update
@@ -261,16 +252,6 @@ def get_registered_variables(config: SimulationConfig) -> RegisteredVariables:
                 registered_variables = registered_variables._replace(
                     num_vars=registered_variables.num_vars - 1
                 )
-
-    # dual-energy formalism: append the internal-energy density ``g`` as the LAST
-    # variable so the MHD interface-B "last three" convention is preserved.
-    if (config.solver_mode == FINITE_DIFFERENCE and config.mhd
-            and config.equation_of_state == IDEAL_GAS and config.dual_energy):
-        registered_variables = registered_variables._replace(
-            internal_energy_index=registered_variables.num_vars,
-            num_vars=registered_variables.num_vars + 1,
-            internal_energy_active=True,
-        )
 
     # shorthands
     registered_variables = registered_variables._replace(
