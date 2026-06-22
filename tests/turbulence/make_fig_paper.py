@@ -15,7 +15,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm, Normalize
 
-DATA = "data_paper"
+DATA = os.environ.get("PAPER_DATA", "data_paper")
 FIG = "figures"
 os.makedirs(FIG, exist_ok=True)
 K0 = 2.0 * np.pi  # fundamental wavenumber for L0 = 1
