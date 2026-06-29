@@ -258,9 +258,19 @@ def _redistribute_positivity_native(
     rho_patched = jnp.where(has, rho_sum / count_safe, threshold)
     mom_patched = []
     for m, ms in zip(mom, mom_sum):
-        # mass-weighted neighbour mean velocity = sum(mom) / sum(rho);
-        # isolated cell -> keep momentum at the floored density (v = mom/threshold)
-        v = jnp.where(has, ms / rho_sum_safe, m / threshold)
+        # mass-weighted neighbour mean velocity = sum(mom) / sum(rho); an
+        # isolated cell (no valid neighbour) is a genuine deep-void / vacuum cell.
+        # Without vacuum_rest it keeps v = mom/threshold, which RUNS AWAY in deep
+        # voids: floored density pins rho at the threshold so any residual
+        # momentum gives a large recovered velocity, that velocity is re-injected
+        # every RK substage (the per-substage positivity runs before each flux),
+        # and the high-Mach WENO reconstruction across the void then overshoots
+        # until the step blows up. Resting the isolated cell (v=0) when
+        # vacuum_rest is on removes the run-away while leaving the gentle
+        # neighbour-fill for void *edges* (has=True) untouched. Mirrors the
+        # `_enforce_positivity` vacuum_rest semantics (vacuum -> zero momentum).
+        isolated_v = 0.0 if config.positivity_vacuum_rest else (m / threshold)
+        v = jnp.where(has, ms / rho_sum_safe, isolated_v)
         v = jnp.clip(v, -max_velocity, max_velocity)
         mom_patched.append(rho_patched * v)
 

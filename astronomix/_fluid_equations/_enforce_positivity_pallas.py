@@ -334,6 +334,7 @@ def _redistribute_positivity_pallas_local(
     bx_blk, by_blk, bz_blk = _as_3tuple_block_shape(config.pallas_block_shape, ndim)
     grid = (nx // bx_blk, ny // by_blk, nz // bz_blk)
 
+    vacuum_rest = bool(config.positivity_vacuum_rest)
     DENSITY = int(registered_variables.density_index)
     if ndim == 1:
         MOM = [int(registered_variables.momentum_index)]
@@ -420,7 +421,11 @@ def _redistribute_positivity_pallas_local(
         rho_patched = jnp.where(has, rho_sum / count_safe, threshold)
         mom_patched = []
         for c, ms in enumerate(mom_self):
-            v = jnp.where(has, mom_sum[c] / rho_sum_safe, ms / threshold)
+            # isolated (has=False) deep-void cell: rest it (v=0) under vacuum_rest,
+            # else keep v = mom/threshold. See native `_redistribute_positivity_native`
+            # for the run-away rationale; this kernel must stay bit-identical to it.
+            isolated_v = (ms * 0.0) if vacuum_rest else (ms / threshold)
+            v = jnp.where(has, mom_sum[c] / rho_sum_safe, isolated_v)
             v = jnp.clip(v, -vmax, vmax)
             mom_patched.append(rho_patched * v)
 

@@ -354,6 +354,23 @@ class SimulationConfig(NamedTuple):
     #: floors so they become a valid floored state. Off by default (adds a pass).
     positivity_nan_safe: bool = False
 
+    #: Deep-void first-order flux blending (FOFC-style robustness fix-up). When
+    #: True, each WENO interface flux is blended toward a first-order local
+    #: Lax-Friedrichs (Rusanov) flux in cells near the density floor, where the
+    #: high-order characteristic reconstruction at extreme local Mach number
+    #: overshoots and drives a fast deep-void blow-up that momentum-resting alone
+    #: does not remove (the genuine scheme-level marginal instability). The blend
+    #: weight ramps smoothly from 1 at the floor to 0 at
+    #: ``positivity_deepvoid_blend_factor * minimum_density``, so the scheme stays
+    #: 5th-order everywhere except in the immediate neighbourhood of a void.
+    positivity_deepvoid_blend: bool = False
+
+    #: Density (in units of ``minimum_density``) at which the deep-void LLF blend
+    #: weight reaches zero. Larger -> the first-order fix-up reaches further out
+    #: of the void (more dissipative, more robust); smaller -> tighter to the
+    #: floor (sharper, less robust). Only used when ``positivity_deepvoid_blend``.
+    positivity_deepvoid_blend_factor: float = 8.0
+
     #: Self gravity switch, currently only
     #: for periodic boundaries.
     self_gravity: bool = False

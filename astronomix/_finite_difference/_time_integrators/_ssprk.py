@@ -21,6 +21,9 @@ from astronomix._finite_difference._interface_fluxes._weno import (
     _weno_flux_y,
     _weno_flux_z,
 )
+from astronomix._finite_difference._interface_fluxes._deepvoid_blend import (
+    _deepvoid_llf_blend,
+)
 from astronomix._finite_difference._time_integrators._ssprk_pallas import (
     _div_axis_pallas_shape_ok,
     _hydro_flux_div_axis_pallas,
@@ -107,8 +110,16 @@ def _ssprk4_with_ct(
         mz = registered_variables.magnetic_index.z
         di = registered_variables.density_index
 
+        # Deep-void LLF blend: apply to the full interface flux BEFORE the
+        # transverse magnetic-flux slices are extracted, so CT consumes the
+        # blended (locally-diffusive) induction flux. CT stays div(B)=0 by
+        # construction (single-valued edge EMFs from consistent face fluxes).
+        blend = config.positivity_deepvoid_blend
+
         # x-axis
         dF_x = _weno_flux_x(current_q, params, config, registered_variables)
+        if blend:
+            dF_x = _deepvoid_llf_blend(dF_x, current_q, 0, params, config, registered_variables)
         By_flux_x = dF_x[my]
         Bz_flux_x = dF_x[mz]
         density_flux_x = dF_x[di]
@@ -122,6 +133,8 @@ def _ssprk4_with_ct(
         if config.dimensionality >= 2:
             mx = registered_variables.magnetic_index.x
             dF_y = _weno_flux_y(current_q, params, config, registered_variables)
+            if blend:
+                dF_y = _deepvoid_llf_blend(dF_y, current_q, 1, params, config, registered_variables)
             Bx_flux_y = dF_y[mx]
             Bz_flux_y = dF_y[mz]
             density_flux_y = dF_y[di]
@@ -140,6 +153,8 @@ def _ssprk4_with_ct(
         if config.dimensionality == 3:
             mx = registered_variables.magnetic_index.x
             dF_z = _weno_flux_z(current_q, params, config, registered_variables)
+            if blend:
+                dF_z = _deepvoid_llf_blend(dF_z, current_q, 2, params, config, registered_variables)
             Bx_flux_z = dF_z[mx]
             By_flux_z = dF_z[my]
             density_flux_z = dF_z[di]
@@ -268,9 +283,14 @@ def _hydro_step_rhs(
     # explicit flux + divergence path when (a) Pallas is unavailable /
     # unsupported or (b) a physics module needs the standalone density flux
     # slices.
+    # The deep-void LLF blend post-processes each assembled WENO interface flux
+    # before the divergence, so it needs the standalone per-axis flux array — it
+    # is incompatible with the fused WENO+divergence Pallas kernel. Fall back to
+    # the explicit flux+divergence path when it is enabled.
     use_fused_pallas = (
         _hydro_pallas_flux_supported(current_q, config)
         and not density_fluxes_needed
+        and not config.positivity_deepvoid_blend
     )
 
     if use_fused_pallas:
@@ -304,7 +324,10 @@ def _hydro_step_rhs(
         # Per-axis flux + divergence path.  Accumulate axis-by-axis rather
         # than holding all three flux arrays live simultaneously, so XLA
         # can reuse buffers between axes.
+        blend = config.positivity_deepvoid_blend
         dF_x = _weno_flux_x(current_q, params, config, registered_variables)
+        if blend:
+            dF_x = _deepvoid_llf_blend(dF_x, current_q, 0, params, config, registered_variables)
         rhs_q = -dtdx * (dF_x - _shift(dF_x, 1, axis=1))
         if density_fluxes_needed:
             density_fluxes = [dF_x[registered_variables.density_index]]
@@ -314,6 +337,8 @@ def _hydro_step_rhs(
 
         if config.dimensionality >= 2:
             dF_y = _weno_flux_y(current_q, params, config, registered_variables)
+            if blend:
+                dF_y = _deepvoid_llf_blend(dF_y, current_q, 1, params, config, registered_variables)
             rhs_q = rhs_q - dtdy * (dF_y - _shift(dF_y, 1, axis=2))
             if density_fluxes_needed:
                 density_fluxes.append(dF_y[registered_variables.density_index])
@@ -321,6 +346,8 @@ def _hydro_step_rhs(
 
         if config.dimensionality == 3:
             dF_z = _weno_flux_z(current_q, params, config, registered_variables)
+            if blend:
+                dF_z = _deepvoid_llf_blend(dF_z, current_q, 2, params, config, registered_variables)
             rhs_q = rhs_q - dtdz * (dF_z - _shift(dF_z, 1, axis=3))
             if density_fluxes_needed:
                 density_fluxes.append(dF_z[registered_variables.density_index])
