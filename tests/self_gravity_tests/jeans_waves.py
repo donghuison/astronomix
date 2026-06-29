@@ -58,7 +58,7 @@ from astronomix import SimulationParams
 from astronomix import get_helper_data
 from astronomix import time_integration
 from astronomix.initial_condition_generation.construct_primitive_state import construct_primitive_state
-from astronomix.option_classes.simulation_config import DONOR_ACCOUNTING, SECOND_ORDER_CONSERVATIVE, FINITE_VOLUME, PERIODIC_ROLL, FOURTH_ORDER_CONSERVATIVE, StaticFloatVector, StaticIntVector, finalize_config
+from astronomix.option_classes.simulation_config import SECOND_ORDER_CONSERVATIVE, FINITE_VOLUME, PERIODIC_ROLL, FOURTH_ORDER_CONSERVATIVE, StaticFloatVector, StaticIntVector, finalize_config
 from astronomix import get_registered_variables
 
 # astronomix constants

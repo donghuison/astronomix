@@ -45,7 +45,7 @@ def _build(backend, N, t_end, num_checkpoints):
         bk = dict(backend=NATIVE_JAX)
     cfg = SimulationConfig(
         solver_mode=FINITE_DIFFERENCE, mhd=True, progress_bar=False,
-        enforce_positivity=True, donate_state=False, dimensionality=3,
+        donate_state=False, dimensionality=3,
         box_size=1.0, num_cells=N, differentiation_mode=BACKWARDS,
         num_checkpoints=num_checkpoints,
         turbulent_forcing_config=TurbulentForcingConfig(turbulent_forcing=False),

@@ -21,7 +21,7 @@ grid refinement*. For each solver we run a resolution sweep and require
     (2) the spurious core Mach number stays small, and
     (3) refining the grid reduces it (convergence to the equilibrium).
 
-Both the finite-volume (DONOR_ACCOUNTING) and finite-difference
+Both the finite-volume (SIMPLE_SOURCE) and finite-difference
 (SIMPLE_SOURCE) gravity couplings are exercised, purely off the external
 potential through the config.gravity machinery (self_gravity is OFF).
 
@@ -58,7 +58,7 @@ from astronomix.initial_condition_generation.construct_primitive_state import (
     construct_primitive_state,
 )
 from astronomix.option_classes.simulation_config import (
-    DONOR_ACCOUNTING,
+    SIMPLE_SOURCE,
     FINITE_DIFFERENCE,
     FINITE_VOLUME,
     OPEN_BOUNDARY,
@@ -90,7 +90,7 @@ R_CHECK = 2.0            # measure the core region (within 2 Plummer radii), awa
 C_S = (GAMMA * C2) ** 0.5   # uniform sound speed
 
 SOLVERS = [
-    ("FV (donor accounting)", FINITE_VOLUME, DONOR_ACCOUNTING),
+    ("FV (simple source)", FINITE_VOLUME, SIMPLE_SOURCE),
     ("FD (simple source)", FINITE_DIFFERENCE, SIMPLE_SOURCE),
 ]
 

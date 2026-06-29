@@ -11,6 +11,8 @@ CLAUDE.md
 
 arena/results/*/data
 
+data_mhdgrav
+
 tests/turbulence/data_repro
 tests/field_level_inference/data
 tests/kh_recon/data
