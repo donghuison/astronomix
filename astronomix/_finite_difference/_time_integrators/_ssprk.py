@@ -21,8 +21,8 @@ from astronomix._finite_difference._interface_fluxes._weno import (
     _weno_flux_y,
     _weno_flux_z,
 )
-from astronomix._finite_difference._interface_fluxes._deepvoid_blend import (
-    _deepvoid_llf_blend,
+from astronomix._finite_difference._interface_fluxes._flux_blending import (
+    _blend_interface_flux,
 )
 from astronomix._finite_difference._time_integrators._ssprk_pallas import (
     _div_axis_pallas_shape_ok,
@@ -39,7 +39,7 @@ from astronomix._integrators._explicit_rk import lsrk4, ssprk4
 from astronomix._modules._time_integrator_sources import _time_integrator_sources
 from astronomix._stencil_operations._stencil_operations import _shift
 from astronomix.data_classes.simulation_helper_data import HelperData
-from astronomix.option_classes.simulation_config import CONSERVATIVE_GAS_STATE, GHOST_CELLS, MAGNETIC_FIELD_ONLY, SIMPLE_SOURCE_TERM, SimulationConfig
+from astronomix.option_classes.simulation_config import CONSERVATIVE_GAS_STATE, GHOST_CELLS, MAGNETIC_FIELD_ONLY, SIMPLE_SOURCE, SimulationConfig
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 
@@ -110,16 +110,17 @@ def _ssprk4_with_ct(
         mz = registered_variables.magnetic_index.z
         di = registered_variables.density_index
 
-        # Deep-void LLF blend: apply to the full interface flux BEFORE the
-        # transverse magnetic-flux slices are extracted, so CT consumes the
-        # blended (locally-diffusive) induction flux. CT stays div(B)=0 by
-        # construction (single-valued edge EMFs from consistent face fluxes).
-        blend = config.positivity_deepvoid_blend
+        # Unified flux blending (deep-void density ramp and/or FCT positivity):
+        # apply to the full interface flux BEFORE the transverse magnetic-flux
+        # slices are extracted, so CT consumes the blended (locally-diffusive)
+        # induction flux. CT stays div(B)=0 by construction (single-valued edge
+        # EMFs from consistent face fluxes).
+        blend = config.positivity_config.deepvoid_blend or config.positivity_config.preserving_flux
 
         # x-axis
         dF_x = _weno_flux_x(current_q, params, config, registered_variables)
         if blend:
-            dF_x = _deepvoid_llf_blend(dF_x, current_q, 0, params, config, registered_variables)
+            dF_x = _blend_interface_flux(dF_x, current_q, 0, dtdx, params, config, registered_variables)
         By_flux_x = dF_x[my]
         Bz_flux_x = dF_x[mz]
         density_flux_x = dF_x[di]
@@ -134,7 +135,7 @@ def _ssprk4_with_ct(
             mx = registered_variables.magnetic_index.x
             dF_y = _weno_flux_y(current_q, params, config, registered_variables)
             if blend:
-                dF_y = _deepvoid_llf_blend(dF_y, current_q, 1, params, config, registered_variables)
+                dF_y = _blend_interface_flux(dF_y, current_q, 1, dtdy, params, config, registered_variables)
             Bx_flux_y = dF_y[mx]
             Bz_flux_y = dF_y[mz]
             density_flux_y = dF_y[di]
@@ -154,7 +155,7 @@ def _ssprk4_with_ct(
             mx = registered_variables.magnetic_index.x
             dF_z = _weno_flux_z(current_q, params, config, registered_variables)
             if blend:
-                dF_z = _deepvoid_llf_blend(dF_z, current_q, 2, params, config, registered_variables)
+                dF_z = _blend_interface_flux(dF_z, current_q, 2, dtdz, params, config, registered_variables)
             Bx_flux_z = dF_z[mx]
             By_flux_z = dF_z[my]
             density_flux_z = dF_z[di]
@@ -206,7 +207,7 @@ def _ssprk4_with_ct(
     def pre_stage(u):
         q, bx, by, bz = u
         q = _apply_stage_positivity(
-            q, config.positivity_per_stage_mode, config, gamma,
+            q, config.positivity_config.per_stage_mode, config, gamma,
             params.minimum_density, params.minimum_pressure,
             params.positivity_max_velocity, registered_variables,
         )
@@ -229,7 +230,7 @@ def _ssprk4_with_ct(
             q, bx, by, bz, config, registered_variables
         )
         q = _apply_stage_positivity(
-            q, config.positivity_per_stage_mode, config, gamma,
+            q, config.positivity_config.per_stage_mode, config, gamma,
             params.minimum_density, params.minimum_pressure,
             params.positivity_max_velocity, registered_variables,
         )
@@ -243,12 +244,12 @@ def _ssprk4_with_ct(
 
 def _hydro_density_fluxes_needed(config) -> bool:
     """Whether any FD physics module actually consumes the per-axis density
-    flux slices.  Only self-gravity variants other than SIMPLE_SOURCE_TERM do,
+    flux slices.  Only self-gravity variants other than SIMPLE_SOURCE do,
     so for typical setups (hydrodynamics only / wind / cooling without
     flux-coupled gravity) the standalone density flux arrays can be skipped
     and the fused Pallas WENO+divergence path is safe."""
-    return config.gravity and (
-        config.self_gravity_version != SIMPLE_SOURCE_TERM
+    return config.gravity_config.gravity and (
+        config.gravity_config.self_gravity_version != SIMPLE_SOURCE
     )
 
 
@@ -283,14 +284,16 @@ def _hydro_step_rhs(
     # explicit flux + divergence path when (a) Pallas is unavailable /
     # unsupported or (b) a physics module needs the standalone density flux
     # slices.
-    # The deep-void LLF blend post-processes each assembled WENO interface flux
-    # before the divergence, so it needs the standalone per-axis flux array — it
-    # is incompatible with the fused WENO+divergence Pallas kernel. Fall back to
-    # the explicit flux+divergence path when it is enabled.
+    # The flux blending (deep-void density ramp and/or FCT positivity) post-
+    # processes each assembled WENO interface flux before the divergence, so it
+    # needs the standalone per-axis flux array — it is incompatible with the
+    # fused WENO+divergence Pallas kernel. Fall back to the explicit
+    # flux+divergence path when either blending path is enabled.
     use_fused_pallas = (
         _hydro_pallas_flux_supported(current_q, config)
         and not density_fluxes_needed
-        and not config.positivity_deepvoid_blend
+        and not config.positivity_config.deepvoid_blend
+        and not config.positivity_config.preserving_flux
     )
 
     if use_fused_pallas:
@@ -324,10 +327,10 @@ def _hydro_step_rhs(
         # Per-axis flux + divergence path.  Accumulate axis-by-axis rather
         # than holding all three flux arrays live simultaneously, so XLA
         # can reuse buffers between axes.
-        blend = config.positivity_deepvoid_blend
+        blend = config.positivity_config.deepvoid_blend or config.positivity_config.preserving_flux
         dF_x = _weno_flux_x(current_q, params, config, registered_variables)
         if blend:
-            dF_x = _deepvoid_llf_blend(dF_x, current_q, 0, params, config, registered_variables)
+            dF_x = _blend_interface_flux(dF_x, current_q, 0, dtdx, params, config, registered_variables)
         rhs_q = -dtdx * (dF_x - _shift(dF_x, 1, axis=1))
         if density_fluxes_needed:
             density_fluxes = [dF_x[registered_variables.density_index]]
@@ -338,7 +341,7 @@ def _hydro_step_rhs(
         if config.dimensionality >= 2:
             dF_y = _weno_flux_y(current_q, params, config, registered_variables)
             if blend:
-                dF_y = _deepvoid_llf_blend(dF_y, current_q, 1, params, config, registered_variables)
+                dF_y = _blend_interface_flux(dF_y, current_q, 1, dtdy, params, config, registered_variables)
             rhs_q = rhs_q - dtdy * (dF_y - _shift(dF_y, 1, axis=2))
             if density_fluxes_needed:
                 density_fluxes.append(dF_y[registered_variables.density_index])
@@ -347,7 +350,7 @@ def _hydro_step_rhs(
         if config.dimensionality == 3:
             dF_z = _weno_flux_z(current_q, params, config, registered_variables)
             if blend:
-                dF_z = _deepvoid_llf_blend(dF_z, current_q, 2, params, config, registered_variables)
+                dF_z = _blend_interface_flux(dF_z, current_q, 2, dtdz, params, config, registered_variables)
             rhs_q = rhs_q - dtdz * (dF_z - _shift(dF_z, 1, axis=3))
             if density_fluxes_needed:
                 density_fluxes.append(dF_z[registered_variables.density_index])
@@ -401,7 +404,7 @@ def _ssprk4_hydro(
 
     def pre_stage(q):
         q = _apply_stage_positivity(
-            q, config.positivity_per_stage_mode, config, gamma,
+            q, config.positivity_config.per_stage_mode, config, gamma,
             params.minimum_density, params.minimum_pressure,
             params.positivity_max_velocity, registered_variables,
         )
@@ -426,7 +429,7 @@ def _ssprk4_hydro(
 
     def finalize(q):
         q = _apply_stage_positivity(
-            q, config.positivity_per_stage_mode, config, gamma,
+            q, config.positivity_config.per_stage_mode, config, gamma,
             params.minimum_density, params.minimum_pressure,
             params.positivity_max_velocity, registered_variables,
         )
@@ -470,7 +473,7 @@ def _lsrk4_hydro(
 
     def pre_stage(q):
         q = _apply_stage_positivity(
-            q, config.positivity_per_stage_mode, config, gamma,
+            q, config.positivity_config.per_stage_mode, config, gamma,
             params.minimum_density, params.minimum_pressure,
             params.positivity_max_velocity, registered_variables,
         )
@@ -551,7 +554,7 @@ def _lsrk4_hydro(
 
     def finalize(q):
         q = _apply_stage_positivity(
-            q, config.positivity_per_stage_mode, config, gamma,
+            q, config.positivity_config.per_stage_mode, config, gamma,
             params.minimum_density, params.minimum_pressure,
             params.positivity_max_velocity, registered_variables,
         )
@@ -738,7 +741,7 @@ def _lsrk4_with_ct(
     def pre_stage(u):
         q, bx, by, bz = u
         q = _apply_stage_positivity(
-            q, config.positivity_per_stage_mode, config, gamma,
+            q, config.positivity_config.per_stage_mode, config, gamma,
             params.minimum_density, params.minimum_pressure,
             params.positivity_max_velocity, registered_variables,
         )
@@ -772,7 +775,7 @@ def _lsrk4_with_ct(
             q, bx, by, bz, config, registered_variables,
         )
         q = _apply_stage_positivity(
-            q, config.positivity_per_stage_mode, config, gamma,
+            q, config.positivity_config.per_stage_mode, config, gamma,
             params.minimum_density, params.minimum_pressure,
             params.positivity_max_velocity, registered_variables,
         )

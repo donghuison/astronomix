@@ -51,15 +51,16 @@ from astronomix.option_classes.simulation_config import (
     POSITIVITY_NONE,
     POSITIVITY_HARD_FLOOR,
     POSITIVITY_REDISTRIBUTE,
-    POSITIVITY_FOLLOW_LEGACY,
     BoundarySettings,
     BoundarySettings1D,
+    GravityConfig,
+    PositivityConfig,
     SimulationConfig,
     SnapshotSettings,
     finalize_config,
 )
 
-_POS = {"legacy": POSITIVITY_FOLLOW_LEGACY, "none": POSITIVITY_NONE,
+_POS = {"none": POSITIVITY_NONE,
         "floor": POSITIVITY_HARD_FLOOR, "redist": POSITIVITY_REDISTRIBUTE}
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.time_stepping import time_integration
@@ -87,10 +88,10 @@ def main():
     p.add_argument("--protect", type=int, default=-1, help="vacuum protection (prot): -1 auto, 0 off, 1 on")
     p.add_argument("--hardfloor", type=int, default=-1,
                    help="enforce_positivity (per-RK-substage + floor): -1 auto (on for supersonic), 0 off, 1 on")
-    p.add_argument("--stage_mode", choices=list(_POS), default="legacy",
-                   help="per-RK-substage positivity mode (legacy=follow --hardfloor)")
-    p.add_argument("--step_mode", choices=list(_POS), default="legacy",
-                   help="per-step positivity mode (legacy=follow --hardfloor)")
+    p.add_argument("--stage_mode", choices=list(_POS), default="floor",
+                   help="per-RK-substage positivity mode (forced off when protect=0)")
+    p.add_argument("--step_mode", choices=list(_POS), default="floor",
+                   help="per-step positivity mode (forced off when protect=0)")
     p.add_argument("--rhomin", type=float, default=0.02, help="density floor / protection threshold")
     p.add_argument("--vmax", type=float, default=50.0, help="vacuum-protection velocity ceiling")
     p.add_argument("--vmaxcap", type=float, default=float("inf"),
@@ -164,7 +165,6 @@ def main():
         progress_bar=False,  # our own diagnostics; avoids int(NaN) callback crash on blow-up
         dimensionality=3,
         num_cells=args.N,
-        enforce_positivity=protect,
         box_size=1.0,
         mhd=bool(args.mhd),
         boundary_settings=BoundarySettings(
@@ -175,11 +175,14 @@ def main():
         turbulent_forcing_config=TurbulentForcingConfig(
             turbulent_forcing=True, ou_forcing=True, vacuum_protection=vacuum,
         ),
-        positivity_per_stage_mode=_POS[args.stage_mode],
-        positivity_per_step_mode=_POS[args.step_mode],
-        positivity_vacuum_rest=vacuum_rest,
-        positivity_deepvoid_blend=bool(args.blend),
-        positivity_deepvoid_blend_factor=args.blend_factor,
+        positivity_config=PositivityConfig(
+            default_positivity_protection=protect,
+            per_stage_mode=_POS[args.stage_mode],
+            per_step_mode=_POS[args.step_mode],
+            vacuum_rest=vacuum_rest,
+            deepvoid_blend=bool(args.blend),
+            deepvoid_blend_factor=args.blend_factor,
+        ),
         return_snapshots=True,
         num_snapshots=args.nsnap,
         snapshot_settings=SnapshotSettings(return_states=True),

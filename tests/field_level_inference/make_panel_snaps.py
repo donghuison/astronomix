@@ -59,7 +59,7 @@ from astronomix import (SimulationConfig, SimulationParams, get_registered_varia
                         construct_primitive_state, time_integration, CodeUnits)
 from astronomix.option_classes.simulation_config import (
     FINITE_DIFFERENCE, PERIODIC_BOUNDARY, BoundarySettings, BoundarySettings1D,
-    PALLAS, finalize_config,
+    PALLAS, finalize_config, GravityConfig, PositivityConfig,
 )
 from astronomix._finite_difference._magnetic_update._constrained_transport import initialize_interface_fields
 from astronomix._modules._turbulent_forcing._turbulent_forcing_options import (
@@ -95,8 +95,9 @@ def main():
                           pallas_use_triton=True, pallas_interpret=False)
 
     config = SimulationConfig(
+        positivity_config=PositivityConfig(default_positivity_protection=True),
         solver_mode=FINITE_DIFFERENCE, mhd=True, progress_bar=False,
-        enforce_positivity=True, donate_state=False, dimensionality=3,
+        donate_state=False, dimensionality=3,
         box_size=box_size, num_cells=resolution,
         turbulent_forcing_config=TurbulentForcingConfig(turbulent_forcing=False),
         boundary_settings=BoundarySettings(

@@ -24,15 +24,17 @@ from astronomix import SimulationConfig
 from astronomix import SimulationParams
 from astronomix.option_classes.simulation_config import (
     DONOR_ACCOUNTING,
-    FD_FLUX_GRAVITY,
+    SECOND_ORDER_CONSERVATIVE,
     FINITE_DIFFERENCE,
     FINITE_VOLUME,
     HLLC_LM,
-    WENO_FLUX_GRAVITY,
+    FOURTH_ORDER_CONSERVATIVE,
     RIEMANN_SPLIT,
     RIEMANN_SPLIT_UNSTABLE,
     BoundarySettings,
     BoundarySettings1D,
+    GravityConfig,
+    PositivityConfig,
     SnapshotSettings
 )
 
@@ -54,20 +56,20 @@ from astronomix.option_classes.simulation_config import (
     LAX_FRIEDRICHS,
     MUSCL,
     RK2_SSP,
-    SIMPLE_SOURCE_TERM,
+    SIMPLE_SOURCE,
     SPLIT,
     UNSPLIT,
     DOUBLE_MINMOD,
     LAX_FRIEDRICHS,
     MUSCL,
     RK2_SSP,
-    SIMPLE_SOURCE_TERM,
+    SIMPLE_SOURCE,
     SPLIT,
     UNSPLIT,
 )
 
-self_gravity_version_fv = SIMPLE_SOURCE_TERM
-self_gravity_version_fd = FD_FLUX_GRAVITY
+self_gravity_version_fv = SIMPLE_SOURCE
+self_gravity_version_fd = SECOND_ORDER_CONSERVATIVE
 # in the simple source term version, the energy
 # error is first order in space and time
 # so reducing the timestep does not help as
@@ -86,10 +88,12 @@ baseline_config_fd = SimulationConfig(
     solver_mode = FINITE_DIFFERENCE,
     runtime_debugging = False,
     progress_bar = True,
-    self_gravity = True,
-    enforce_positivity=False,
-    self_gravity_version = self_gravity_version_fd,
-    poisson_manual_open_boundaries=True,
+    gravity_config = GravityConfig(
+        self_gravity = True,
+        self_gravity_version = self_gravity_version_fd,
+        poisson_manual_open_boundaries = True,
+    ),
+    positivity_config = PositivityConfig(default_positivity_protection = False),
     mhd = False, # True,
     dimensionality = 3,
     box_size = box_size,
@@ -121,9 +125,11 @@ baseline_config_fd = SimulationConfig(
 baseline_config_fv = SimulationConfig(
     runtime_debugging = False,
     progress_bar = True,
-    self_gravity = True,
-    self_gravity_version = self_gravity_version_fv,
-    poisson_manual_open_boundaries=True,
+    gravity_config = GravityConfig(
+        self_gravity = True,
+        self_gravity_version = self_gravity_version_fv,
+        poisson_manual_open_boundaries = True,
+    ),
     first_order_fallback = False,
     dimensionality = 3,
     box_size = box_size,
@@ -188,12 +194,18 @@ def simulate_collapse(num_cells, t_end = 1.2, return_snapshots = True, solver_mo
     )
 
     if self_gravity_version is not None:
-        config = config._replace(self_gravity_version = self_gravity_version)
+        config = config._replace(
+            gravity_config = config.gravity_config._replace(
+                self_gravity_version = self_gravity_version
+            )
+        )
 
-    if self_gravity_version == SIMPLE_SOURCE_TERM:
+    if self_gravity_version == SIMPLE_SOURCE:
         # not necessary in the simple source term version
         config = config._replace(
-            enforce_positivity = False,
+            positivity_config = config.positivity_config._replace(
+                default_positivity_protection = False
+            )
         )
 
     helper_data = get_helper_data(config)
@@ -332,19 +344,19 @@ def resolution_study_collapse():
 
         def __str__(self):
             # FD for finite difference, FV for finite volume
-            # simple source for SIMPLE_SOURCE_TERM
-            # flux-based source for FD_FLUX_GRAVITY
-            # corrected flux-based source for WENO_FLUX_GRAVITY
+            # simple source for SIMPLE_SOURCE
+            # flux-based source for SECOND_ORDER_CONSERVATIVE
+            # corrected flux-based source for FOURTH_ORDER_CONSERVATIVE
             # total string e.g.: FD, simple source
             solver_str = 'FD' if self.solver_mode == FINITE_DIFFERENCE else 'FV'
-            gravity_str = 'simple source' if self.self_gravity_version == SIMPLE_SOURCE_TERM else 'flux-based source' if self.self_gravity_version == FD_FLUX_GRAVITY else 'corrected flux-based source'
+            gravity_str = 'simple source' if self.self_gravity_version == SIMPLE_SOURCE else 'flux-based source' if self.self_gravity_version == SECOND_ORDER_CONSERVATIVE else 'corrected flux-based source'
             resolution_str = f"N={self.resolution}"
             return f"{solver_str}, {gravity_str}, {resolution_str}"
 
     test_setups = [
-        TestSetup(solver_mode = FINITE_DIFFERENCE, self_gravity_version = SIMPLE_SOURCE_TERM, resolution = 128, line_style = ':'),
-        TestSetup(solver_mode = FINITE_DIFFERENCE, self_gravity_version = FD_FLUX_GRAVITY, resolution = 128, line_style = '-.'),
-        TestSetup(solver_mode = FINITE_DIFFERENCE, self_gravity_version = WENO_FLUX_GRAVITY, resolution = 128, line_style = '--'),
+        TestSetup(solver_mode = FINITE_DIFFERENCE, self_gravity_version = SIMPLE_SOURCE, resolution = 128, line_style = ':'),
+        TestSetup(solver_mode = FINITE_DIFFERENCE, self_gravity_version = SECOND_ORDER_CONSERVATIVE, resolution = 128, line_style = '-.'),
+        TestSetup(solver_mode = FINITE_DIFFERENCE, self_gravity_version = FOURTH_ORDER_CONSERVATIVE, resolution = 128, line_style = '--'),
     ]
 
     fig, (ax_energy_terms, ax_total_energy) = plt.subplots(2, 1, figsize=(10, 10))

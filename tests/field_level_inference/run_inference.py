@@ -116,7 +116,7 @@ from astronomix import (SimulationConfig, SimulationParams, get_registered_varia
                         construct_primitive_state, time_integration, CodeUnits)
 from astronomix.option_classes.simulation_config import (
     FINITE_DIFFERENCE, PERIODIC_BOUNDARY, BoundarySettings, BoundarySettings1D,
-    PALLAS, BACKWARDS, FORWARDS, finalize_config,
+    PALLAS, BACKWARDS, FORWARDS, finalize_config, GravityConfig, PositivityConfig,
 )
 from astronomix._finite_difference._magnetic_update._constrained_transport import (
     initialize_interface_fields,
@@ -138,8 +138,9 @@ NF, NC = args.fine_N, args.coarse_N
 
 def make_cfg(N, forcing, backward):
     return SimulationConfig(
+        positivity_config=PositivityConfig(default_positivity_protection=True),
         solver_mode=FINITE_DIFFERENCE, mhd=True, progress_bar=False,
-        enforce_positivity=True, donate_state=False, dimensionality=3,
+        donate_state=False, dimensionality=3,
         box_size=1.0, num_cells=N,
         differentiation_mode=BACKWARDS if backward else FORWARDS,
         num_checkpoints=args.num_checkpoints,

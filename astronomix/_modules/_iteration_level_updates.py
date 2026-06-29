@@ -164,7 +164,7 @@ def _iteration_level_updates(
     # pressure for ideal gas); REDISTRIBUTE applies the conservative `prot`
     # neighbour redistribution, but is skipped when turbulent forcing already
     # runs `prot` each step (vacuum_protection) to avoid a redundant pass.
-    if config.positivity_per_step_mode == POSITIVITY_HARD_FLOOR:
+    if config.positivity_config.per_step_mode == POSITIVITY_HARD_FLOOR:
         primitive_state = primitive_state.at[registered_variables.density_index].set(
             jnp.maximum(
                 primitive_state[registered_variables.density_index], params.minimum_density
@@ -176,7 +176,7 @@ def _iteration_level_updates(
                     primitive_state[registered_variables.pressure_index], params.minimum_pressure
                 )
             )
-    elif config.positivity_per_step_mode == POSITIVITY_REDISTRIBUTE:
+    elif config.positivity_config.per_step_mode == POSITIVITY_REDISTRIBUTE:
         _forcing_runs_prot = (
             config.turbulent_forcing_config.turbulent_forcing
             and config.turbulent_forcing_config.vacuum_protection

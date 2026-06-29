@@ -35,7 +35,7 @@ class SimulationParams(NamedTuple):
 
     #: External, static gravitational potential evaluated at the cell
     #: centers of the grid (without ghost cells). Only used when
-    #: config.external_potential is True; it is added on top of the
+    #: config.gravity_config.external_potential is True; it is added on top of the
     #: self-gravity potential in _compute_total_potential and padded to the
     #: ghost-cell-extended shape of a state field internally.
     gravitational_potential: jnp.array = jnp.array([])
@@ -50,13 +50,6 @@ class SimulationParams(NamedTuple):
     #: NOTE: CURRENTLY ONLY IMPLEMENTED FOR FINITE DIFFERENCE MODE.
     thermal_conductivity: float = 0.0
 
-    #: Wall temperatures for isothermal (Dirichlet) plates used by the
-    #: thermal-conduction module along config.conduction_wall_axis.
-    #: ``_low`` is the low-index side of that spatial axis, ``_high`` the
-    #: high-index side. Only used when config.conduction_isothermal_walls.
-    wall_temperature_low: float = 1.0
-    wall_temperature_high: float = 1.0
-
     #: The isothermal sound speed used when
     #: config.equation_of_state is ISOTHERMAL.
     #: NOTE: CURRENTLY ONLY IMPLEMENTED FOR 
@@ -69,13 +62,13 @@ class SimulationParams(NamedTuple):
     #: Minimum allowed density.
     #: NOTE: CURRENTLY ONLY USED IN 
     #: FINITE DIFFERENCE MODE IF
-    #: config.enforce_positivity IS TRUE.
+    #: positivity protection is active.
     minimum_density: float = 1e-14
 
     #: Minimum allowed pressure.
     #: NOTE: CURRENTLY ONLY USED IN 
     #: FINITE DIFFERENCE MODE IF
-    #: config.enforce_positivity IS TRUE.
+    #: positivity protection is active.
     minimum_pressure: float = 1e-14
 
     #: Velocity ceiling applied to cells fixed by the REDISTRIBUTE positivity

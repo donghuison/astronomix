@@ -41,6 +41,8 @@ from astronomix.option_classes.simulation_config import (
     BoundarySettings,
     BoundarySettings1D,
     finalize_config,
+    GravityConfig,
+    PositivityConfig,
 )
 from astronomix.initial_condition_generation.magnetic_field_from_vector_potential import (
     setup_magnetic_fields_from_vector_potential,
@@ -72,6 +74,7 @@ def simulate(num_cells):
     center = BOX_SIZE / 2.0
 
     config = SimulationConfig(
+        positivity_config=PositivityConfig(default_positivity_protection=True),
         solver_mode=FINITE_DIFFERENCE,
         # FD/WENO runs ~10x faster through the Pallas (Triton) backend;
         # bit-compatible with native JAX.
@@ -81,7 +84,6 @@ def simulate(num_cells):
         pallas_interpret=False,
         grid_spacing=grid_spacing,
         mhd=True,
-        enforce_positivity=True,
         progress_bar=True,
         dimensionality=3,
         box_size=BOX_SIZE,

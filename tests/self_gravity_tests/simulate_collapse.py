@@ -39,14 +39,14 @@ from astronomix.option_classes.simulation_config import (
     LAX_FRIEDRICHS,
     MUSCL,
     RK2_SSP,
-    SIMPLE_SOURCE_TERM,
+    SIMPLE_SOURCE,
     SPLIT,
     UNSPLIT,
     DOUBLE_MINMOD,
     LAX_FRIEDRICHS,
     MUSCL,
     RK2_SSP,
-    SIMPLE_SOURCE_TERM,
+    SIMPLE_SOURCE,
     SPLIT,
     UNSPLIT,
 )
@@ -193,7 +193,7 @@ def resolution_study_collapse():
     ax.legend(fontsize="x-small", ncol=len(num_cells_list))
     ax.set_title("Resolution Study for Evrard's Collapse")
 
-    plt.savefig(f"figures/collapse_resolution_study_{'simple' if self_gravity_version == SIMPLE_SOURCE_TERM else 'conservative'}_source_term.svg")
+    plt.savefig(f"figures/collapse_resolution_study_{'simple' if self_gravity_version == SIMPLE_SOURCE else 'conservative'}_source_term.svg")
 
 def radial_profile_study():
 

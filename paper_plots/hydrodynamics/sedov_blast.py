@@ -61,6 +61,8 @@ from astronomix.option_classes.simulation_config import (
     PERIODIC_BOUNDARY,
     BoundarySettings,
     BoundarySettings1D,
+    GravityConfig,
+    PositivityConfig,
 )
 
 from exactpack.solvers.sedov.sedov import Sedov
@@ -118,7 +120,7 @@ def make_config(solver_mode, riemann_solver, num_cells):
         # The FD/WENO backend runs ~10x faster through the Pallas (Triton)
         # backend; results are bit-compatible with native JAX.
         kwargs.update(
-            enforce_positivity=True,
+            positivity_config=PositivityConfig(default_positivity_protection=True),
             backend=PALLAS,
             pallas_block_shape=(4, 4, 8),
             pallas_use_triton=True,

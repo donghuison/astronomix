@@ -39,14 +39,14 @@ from astronomix.option_classes.simulation_config import (
     LAX_FRIEDRICHS,
     MUSCL,
     RK2_SSP,
-    SIMPLE_SOURCE_TERM,
+    SIMPLE_SOURCE,
     SPLIT,
     UNSPLIT,
     DOUBLE_MINMOD,
     LAX_FRIEDRICHS,
     MUSCL,
     RK2_SSP,
-    SIMPLE_SOURCE_TERM,
+    SIMPLE_SOURCE,
     SPLIT,
     UNSPLIT,
 )
@@ -160,7 +160,7 @@ def simulate_collapse(num_cells, t_end = 3.0, self_gravity_version = RIEMANN_SPL
     ), config, params, helper_data, registered_variables
 
 def stringify_self_gravity_version(version):
-    if version == SIMPLE_SOURCE_TERM:
+    if version == SIMPLE_SOURCE:
         return "non-conservative"
     elif version == RIEMANN_SPLIT_UNSTABLE or version == RIEMANN_SPLIT:
         return "conservative"
@@ -168,8 +168,8 @@ def stringify_self_gravity_version(version):
         return "unknown"
 
 configurations = [
-    (128, SIMPLE_SOURCE_TERM),
-    (256, SIMPLE_SOURCE_TERM),
+    (128, SIMPLE_SOURCE),
+    (256, SIMPLE_SOURCE),
     (128, RIEMANN_SPLIT_UNSTABLE),
 ]
 
@@ -184,10 +184,10 @@ for num_cells, self_gravity_version in configurations:
     kinetic_energy = snapshots.kinetic_energy
     gravitational_energy = snapshots.gravitational_energy
     time = snapshots.time_points
-    ax_energy.plot(time, total_energy, label="total, N = " + str(num_cells) + "³, " + stringify_self_gravity_version(self_gravity_version), linestyle = '-' if self_gravity_version == SIMPLE_SOURCE_TERM else '--')
-    ax_energy.plot(time, internal_energy, label="internal, N = " + str(num_cells) + "³, " + stringify_self_gravity_version(self_gravity_version), linestyle = '-' if self_gravity_version == SIMPLE_SOURCE_TERM else '--')
-    ax_energy.plot(time, kinetic_energy, label="kinetic, N = " + str(num_cells) + "³, " + stringify_self_gravity_version(self_gravity_version), linestyle = '-' if self_gravity_version == SIMPLE_SOURCE_TERM else '--')
-    ax_energy.plot(time, gravitational_energy, label="gravitational, N = " + str(num_cells) + "³, " + stringify_self_gravity_version(self_gravity_version), linestyle = '-' if self_gravity_version == SIMPLE_SOURCE_TERM else '--')
+    ax_energy.plot(time, total_energy, label="total, N = " + str(num_cells) + "³, " + stringify_self_gravity_version(self_gravity_version), linestyle = '-' if self_gravity_version == SIMPLE_SOURCE else '--')
+    ax_energy.plot(time, internal_energy, label="internal, N = " + str(num_cells) + "³, " + stringify_self_gravity_version(self_gravity_version), linestyle = '-' if self_gravity_version == SIMPLE_SOURCE else '--')
+    ax_energy.plot(time, kinetic_energy, label="kinetic, N = " + str(num_cells) + "³, " + stringify_self_gravity_version(self_gravity_version), linestyle = '-' if self_gravity_version == SIMPLE_SOURCE else '--')
+    ax_energy.plot(time, gravitational_energy, label="gravitational, N = " + str(num_cells) + "³, " + stringify_self_gravity_version(self_gravity_version), linestyle = '-' if self_gravity_version == SIMPLE_SOURCE else '--')
     ax_energy.set_xlabel("time")
     ax_energy.set_ylabel("energy")
 

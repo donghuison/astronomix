@@ -127,7 +127,7 @@ def _enforce_positivity_pallas_local(
         BY = int(registered_variables.magnetic_index.y)
         BZ = int(registered_variables.magnetic_index.z)
 
-    vacuum_rest = bool(config.positivity_vacuum_rest)
+    vacuum_rest = bool(config.positivity_config.vacuum_rest)
     if ndim == 1:
         MOM_VARS = (MX,)
     elif ndim == 2:
@@ -168,7 +168,7 @@ def _enforce_positivity_pallas_local(
         rhomin = rhomin_ref[()]
         pmin = pmin_ref[()]
 
-        nan_safe = bool(config.positivity_nan_safe)
+        nan_safe = bool(config.positivity_config.nan_safe)
 
         def read(var):
             if ndim == 1:
@@ -334,7 +334,7 @@ def _redistribute_positivity_pallas_local(
     bx_blk, by_blk, bz_blk = _as_3tuple_block_shape(config.pallas_block_shape, ndim)
     grid = (nx // bx_blk, ny // by_blk, nz // bz_blk)
 
-    vacuum_rest = bool(config.positivity_vacuum_rest)
+    vacuum_rest = bool(config.positivity_config.vacuum_rest)
     DENSITY = int(registered_variables.density_index)
     if ndim == 1:
         MOM = [int(registered_variables.momentum_index)]

@@ -22,7 +22,7 @@ grid refinement*. For each solver we run a resolution sweep and require
     (3) refining the grid reduces it (convergence to the equilibrium).
 
 Both the finite-volume (DONOR_ACCOUNTING) and finite-difference
-(SIMPLE_SOURCE_TERM) gravity couplings are exercised, purely off the external
+(SIMPLE_SOURCE) gravity couplings are exercised, purely off the external
 potential through the config.gravity machinery (self_gravity is OFF).
 
 Usage:
@@ -62,9 +62,10 @@ from astronomix.option_classes.simulation_config import (
     FINITE_DIFFERENCE,
     FINITE_VOLUME,
     OPEN_BOUNDARY,
-    SIMPLE_SOURCE_TERM,
+    SIMPLE_SOURCE,
     BoundarySettings,
     BoundarySettings1D,
+    GravityConfig,
     SimulationConfig,
     StaticFloatVector,
     StaticIntVector,
@@ -90,7 +91,7 @@ C_S = (GAMMA * C2) ** 0.5   # uniform sound speed
 
 SOLVERS = [
     ("FV (donor accounting)", FINITE_VOLUME, DONOR_ACCOUNTING),
-    ("FD (simple source)", FINITE_DIFFERENCE, SIMPLE_SOURCE_TERM),
+    ("FD (simple source)", FINITE_DIFFERENCE, SIMPLE_SOURCE),
 ]
 
 RESOLUTIONS = [int(a) for a in sys.argv[1:]] or [32, 64, 128]
@@ -104,13 +105,14 @@ def run_case(N, solver_mode, gravity_version):
     _open = BoundarySettings1D(OPEN_BOUNDARY, OPEN_BOUNDARY)
     config = SimulationConfig(
         solver_mode=solver_mode,
-        self_gravity_version=gravity_version,
+        gravity_config=GravityConfig(
+            self_gravity_version=gravity_version,
+            external_potential=True,
+        ),
         dimensionality=3,
         geometry=CARTESIAN,
         box_size=StaticFloatVector(BOX, BOX, BOX),
         num_cells=StaticIntVector(N, N, N),
-        self_gravity=False,
-        external_potential=True,
         boundary_settings=BoundarySettings(x=_open, y=_open, z=_open),
         progress_bar=False,
     )
