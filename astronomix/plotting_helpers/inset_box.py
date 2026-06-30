@@ -10,9 +10,14 @@ for emphasizing a small feature of a plot without a second figure.
 # numerics
 import numpy as np
 
-# plotting
-from matplotlib.collections import PathCollection
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
+# plotting (optional dependency — this helper only runs when matplotlib is
+# installed, so guard the import to keep the module importable without it)
+try:
+    from matplotlib.collections import PathCollection
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
+except ModuleNotFoundError:  # pragma: no cover - exercised only without matplotlib
+    PathCollection = None
+    inset_axes = mark_inset = None
 
 
 def add_inset_box(
@@ -44,6 +49,12 @@ def add_inset_box(
     Returns:
         The created inset axes.
     """
+    if inset_axes is None:
+        raise ModuleNotFoundError(
+            "matplotlib is required for add_inset_box but is not installed. "
+            "Install it with `pip install matplotlib`."
+        )
+
     axins = inset_axes(ax, width=width, height=height, loc=loc)
 
     for line in ax.get_lines():
