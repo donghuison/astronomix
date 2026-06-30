@@ -480,9 +480,11 @@ def _recon_fields(horizons, n, data_dir, pallas):
         ic_init = np.asarray(seed_of(c0)[1])                 # v_y' of the cold start
         ic_opt = np.asarray(seed_of(c_rec)[1])               # v_y' of the optimized seed
         w_obs = _vorticity(np.asarray(H(PhiT(base_state(truth)))), dx)       # S_T(truth)
+        w_init = _vorticity(np.asarray(H(PhiT(P["s0_of"](c0)))), dx)         # S_T(cold start)
         w_rec = _vorticity(np.asarray(H(PhiT(P["s0_of"](c_rec)))), dx)       # S_T(recovered)
         rows.append(dict(T=float(T), method=method, init=int(init), ic_err=float(ic),
-                         ic_true=ic_true, ic_init=ic_init, ic_opt=ic_opt, w_obs=w_obs, w_rec=w_rec))
+                         ic_true=ic_true, ic_init=ic_init, ic_opt=ic_opt,
+                         w_obs=w_obs, w_init=w_init, w_rec=w_rec))
         print(f"  T={T:.0f}: {method} init {init}  ic_err={ic:.4f}", flush=True)
     return rows, P["box"]
 
@@ -494,7 +496,7 @@ def make_recon_figure(out, horizons=(20.0, 60.0), *, n=N_DEFAULT, data_dir=DATA_
     import matplotlib.pyplot as plt
     import numpy as np
 
-    cache = cache or os.path.join(data_dir, "recon_2x4_fields.npz")
+    cache = cache or os.path.join(data_dir, "recon_fields.npz")
     if os.path.exists(cache):
         z = np.load(cache, allow_pickle=True)
         rows, box = list(z["rows"]), float(z["box"])
@@ -506,39 +508,45 @@ def make_recon_figure(out, horizons=(20.0, 60.0), *, n=N_DEFAULT, data_dir=DATA_
         np.savez(cache, rows=np.array(rows, dtype=object), box=box)
         print(f"  cached -> {cache}")
 
+    # 4x3 grid: columns = (truth, initialization, optimized); per horizon two rows,
+    # an initial-state row (v_y') above a final-state row (omega_z).
     ylo, yhi = 0.28, 0.72                          # zoom onto the shear layer
     ext = [0, box, ylo, yhi]
-    titles = [r"true initial state  $v_y'$", r"initialization  $v_y'^{(0)}$",
-              r"optimized initial state  $\hat v_y'$",
-              r"observed final state  $\omega_z$", r"reconstructed final state  $\hat\omega_z$"]
-    fig, ax = plt.subplots(len(rows), 5, figsize=(18, 3.4 * len(rows)), constrained_layout=True)
-    ax = np.atleast_2d(ax)
+    col_titles = ["truth", "initialization", "optimized"]
+    lab = {"single": "single shooting", "multiple": "multiple shooting"}
 
-    for ri, row in enumerate(rows):
-        m = row["ic_true"].shape[0]
+    plot_rows = []   # (triple of fields, kind, ylabel)
+    for row in rows:
+        plot_rows.append(([row["ic_true"], row["ic_init"], row["ic_opt"]], "ic",
+                          f"$T={row['T']:.0f}\\,t_g$ ({lab[row['method']]})\n"
+                          f"initial state $v_y'$\nIC error $= {row['ic_err']:.3f}$"))
+        plot_rows.append(([row["w_obs"], row["w_init"], row["w_rec"]], "w",
+                          f"$T={row['T']:.0f}\\,t_g$\nfinal state $\\omega_z$"))
+
+    fig, ax = plt.subplots(len(plot_rows), 3, figsize=(12, 2.7 * len(plot_rows)),
+                           constrained_layout=True)
+    ax = np.atleast_2d(ax)
+    for ri, (fields, kind, ylabel) in enumerate(plot_rows):
+        m = fields[0].shape[0]
         j0, j1 = int(ylo * m), int(yhi * m)
-        ic_group = [row["ic_true"], row["ic_init"], row["ic_opt"]]
-        w_pair = [row["w_obs"], row["w_rec"]]
-        vlim_ic = float(np.max(np.abs([f[:, j0:j1] for f in ic_group])))
-        vlim_w = float(np.percentile(np.abs(np.stack([f[:, j0:j1] for f in w_pair])), 99.5))
-        fields = [(f, vlim_ic) for f in ic_group] + [(f, vlim_w) for f in w_pair]
+        crop = [f[:, j0:j1] for f in fields]
+        if kind == "ic":
+            vlim = float(np.max(np.abs(crop)))
+        else:
+            vlim = float(np.percentile(np.abs(np.stack(crop)), 99.5))
         ims = []
-        for ci, (fld, vlim) in enumerate(fields):
+        for ci, fld in enumerate(crop):
             a = ax[ri][ci]
-            im = a.imshow(fld[:, j0:j1].T, origin="lower", extent=ext, cmap="RdBu_r",
+            im = a.imshow(fld.T, origin="lower", extent=ext, cmap="RdBu_r",
                           vmin=-vlim, vmax=vlim, aspect="auto", interpolation="bilinear",
                           rasterized=True)
             ims.append(im)
             if ri == 0:
-                a.set_title(titles[ci], fontsize=11, pad=4)
+                a.set_title(col_titles[ci], fontsize=12, pad=5)
             a.set_xticks([]); a.set_yticks([])     # axes span the box; ticks/numbers carry no info
-        lab = {"single": "single shooting", "multiple": "multiple shooting"}[row["method"]]
-        ax[ri][0].set_ylabel(f"$T={row['T']:.0f}\\,t_g$\n({lab})\nIC error $= {row['ic_err']:.3f}$",
-                             fontsize=10)
-        fig.colorbar(ims[2], ax=ax[ri][:3], shrink=0.8, aspect=28, location="right",
-                     label=r"$v_y'$", pad=0.01)
-        fig.colorbar(ims[4], ax=ax[ri][3:], shrink=0.8, aspect=28, location="right",
-                     label=r"$\omega_z$", pad=0.01)
+        ax[ri][0].set_ylabel(ylabel, fontsize=9.5)
+        fig.colorbar(ims[2], ax=ax[ri][:], shrink=0.85, aspect=30, location="right",
+                     label=(r"$v_y'$" if kind == "ic" else r"$\omega_z$"), pad=0.01)
 
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     fig.savefig(out, dpi=160, bbox_inches="tight")
@@ -575,7 +583,7 @@ def main():
                                       "(forward-sims truth + recovered IC; needs a GPU unless cached)")
     rc.add_argument("--horizons", type=float, nargs="+", default=[20.0, 60.0])
     rc.add_argument("--n", type=int, default=N_DEFAULT)
-    rc.add_argument("--out", default="figures/recon_2x5_N256.png")
+    rc.add_argument("--out", default="figures/recon_4x3_N256.png")
     rc.add_argument("--no-pallas", action="store_true")
 
     args = ap.parse_args()
