@@ -1,50 +1,73 @@
+"""
+Time integration of the fluid equations.
+
+This module wires together everything needed to advance a primitive state in
+time: it prepares the helper data and sharding, optionally compiles for memory
+analysis or runtime debugging, and then drives the per-step update through the
+generic loop driver (fixed-step / adaptive while / checkpointed). The snapshot
+machinery that records diagnostics along the way also lives here. For the
+available options see the simulation configuration and the simulation parameters.
+"""
+
 # general
-import os
 from contextlib import nullcontext
-from types import NoneType
-import jax
-from jax.sharding import PartitionSpec
-import jax.numpy as jnp
 
-
+# typing
 from typing import Any, NamedTuple, Union
+from types import NoneType
 
-# runtime debugging
+# jax
+import jax
+import jax.numpy as jnp
+from jax.sharding import PartitionSpec
 from jax.experimental import checkify
 
 # astronomix constants
-from astronomix._finite_difference._state_evolution._evolve_state import _evolve_state_fd
-from astronomix._finite_difference._timestep_estimation._timestep_estimator import _cfl_time_step_fd, _cfl_time_step_fd_hydro
-from astronomix._geometry.boundaries import _boundary_handler
-from astronomix._pallas_helpers import pallas_mesh_context
-from astronomix.data_classes.simulation_state_struct import StateStruct
-from astronomix.option_classes.simulation_config import BACKWARDS, FINITE_DIFFERENCE, FINITE_VOLUME, FORWARDS, GHOST_CELLS, ON_DEVICE, PERIODIC_ROLL, STATE_TYPE, TO_DISK
+from astronomix.option_classes.simulation_config import (
+    BACKWARDS,
+    FINITE_DIFFERENCE,
+    FINITE_VOLUME,
+    FORWARDS,
+    GHOST_CELLS,
+    ON_DEVICE,
+    PERIODIC_ROLL,
+    STATE_TYPE,
+    TO_DISK
+)
 
 # astronomix containers
 from astronomix.option_classes.simulation_config import SimulationConfig
-from astronomix.data_classes.simulation_helper_data import (
-    HelperData,
-    _helper_data_requirements,
-    _unpad_helper_data,
-    get_helper_data,
-)
+from astronomix.data_classes.simulation_state_struct import StateStruct
+from astronomix.data_classes.simulation_helper_data import HelperData
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 from astronomix.option_classes.simulation_params import SimulationParams
 from astronomix.data_classes.simulation_snapshot_data import SnapshotData
 
 # astronomix functions
 from astronomix._finite_volume._state_evolution.evolve_state import _evolve_state_fv
-from astronomix._modules._iteration_level_updates import _iteration_level_updates
-from astronomix._modules._turbulent_forcing._turbulent_forcing import _init_ou_forcing_state
+from astronomix._finite_difference._state_evolution._evolve_state import _evolve_state_fd
 from astronomix._finite_volume._timestep_estimation._timestep_estimator import (
     _cfl_time_step,
     _source_term_aware_time_step,
 )
+from astronomix._finite_difference._timestep_estimation._timestep_estimator import (
+    _cfl_time_step_fd,
+    _cfl_time_step_fd_hydro
+)
+from astronomix._modules._iteration_level_updates import _iteration_level_updates
+from astronomix._modules._turbulent_forcing._turbulent_forcing import _init_ou_forcing_state
 from astronomix._snapshotting._snapshot_diagnostics import (
     build_snapshot_store,
     record_snapshot,
 )
 from astronomix.time_stepping._utils import _pad, _unpad
+from astronomix.data_classes.simulation_helper_data import (
+    _helper_data_requirements,
+    _unpad_helper_data,
+    get_helper_data,
+)
+from astronomix._geometry.boundaries import _boundary_handler
+from astronomix._pallas_helpers import pallas_mesh_context
 
 # progress bar
 from astronomix.time_stepping._progress_bar import _show_progress
@@ -541,37 +564,6 @@ def _integrate_core(
                 primitive_state, dt, params.gamma, config, params,
                 helper_data_pad, registered_variables,
             )
-
-        # Read-only per-step deep-void probe (env-gated; no graph impact when
-        # off, bit-identical trajectory when on — it only reads the new state).
-        # Prints (t, dt, min_rho, max|v|, NaN) when |v| crosses a threshold or a
-        # non-finite appears, to observe the velocity run-up into the blow-up
-        # without perturbing the dt sequence the way a dense snapshot grid does.
-        if os.environ.get("DEEPVOID_PROBE"):
-            _thr = float(os.environ.get("DEEPVOID_PROBE_VTHR", "3.0"))
-            _di = registered_variables.density_index
-            _vx = registered_variables.velocity_index.x
-            _vy = registered_variables.velocity_index.y
-            _vz = registered_variables.velocity_index.z
-            _rho = primitive_state[_di]
-            _vmag = jnp.sqrt(
-                primitive_state[_vx] ** 2
-                + primitive_state[_vy] ** 2
-                + primitive_state[_vz] ** 2
-            )
-            _stats = jnp.stack([
-                time + dt, dt, jnp.min(_rho), jnp.max(_vmag),
-                jnp.any(~jnp.isfinite(primitive_state)).astype(jnp.float32),
-            ])
-
-            def _probe(s, thr=_thr):
-                import numpy as _np
-                t_, dt_, rmin_, vmax_, nan_ = [float(x) for x in _np.asarray(s)]
-                if vmax_ > thr or nan_ > 0 or not _np.isfinite(vmax_):
-                    print(f"[probe] t={t_:.5f} dt={dt_:.3e} min_rho={rmin_:.3e} "
-                          f"max|v|={vmax_:.4g} NaN={int(nan_)}", flush=True)
-
-            jax.debug.callback(_probe, _stats)
 
         return dt, LoopState(primitive_state, key, forcing)
 

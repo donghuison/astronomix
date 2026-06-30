@@ -22,9 +22,19 @@ The shared block-shape / compiler-params helpers live in
 ``astronomix._pallas_helpers``.
 """
 
+# jax
 import jax
 import jax.numpy as jnp
 
+# astronomix constants
+from astronomix.option_classes.simulation_config import IDEAL_GAS, ISOTHERMAL, PALLAS
+
+# astronomix containers
+from astronomix.option_classes.simulation_config import SimulationConfig
+from astronomix.option_classes.simulation_params import SimulationParams
+from astronomix.variable_registry.registered_variables import RegisteredVariables
+
+# astronomix functions
 from astronomix._pallas_helpers import (
     _as_3tuple_block_shape,
     _backend_is_pallas,
@@ -65,9 +75,7 @@ def _weno5_shard_wrap(kernel_local, conserved_state, config, axis):
         halo=halo,
         block_shape=block_shape[:ndim],
     )
-from astronomix.option_classes.simulation_config import IDEAL_GAS, ISOTHERMAL, PALLAS, SimulationConfig
-from astronomix.option_classes.simulation_params import SimulationParams
-from astronomix.variable_registry.registered_variables import RegisteredVariables
+
 
 # Use the hand-derived explicit MHD WENO window adjoint
 # (``_weno_mhd_flux_from_window_adjoint``) in the Pallas MHD backward kernel

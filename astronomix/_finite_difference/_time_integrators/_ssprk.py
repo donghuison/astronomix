@@ -6,11 +6,31 @@ Constrained Transport (CT) implementation following (Seo & Ryu 2023,
 https://arxiv.org/abs/2304.04360).
 """
 
+# general
 from functools import partial
-import jax
-import jax.numpy as jnp
+
+# typing
 from typing import Union
 
+# jax
+import jax
+import jax.numpy as jnp
+
+# astronomix constants
+from astronomix.option_classes.simulation_config import (
+    CONSERVATIVE_GAS_STATE,
+    GHOST_CELLS,
+    MAGNETIC_FIELD_ONLY,
+    SIMPLE_SOURCE,
+)
+
+# astronomix containers
+from astronomix.data_classes.simulation_helper_data import HelperData
+from astronomix.option_classes.simulation_config import SimulationConfig
+from astronomix.option_classes.simulation_params import SimulationParams
+from astronomix.variable_registry.registered_variables import RegisteredVariables
+
+# astronomix functions
 from astronomix._fluid_equations._enforce_positivity import (
     _enforce_positivity,
     _apply_stage_positivity,
@@ -28,8 +48,6 @@ from astronomix._finite_difference._time_integrators._ssprk_pallas import (
     _div_axis_pallas_shape_ok,
     _hydro_flux_div_axis_pallas,
 )
-from astronomix._pallas_helpers import _backend_is_pallas, pl
-
 from astronomix._finite_difference._magnetic_update._constrained_transport import (
     _constrained_transport_rhs_from_slices,
     update_cell_center_fields,
@@ -37,13 +55,8 @@ from astronomix._finite_difference._magnetic_update._constrained_transport impor
 from astronomix._geometry.boundaries import _boundary_handler
 from astronomix._integrators._explicit_rk import lsrk4, ssprk4
 from astronomix._modules._time_integrator_sources import _time_integrator_sources
+from astronomix._pallas_helpers import _backend_is_pallas, pl
 from astronomix._stencil_operations._stencil_operations import _shift
-from astronomix.data_classes.simulation_helper_data import HelperData
-from astronomix.option_classes.simulation_config import CONSERVATIVE_GAS_STATE, GHOST_CELLS, MAGNETIC_FIELD_ONLY, SIMPLE_SOURCE, SimulationConfig
-from astronomix.option_classes.simulation_params import SimulationParams
-from astronomix.variable_registry.registered_variables import RegisteredVariables
-
-
 
 
 @partial(jax.jit, static_argnames=["registered_variables", "config"], donate_argnames=["conserved_state", "bx_interface", "by_interface", "bz_interface"])

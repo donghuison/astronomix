@@ -62,6 +62,11 @@ done; wait; done
 
 PYTHONPATH=$ROOT $PY kh_shooting_study.py agg  --horizon 60          # paired Wilson-CI stats
 PYTHONPATH=$ROOT $PY kh_shooting_study.py plot --horizons 20 60      # -> figures/study_2x3_N256.png
+
+# 2x4 reconstruction example (true/optimized initial state, observed/reconstructed final
+# state) for the best successful init per horizon -- single@T=20, multiple@T=60.
+# Needs a GPU once to forward-sim (fields are cached for re-plots).
+CUDA_VISIBLE_DEVICES=5 PYTHONPATH=$ROOT $PY kh_shooting_study.py recon --horizons 20 60
 ```
 
 Cost (Pallas reverse, this box): single ≈ 7.9 s/step, MS ≈ 5.4 s/step at N=256 T=60;
@@ -69,6 +74,9 @@ Cost (Pallas reverse, this box): single ≈ 7.9 s/step, MS ≈ 5.4 s/step at N=2
 
 ## Files
 
-- `kh_shooting_study.py` — the experiment + figure (one script; `run` / `agg` / `plot`).
+- `kh_shooting_study.py` — the experiment + figures (one script; `run` / `agg` / `plot` / `recon`).
 - `data/study_N256_T{20,60}_i*.npz` — per-init results (convergence traces + finals).
-- `figures/study_2x3_N256.png` — the figure.
+- `figures/study_2x3_N256.png` — convergence/comparison figure (rows = horizon, cols = J / IC / defect).
+- `figures/recon_2x5_N256.png` — reconstruction example (rows = horizon, cols = true /
+  initialization / optimized initial state `v_y'`, observed / reconstructed final state
+  `omega_z`); fields cached in `data/recon_2x4_fields.npz`.

@@ -1,9 +1,26 @@
+"""
+Static simulation configuration.
+
+Defines :class:`SimulationConfig` — the bundle of options that, unlike the
+simulation parameters, necessitate recompilation when changed — together with
+the integer-coded enumerations they reference (backends, solver/boundary/Riemann
+modes, positivity modes, ...), the small geometry vector helpers, the sub-configs
+for gravity and positivity, and the ``finalize_config`` pass that fills in
+derived fields and validates the configuration.
+"""
+
+# general
 import math
+
+# typing
 from types import NoneType
 from typing import NamedTuple, Tuple, Union
+from jaxtyping import Array, Float
 
+# jax
 import jax
 
+# astronomix containers
 from astronomix._modules._cnn_mhd_corrector._cnn_mhd_corrector_options import (
     CNNMHDconfig,
 )
@@ -13,9 +30,6 @@ from astronomix._modules._neural_net_force._neural_net_force_options import (
     NeuralNetForceConfig,
 )
 from astronomix._modules._stellar_wind.stellar_wind_options import WindConfig
-
-from jaxtyping import Array, Float
-
 from astronomix._modules._turbulent_forcing._turbulent_forcing_options import TurbulentForcingConfig
 
 # ===================== constant definition =====================
@@ -143,16 +157,22 @@ TO_DISK = 1
 # ===================== type definitions =====================
 
 class StaticIntVector(NamedTuple):
+    """A static (compile-time) per-axis integer triple (e.g. cells per axis)."""
+
     x: int = -1
     y: int = -1
     z: int = -1
 
+
 class StaticFloatVector(NamedTuple):
+    """A static (compile-time) per-axis float triple (e.g. box size per axis)."""
+
     x: float = -1.0
     y: float = -1.0
     z: float = -1.0
 
     def __truediv__(self, other: StaticIntVector) -> "StaticFloatVector":
+        """Divide component-wise by a :class:`StaticIntVector` (e.g. box / cells)."""
         if not isinstance(other, StaticIntVector):
             return NotImplemented
         return StaticFloatVector(
@@ -233,10 +253,15 @@ class SnapshotSettings(NamedTuple):
 
 
 class BoundarySettings1D(NamedTuple):
+    """The boundary-condition type at the left and right end of a single axis."""
+
     left_boundary: int = OPEN_BOUNDARY
     right_boundary: int = OPEN_BOUNDARY
 
+
 class BoundarySettings(NamedTuple):
+    """Per-axis boundary settings for the simulation."""
+
     x: BoundarySettings1D = BoundarySettings1D()
     y: BoundarySettings1D = BoundarySettings1D()
     z: BoundarySettings1D = BoundarySettings1D()
@@ -576,27 +601,40 @@ class SimulationConfig(NamedTuple):
 
 
 def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
-    """Finalizes the simulation configuration."""
+    """Fill in derived configuration fields and validate the configuration.
 
-    # default_positivity_protection: casual on/off switch for the STATE floors
-    # only. Default False = clean slate (no per-stage/per-step flooring). When
-    # True, turn the floors on (HARD_FLOOR) unless the user explicitly set a mode.
-    # The read-only clamps (clamp_in_estimates) are DECOUPLED and left untouched
-    # (default ON). The feature toggles (deepvoid_blend, preserving_flux,
-    # conservative redistribution, vacuum_rest, nan_safe) are independent too.
-    pc = config.positivity_config
-    if pc.default_positivity_protection:
-        config = config._replace(positivity_config=pc._replace(
+    Resolves the values that depend on the actual state shape or on
+    cross-field consistency: the positivity-protection defaults, the number
+    of cells per axis, the grid spacing, the geometry- and solver-specific
+    overrides, the master gravity switch, the boundary defaults, and the
+    disk-snapshot requirements.
+
+    Args:
+        config: The user-supplied simulation configuration.
+        state_shape: The shape of the (unpadded) primitive state array, used
+            to derive ``num_cells`` per axis.
+
+    Returns:
+        The finalized simulation configuration.
+    """
+
+    # ``default_positivity_protection`` is a casual on/off switch for the STATE
+    # floors only: the default ``False`` is a clean slate (no per-stage /
+    # per-step flooring). When set, turn the floors on (HARD_FLOOR) unless the
+    # user explicitly chose a mode. The read-only clamps (clamp_in_estimates)
+    # are decoupled and left untouched (default on), as are the feature toggles
+    # (deepvoid_blend, preserving_flux, conservative redistribution,
+    # vacuum_rest, nan_safe).
+    positivity_config = config.positivity_config
+    if positivity_config.default_positivity_protection:
+        config = config._replace(positivity_config=positivity_config._replace(
             per_stage_mode=(POSITIVITY_HARD_FLOOR
-                            if pc.per_stage_mode == POSITIVITY_NONE
-                            else pc.per_stage_mode),
+                            if positivity_config.per_stage_mode == POSITIVITY_NONE
+                            else positivity_config.per_stage_mode),
             per_step_mode=(POSITIVITY_HARD_FLOOR
-                           if pc.per_step_mode == POSITIVITY_NONE
-                           else pc.per_step_mode),
+                           if positivity_config.per_step_mode == POSITIVITY_NONE
+                           else positivity_config.per_step_mode),
         ))
-
-    # num_cells = state_shape[-1]
-    # config = config._replace(num_cells=num_cells)
 
     if jax.config.jax_enable_x64:
         config._replace(numerical_precision=DOUBLE_PRECISION)
@@ -623,12 +661,12 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
             )
         )
 
-    # for now we assume the grid spacing is the same in all dimensions
+    # For now we assume the grid spacing is the same in all dimensions, so the
+    # scalar ``grid_spacing`` is taken from the x-axis and the other axes are
+    # only checked for consistency below. This restriction can be lifted once
+    # the solver accepts a per-axis grid-spacing vector.
     grid_spacing_vec = config.box_size / config.num_cells
 
-    # as soon as we accept a grid spacing vector, 
-    # this will not be necessary anymore
-    # config = config._replace(grid_spacing=config.box_size / config.num_cells)
     if config.dimensionality == 1:
         config = config._replace(grid_spacing=grid_spacing_vec.x)
     elif config.dimensionality == 2:
@@ -645,7 +683,6 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
                 "For now, we assume the grid spacing is the same in all dimensions. "
                 f"Got grid spacing {grid_spacing_vec}."
             )
-            
 
     if config.geometry == SPHERICAL:
         print(
@@ -686,23 +723,9 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
         print("Setting MINMOD limiter for gravity.")
         config = config._replace(limiter=MINMOD)
 
-    # finite difference specific checks
+    # Finite-difference-specific checks.
     if config.solver_mode == FINITE_DIFFERENCE:
-        
-        # if not config.mhd:
-        #     raise ValueError(
-        #         "Finite difference solver mode is currently " \
-        #         "only supported for MHD simulations. This will be easy to extend, " \
-        #         "feel free to contribute."
-        #     )
 
-        # if config.dimensionality != 3 and config.mhd:
-        #     raise ValueError(
-        #         "Finite difference solver mode in MHD mode is currently " \
-        #         "only supported for 3D simulations. This will be easy to extend, " \
-        #         "feel free to contribute."
-        #     )
-        
         if config.dimensionality == 3 and config.boundary_settings == BoundarySettings(
             BoundarySettings1D(
                 left_boundary=PERIODIC_BOUNDARY, right_boundary=PERIODIC_BOUNDARY
@@ -714,7 +737,8 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
                 left_boundary=PERIODIC_BOUNDARY, right_boundary=PERIODIC_BOUNDARY
             ),
         ):
-            # set boundary handling to periodic roll and num_ghost_cells to 0
+            # Fully periodic boundaries are enforced more cheaply by rolling the
+            # arrays (PERIODIC_ROLL) than by maintaining explicit ghost cells.
             print(
                 "For 3D simulations with periodic boundaries, setting boundary handling to " \
                 "PERIODIC_ROLL and num_ghost_cells to 0 for better performance."
@@ -722,8 +746,8 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
             config = config._replace(boundary_handling=PERIODIC_ROLL, num_ghost_cells=0)
         else:
             if config.dimensionality == 3:
-                config = config._replace(boundary_handling=GHOST_CELLS, num_ghost_cells=4) 
-        
+                config = config._replace(boundary_handling=GHOST_CELLS, num_ghost_cells=4)
+
         if config.dimensionality == 2 and config.boundary_settings == BoundarySettings(
             BoundarySettings1D(
                 left_boundary=PERIODIC_BOUNDARY, right_boundary=PERIODIC_BOUNDARY
@@ -732,7 +756,8 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
                 left_boundary=PERIODIC_BOUNDARY, right_boundary=PERIODIC_BOUNDARY
             ),
         ):
-            # set boundary handling to periodic roll and num_ghost_cells to 0
+            # Fully periodic boundaries are enforced more cheaply by rolling the
+            # arrays (PERIODIC_ROLL) than by maintaining explicit ghost cells.
             print(
                 "For 2D simulations with periodic boundaries, setting boundary handling to " \
                 "PERIODIC_ROLL and num_ghost_cells to 0 for better performance."
@@ -758,7 +783,7 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
         if config.boundary_handling == GHOST_CELLS and (config.diffusion or config.thermal_conduction):
             config = config._replace(num_ghost_cells=max(config.num_ghost_cells, 6))
 
-    # set boundary conditions if not set
+    # Pick sensible default boundary conditions when the user left them unset.
     if config.boundary_settings is None:
         if config.geometry == CARTESIAN:
             print("Automatically setting open boundaries for Cartesian geometry.")
@@ -786,7 +811,7 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
         )
         config = config._replace(source_term_aware_timestep=True)
 
-    # disk-snapshot (Orbax) mode requirements
+    # Disk-snapshot (Orbax) mode requirements.
     if config.snapshot_storage_mode == TO_DISK:
         if not config.snapshot_storage_path:
             raise ValueError(
@@ -802,7 +827,9 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
 
     return config
 
+
 def riemann_solver_to_string(riemann_solver: int) -> str:
+    """Return the human-readable name of a Riemann-solver constant."""
     if riemann_solver == HLL:
         return "HLL"
     elif riemann_solver == HLLC:
@@ -816,7 +843,9 @@ def riemann_solver_to_string(riemann_solver: int) -> str:
     elif riemann_solver == AM_HLLC:
         return "AM HLLC"
 
+
 def limiter_to_string(limiter: int) -> str:
+    """Return the human-readable name of a slope-limiter constant."""
     if limiter == MINMOD:
         return "Minmod"
     elif limiter == SUPERBEE:
@@ -829,14 +858,18 @@ def limiter_to_string(limiter: int) -> str:
         return "Van Albada"
     elif limiter == VAN_ALBADA_PP:
         return "Van Albada PP"
-    
+
+
 def solver_mode_to_string(solver_mode: int) -> str:
+    """Return the short label (``"FV"`` / ``"FD"``) of a solver-mode constant."""
     if solver_mode == FINITE_VOLUME:
         return "FV"
     elif solver_mode == FINITE_DIFFERENCE:
         return "FD"
-    
+
+
 def config_to_string(config: SimulationConfig) -> str:
+    """Return a compact one-line description of the solver configuration."""
     if config.solver_mode == FINITE_VOLUME:
         return f"FV, {riemann_solver_to_string(config.riemann_solver)}, {limiter_to_string(config.limiter)}, {config.num_cells.x} cells"
     elif config.solver_mode == FINITE_DIFFERENCE:

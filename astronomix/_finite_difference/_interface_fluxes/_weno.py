@@ -1,5 +1,5 @@
-"""
-Here we calculate weighted essentially non-oscillatory 
+r"""
+Here we calculate weighted essentially non-oscillatory
 (WENO) fluxes for the MHD equations.
 
 The idea of WENO is to find interface fluxes by interpolating
@@ -96,13 +96,18 @@ Concretely we implement the 5th-order WENO scheme as described in
   (https://arxiv.org/abs/2304.04360)
 """
 
+# general
 from functools import partial
-import jax
-import jax.numpy as jnp
+
+# typing
 from typing import Union
 
+# jax
+import jax
+import jax.numpy as jnp
 from jax import checkpoint
 
+# optional Pallas backend (absent on platforms without a Pallas/Triton build)
 try:
     from jax.experimental import pallas as pl
 except Exception:  # pragma: no cover - optional backend
@@ -113,6 +118,15 @@ try:
 except Exception:  # pragma: no cover - optional backend
     pltriton = None
 
+# astronomix constants
+from astronomix.option_classes.simulation_config import BACKWARDS, IDEAL_GAS, ISOTHERMAL, PALLAS
+
+# astronomix containers
+from astronomix.option_classes.simulation_config import SimulationConfig
+from astronomix.option_classes.simulation_params import SimulationParams
+from astronomix.variable_registry.registered_variables import RegisteredVariables
+
+# astronomix functions
 from astronomix._fluid_equations._eigen_hydro import _eigen_L_row_hydro, _eigen_R_col_hydro, _eigen_lambdas_hydro
 from astronomix._fluid_equations._eigen_hydro_iso import _eigen_L_row_hydro_iso, _eigen_R_col_hydro_iso, _eigen_lambdas_hydro_iso
 from astronomix._fluid_equations._eigen_mhd import _eigen_L_row, _eigen_R_col, _eigen_lambdas
@@ -121,9 +135,7 @@ from astronomix._fluid_equations._fluxes_mhd import _euler_flux_isothermal_x, _m
 from astronomix._fluid_equations._equations import primitive_state_from_conserved
 from astronomix._fluid_equations._fluxes import _euler_flux
 from astronomix._stencil_operations._stencil_operations import _shift
-from astronomix.option_classes.simulation_config import BACKWARDS, IDEAL_GAS, ISOTHERMAL, PALLAS, SimulationConfig
-from astronomix.option_classes.simulation_params import SimulationParams
-from astronomix.variable_registry.registered_variables import RegisteredVariables
+
 
 @partial(jax.jit, static_argnames=["registered_variables", "config"])
 def _weno_flux_x_native(
@@ -136,10 +148,6 @@ def _weno_flux_x_native(
     WENO flux reconstruction.
     """
 
-    # if jax.config.jax_enable_x64:
-    #     epsilon = 1e-8
-    # else:
-    #     epsilon = 1e-6
     epsilon = 1e-7
 
     # only used in the IDEAL_GAS case
@@ -377,6 +385,24 @@ def _weno_flux_y_native(
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ):
+    """
+    WENO flux reconstruction in the y-direction.
+
+    Reuses the x-direction kernel by transposing the state so that y becomes
+    the leading spatial axis (and swapping the x/y momentum and magnetic
+    components), running ``_weno_flux_x_native``, then undoing both the
+    transpose and the component swap on the resulting flux.
+
+    Args:
+        conserved_state: The conserved state array.
+        params: The simulation parameters.
+        config: The simulation configuration.
+        registered_variables: The registered variables.
+
+    Returns:
+        The WENO interface fluxes in the y-direction.
+    """
+
     # Transpose to make y the "x" direction
     if config.dimensionality == 2:
         qy = jnp.transpose(conserved_state, (0, 2, 1))
@@ -431,6 +457,24 @@ def _weno_flux_z_native(
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ):
+    """
+    WENO flux reconstruction in the z-direction.
+
+    Reuses the x-direction kernel by transposing the state so that z becomes
+    the leading spatial axis (and swapping the x/z momentum and magnetic
+    components), running ``_weno_flux_x_native``, then undoing both the
+    transpose and the component swap on the resulting flux.
+
+    Args:
+        conserved_state: The conserved state array.
+        params: The simulation parameters.
+        config: The simulation configuration.
+        registered_variables: The registered variables.
+
+    Returns:
+        The WENO interface fluxes in the z-direction.
+    """
+
     # Transpose to make z the "x" direction
     qz = jnp.transpose(conserved_state, (0, 3, 2, 1))
     
@@ -498,6 +542,7 @@ from astronomix._pallas_helpers import diffable_pallas_call, pallas_vjp_call  # 
 
 
 def _weno_flux_native_for_axis(axis: int):
+    """Return the native-JAX WENO flux function for the given spatial axis."""
     if axis == 0:
         return _weno_flux_x_native
     if axis == 1:
@@ -600,6 +645,8 @@ def _weno_flux_x(
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ):
+    """WENO interface flux in the x-direction (Pallas backend where supported,
+    native JAX otherwise)."""
     return _weno_flux_axis_dispatch(
         conserved_state, params, config, registered_variables, axis=0,
     )
@@ -612,6 +659,8 @@ def _weno_flux_y(
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ):
+    """WENO interface flux in the y-direction (Pallas backend where supported,
+    native JAX otherwise)."""
     return _weno_flux_axis_dispatch(
         conserved_state, params, config, registered_variables, axis=1,
     )
@@ -624,6 +673,8 @@ def _weno_flux_z(
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
 ):
+    """WENO interface flux in the z-direction (Pallas backend where supported,
+    native JAX otherwise)."""
     return _weno_flux_axis_dispatch(
         conserved_state, params, config, registered_variables, axis=2,
     )

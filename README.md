@@ -176,6 +176,13 @@ you can donate the initial state to the time integration (activate `donate_state
 which allows `JAX` to reuse the same memory for the state throughout the simulation (but you can also no
 longer access the initial state after the simulation has started).
 
+### What if my simulation crashes?
+
+First of all check if the initial conditions are valid. Then there 
+is the `PositivityConfig` in the `SimulationConfig`, in which for instance
+a positivity preserving limiter can be turned on for the finite 
+difference scheme.
+
 ## Documentation
 
 See [here](https://astronomix-mhd.web.app/).

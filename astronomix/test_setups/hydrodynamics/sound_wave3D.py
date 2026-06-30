@@ -1,6 +1,6 @@
-# 3D Linear Sound Wave
-
 """
+3D linear sound wave.
+
 Three-dimensional convergence test using a small-amplitude acoustic
 eigenmode of the linearised Euler equations propagating obliquely with
 respect to the grid axes. This is the pure-hydro analogue of the CP Alfvén
@@ -23,29 +23,37 @@ and the grid spacing is uniform. After ``n_periods`` full periods the
 analytic state has returned to the initial condition.
 """
 
+# typing
 from typing import NamedTuple
 
+# jax
 import jax.numpy as jnp
 
+# astronomix constants
 from astronomix import CARTESIAN
-from astronomix.data_classes.simulation_helper_data import HelperData, get_helper_data
-from astronomix.initial_condition_generation.construct_primitive_state import (
-    construct_primitive_state,
-)
 from astronomix.option_classes.simulation_config import (
     PERIODIC_BOUNDARY,
     STATE_TYPE,
+)
+
+# astronomix containers
+from astronomix.data_classes.simulation_helper_data import HelperData
+from astronomix.option_classes.simulation_config import (
     BoundarySettings,
     BoundarySettings1D,
     SimulationConfig,
     StaticFloatVector,
-    finalize_config,
 )
 from astronomix.option_classes.simulation_params import SimulationParams
-from astronomix.variable_registry.registered_variables import (
-    RegisteredVariables,
-    get_registered_variables,
+from astronomix.variable_registry.registered_variables import RegisteredVariables
+
+# astronomix functions
+from astronomix.data_classes.simulation_helper_data import get_helper_data
+from astronomix.initial_condition_generation.construct_primitive_state import (
+    construct_primitive_state,
 )
+from astronomix.option_classes.simulation_config import finalize_config
+from astronomix.variable_registry.registered_variables import get_registered_variables
 
 
 # Propagation direction in the simulation frame: (1, 2, 2)/3 (matches the

@@ -7,8 +7,6 @@ package.json
 package-lock.json
 .firebase/
 
-CLAUDE.md
-
 arena/results/*/data
 
 data_mhdgrav

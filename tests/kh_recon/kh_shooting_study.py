@@ -226,8 +226,9 @@ def _make_problem(khp, horizon, pallas):
     y = H(s)
     tnorm = float(jnp.linalg.norm(truth))
     ic_err = lambda c: float(jnp.linalg.norm(seed_of(c) - truth) / tnorm)
-    return dict(seed_of=seed_of, s0_of=s0_of, Phi=Phi, PhiT=PhiT, H=H, y=y,
-                truth=truth, ic_err=ic_err, n_modes=len(ks), M=M)
+    return dict(seed_of=seed_of, s0_of=s0_of, base_state=base_state, Phi=Phi, PhiT=PhiT,
+                H=H, y=y, truth=truth, ic_err=ic_err, n_modes=len(ks), M=M,
+                box=khp.box, n=khp.n)
 
 
 # ============================================================================
@@ -432,6 +433,121 @@ def make_figure(horizons, out, *, n=N_DEFAULT, data_dir=DATA_DIR):
 
 
 # ============================================================================
+#  2x4 reconstruction-example figure
+#  cols: true IC | optimized IC (both v_y') ; observed final | reconstructed final (both omega_z)
+#  rows: one successful reconstruction per horizon (the winning method at that horizon)
+# ============================================================================
+def _best_cell(horizon, n, data_dir):
+    """Best SUCCESSFUL (ic<0.1) reconstruction at this horizon, across both methods:
+    returns (method, init, c_rec, ic_err).  Naturally picks single at short horizon,
+    MS at long horizon."""
+    import numpy as np
+    files, runs = _load_cells(n, horizon, data_dir)
+    best = None
+    for f, r in zip(files, runs):
+        init = int(f.split("_i")[-1].replace(".npz", ""))
+        for method, ickey, ckey in (("single", "single_final_ic", "c_single"),
+                                     ("multiple", "ms_final_ic", "c_ms")):
+            ic = float(r[ickey])
+            if ic < 0.1 and (best is None or ic < best[3]):
+                best = (method, init, np.asarray(r[ckey]), ic)
+    if best is None:
+        raise SystemExit(f"no successful (ic<0.1) reconstruction found at T={horizon:.0f}")
+    return best
+
+
+def _vorticity(v, dx):
+    """omega_z = dvy/dx - dvx/dy, central differences, periodic in x (v: (2,Nx,Ny))."""
+    import numpy as np
+    dvydx = (np.roll(v[1], -1, 0) - np.roll(v[1], 1, 0)) / (2 * dx)
+    dvxdy = (np.roll(v[0], -1, 1) - np.roll(v[0], 1, 1)) / (2 * dx)
+    return dvydx - dvxdy
+
+
+def _recon_fields(horizons, n, data_dir, pallas):
+    """Forward-integrate truth and recovered ICs for each horizon (needs a GPU)."""
+    import jax
+    import numpy as np
+    rows = []
+    for T in horizons:
+        method, init, c_rec, ic = _best_cell(T, n, data_dir)
+        P = _make_problem(KHParams(n=n), T, pallas)
+        seed_of, base_state, PhiT, H = P["seed_of"], P["base_state"], P["PhiT"], P["H"]
+        dx = P["box"] / P["n"]
+        truth = P["truth"]
+        c0 = INITSCALE_DEFAULT * jax.random.normal(jax.random.PRNGKey(100 + init), (P["n_modes"], 2))
+        ic_true = np.asarray(truth[1])                       # v_y' of the truth seed
+        ic_init = np.asarray(seed_of(c0)[1])                 # v_y' of the cold start
+        ic_opt = np.asarray(seed_of(c_rec)[1])               # v_y' of the optimized seed
+        w_obs = _vorticity(np.asarray(H(PhiT(base_state(truth)))), dx)       # S_T(truth)
+        w_rec = _vorticity(np.asarray(H(PhiT(P["s0_of"](c_rec)))), dx)       # S_T(recovered)
+        rows.append(dict(T=float(T), method=method, init=int(init), ic_err=float(ic),
+                         ic_true=ic_true, ic_init=ic_init, ic_opt=ic_opt, w_obs=w_obs, w_rec=w_rec))
+        print(f"  T={T:.0f}: {method} init {init}  ic_err={ic:.4f}", flush=True)
+    return rows, P["box"]
+
+
+def make_recon_figure(out, horizons=(20.0, 60.0), *, n=N_DEFAULT, data_dir=DATA_DIR,
+                      pallas=True, cache=None):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    cache = cache or os.path.join(data_dir, "recon_2x4_fields.npz")
+    if os.path.exists(cache):
+        z = np.load(cache, allow_pickle=True)
+        rows, box = list(z["rows"]), float(z["box"])
+    else:
+        if not os.environ.get("CUDA_VISIBLE_DEVICES"):
+            from autocvd import autocvd
+            autocvd(num_gpus=1)
+        rows, box = _recon_fields(horizons, n, data_dir, pallas)
+        np.savez(cache, rows=np.array(rows, dtype=object), box=box)
+        print(f"  cached -> {cache}")
+
+    ylo, yhi = 0.28, 0.72                          # zoom onto the shear layer
+    ext = [0, box, ylo, yhi]
+    titles = [r"true initial state  $v_y'$", r"initialization  $v_y'^{(0)}$",
+              r"optimized initial state  $\hat v_y'$",
+              r"observed final state  $\omega_z$", r"reconstructed final state  $\hat\omega_z$"]
+    fig, ax = plt.subplots(len(rows), 5, figsize=(18, 3.4 * len(rows)), constrained_layout=True)
+    ax = np.atleast_2d(ax)
+
+    for ri, row in enumerate(rows):
+        m = row["ic_true"].shape[0]
+        j0, j1 = int(ylo * m), int(yhi * m)
+        ic_group = [row["ic_true"], row["ic_init"], row["ic_opt"]]
+        w_pair = [row["w_obs"], row["w_rec"]]
+        vlim_ic = float(np.max(np.abs([f[:, j0:j1] for f in ic_group])))
+        vlim_w = float(np.percentile(np.abs(np.stack([f[:, j0:j1] for f in w_pair])), 99.5))
+        fields = [(f, vlim_ic) for f in ic_group] + [(f, vlim_w) for f in w_pair]
+        ims = []
+        for ci, (fld, vlim) in enumerate(fields):
+            a = ax[ri][ci]
+            im = a.imshow(fld[:, j0:j1].T, origin="lower", extent=ext, cmap="RdBu_r",
+                          vmin=-vlim, vmax=vlim, aspect="auto", interpolation="bilinear",
+                          rasterized=True)
+            ims.append(im)
+            if ri == 0:
+                a.set_title(titles[ci], fontsize=11, pad=4)
+            a.set_xticks([]); a.set_yticks([])     # axes span the box; ticks/numbers carry no info
+        lab = {"single": "single shooting", "multiple": "multiple shooting"}[row["method"]]
+        ax[ri][0].set_ylabel(f"$T={row['T']:.0f}\\,t_g$\n({lab})\nIC error $= {row['ic_err']:.3f}$",
+                             fontsize=10)
+        fig.colorbar(ims[2], ax=ax[ri][:3], shrink=0.8, aspect=28, location="right",
+                     label=r"$v_y'$", pad=0.01)
+        fig.colorbar(ims[4], ax=ax[ri][3:], shrink=0.8, aspect=28, location="right",
+                     label=r"$\omega_z$", pad=0.01)
+
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    fig.savefig(out, dpi=160, bbox_inches="tight")
+    svg = os.path.splitext(out)[0] + ".svg"   # imshow pixels rasterized, text/axes vector
+    fig.savefig(svg, dpi=160, bbox_inches="tight")
+    print(f"-> {out}\n-> {svg}")
+
+
+# ============================================================================
 def main():
     ap = argparse.ArgumentParser(description="Single vs multiple shooting (Adam) for KH IC reconstruction.")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -450,10 +566,17 @@ def main():
     a.add_argument("--horizon", type=float, required=True)
     a.add_argument("--n", type=int, default=N_DEFAULT)
 
-    p = sub.add_parser("plot", help="render the 2x3 figure (no GPU)")
+    p = sub.add_parser("plot", help="render the 2x3 convergence figure (no GPU)")
     p.add_argument("--horizons", type=float, nargs="+", default=[20.0, 60.0])
     p.add_argument("--n", type=int, default=N_DEFAULT)
     p.add_argument("--out", default="figures/study_2x3_N256.png")
+
+    rc = sub.add_parser("recon", help="render the 2x4 reconstruction-example figure "
+                                      "(forward-sims truth + recovered IC; needs a GPU unless cached)")
+    rc.add_argument("--horizons", type=float, nargs="+", default=[20.0, 60.0])
+    rc.add_argument("--n", type=int, default=N_DEFAULT)
+    rc.add_argument("--out", default="figures/recon_2x5_N256.png")
+    rc.add_argument("--no-pallas", action="store_true")
 
     args = ap.parse_args()
     if args.cmd == "run":
@@ -466,6 +589,9 @@ def main():
         aggregate(args.horizon, n=args.n)
     elif args.cmd == "plot":
         make_figure(args.horizons, args.out, n=args.n)
+    elif args.cmd == "recon":
+        make_recon_figure(args.out, horizons=tuple(args.horizons), n=args.n,
+                          pallas=not args.no_pallas)
 
 
 if __name__ == "__main__":

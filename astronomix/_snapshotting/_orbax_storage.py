@@ -26,13 +26,18 @@ uint32 array tensorstore can serialise) and rebuilt with
 present; its absence on load is reported as ``forcing = None``.
 """
 
+# general
 from contextlib import contextmanager
 from pathlib import Path
+
+# typing
 from typing import Any, NamedTuple, Optional
 
+# jax
 import jax
 from jax.sharding import NamedSharding, PartitionSpec
 
+# checkpointing
 import orbax.checkpoint as ocp
 
 
@@ -61,6 +66,12 @@ class _LoopCheckpointWriter:
         self._directory = Path(directory).resolve()
 
     def save(self, step, *, time, primitive_state, key, forcing, num_iterations):
+        """Serialise one loop carry into the ``<root>/<step>`` sub-directory.
+
+        The PRNG key is stored as raw key data (a plain uint32 array
+        tensorstore can serialise) and the OU forcing field is only written
+        when present, so its absence is unambiguous on load.
+        """
         tree = {
             "time": time,
             "primitive_state": primitive_state,
