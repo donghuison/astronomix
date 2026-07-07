@@ -1,5 +1,5 @@
 :py:mod:`astronomix._modules._stellar_wind.weaver`
-==========================================================
+==================================================
 
 .. py:module:: astronomix._modules._stellar_wind.weaver
 

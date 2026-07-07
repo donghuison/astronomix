@@ -1,5 +1,5 @@
 :py:mod:`astronomix._modules._cosmic_rays.cr_fluid_equations`
-=====================================================================
+=============================================================
 
 .. py:module:: astronomix._modules._cosmic_rays.cr_fluid_equations
 

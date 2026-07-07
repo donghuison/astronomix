@@ -1,7 +1,7 @@
 :orphan:
 
 :py:mod:`astronomix._modules._cosmic_rays`
-==================================================
+==========================================
 
 .. py:module:: astronomix._modules._cosmic_rays
 
@@ -15,6 +15,6 @@ Submodules
    :titlesonly:
    :maxdepth: 1
 
-   astronomix._modules._cosmic_rays.cosmic_ray_options
-   astronomix._modules._cosmic_rays.cr_fluid_equations
    astronomix._modules._cosmic_rays.cr_injection
+   astronomix._modules._cosmic_rays.cr_fluid_equations
+   astronomix._modules._cosmic_rays.cosmic_ray_options

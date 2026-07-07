@@ -1,5 +1,5 @@
 :py:mod:`astronomix._modules._stellar_wind.stellar_wind_options`
-========================================================================
+================================================================
 
 .. py:module:: astronomix._modules._stellar_wind.stellar_wind_options
 

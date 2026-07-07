@@ -1,5 +1,5 @@
 :py:mod:`astronomix._modules._cosmic_rays.cosmic_ray_options`
-=====================================================================
+=============================================================
 
 .. py:module:: astronomix._modules._cosmic_rays.cosmic_ray_options
 
