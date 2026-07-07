@@ -16,7 +16,7 @@ as surrogate / solver-in-the-loop training.
 finite volume approach of [Pang and Wu (2024)](https://arxiv.org/abs/2410.05173) (the WENO scheme is also available standalone for hydrodynamics)
 - [x] isothermal hydrodynamics and magnetohydrodynamics are also supported (currently only in the finite difference scheme)
 - [x] for finite volume simulations the basic Lax-Friedrichs, HLL and HLLC Riemann solvers as well as the HLLC-LM ([Fleischmann et al., 2020](https://www.sciencedirect.com/science/article/pii/S0021999120305362)) and HYBRID-HLLC & AM-HLLC ([Hu et al., 2025](https://www.sciencedirect.com/science/article/pii/S1007570425005891)) (sequels to HLLC-LM) variants
-- [x] novel (possibly) conservative self gravity scheme, with improved stability at strong discontinuities
+- [x] novel semi-discretely energy conserving self-gravity scheme
 - [x] spherically symmetric simulations such that mass and energy are conserved based on the scheme of [Crittenden and Balachandar (2018)](https://doi.org/10.1007/s00193-017-0784-y)
 - [x] backwards and forwards differentiable with adaptive timestepping
 - [x] turbulent driving, simple stellar wind, simple radiative cooling modules
@@ -146,9 +146,9 @@ the notebooks below and we have also prepared a more advanced use-case
 |:---------------------------------------------------------------------------------------:|
 | Gradients Through Stellar Wind                                                          |
 
-| ![Novel (Possibly) Conservative Self Gravity Scheme, Stable at Strong Discontinuities](notebooks/figures/collapse_conservation.svg) |
-|:-----------------------------------------------------------------------------------------------------------------------------------:|
-| Novel (Possibly) Conservative Self Gravity Scheme, Stable at Strong Discontinuities                                                 |
+| ![Novel Semi-Discretely Energy Conserving Self Gravity Scheme](notebooks/figures/collapse_conservation.svg) |
+|:-----------------------------------------------------------------------------------------------------------:|
+| Novel Semi-Discretely Energy Conserving Self Gravity Scheme                                                 |
 
 | ![Wind Parameter Optimization](notebooks/figures/wind_parameter_optimization.png) |
 |:---------------------------------------------------------------------------------:|
