@@ -30,7 +30,9 @@ from astronomix.option_classes.simulation_config import (
     FORWARDS,
     GHOST_CELLS,
     ON_DEVICE,
+    PALLAS,
     PERIODIC_ROLL,
+    RK4_LSRK,
     STATE_TYPE,
     TO_DISK
 )
@@ -103,6 +105,90 @@ class LoopState(NamedTuple):
     primitive_state: Any
     key: Any
     forcing: Any = None
+
+
+def _raise_with_time_integration_hint(error: Exception, config: SimulationConfig):
+    """Re-raise a time-integration failure after printing actionable hints.
+
+    JAX surfaces two failure modes that a user can usually fix by tweaking the
+    configuration, but its raw error messages give no hint on which knob to turn:
+
+    - Running out of device memory (a ``RESOURCE_EXHAUSTED`` / out-of-memory
+      runtime error). We suggest the lower-storage options for the active
+      solver mode: the 2N-storage LSRK4 integrator and the fused Pallas kernels
+      on the finite-difference path, plus donating the input state buffers.
+    - The solver going unstable and producing NaNs (caught by ``checkify`` when
+      ``runtime_debugging`` is on). We suggest the stability knobs: positivity
+      protection, a positivity-preserving limiter, and a smaller CFL number.
+
+    The original error is always re-raised so callers and tracebacks are
+    unchanged; the hints are printed alongside it as a convenience.
+
+    Args:
+        error: The exception raised by the JIT'd time integration.
+        config: The (finalized) simulation configuration, used to tailor the
+            hints to the active solver mode, backend and integrator.
+
+    Raises:
+        Exception: Always re-raises ``error`` unchanged.
+    """
+    message = str(error).lower()
+    is_out_of_memory = (
+        "resource_exhausted" in message
+        or "out of memory" in message
+        or "out_of_memory" in message
+    )
+    is_nan = "nan" in message
+
+    hints = []
+    if is_out_of_memory:
+        hints.append(
+            "The time integration ran out of device memory. Options to lower "
+            "the memory footprint:"
+        )
+        if config.solver_mode == FINITE_DIFFERENCE:
+            if config.time_integrator != RK4_LSRK:
+                hints.append(
+                    "  - set config.time_integrator = RK4_LSRK, the 2N-storage "
+                    "low-memory RK4 integrator (one fewer full-state buffer)."
+                )
+            if config.backend != PALLAS:
+                hints.append(
+                    "  - set config.backend = PALLAS (or OPTIMAL_BACKEND on an "
+                    "Ampere+ GPU); its fused kernels need far less temporary "
+                    "memory than the native-JAX backend."
+                )
+        if not config.donate_state:
+            hints.append(
+                "  - set config.donate_state = True to reuse the input state "
+                "buffers instead of allocating fresh ones."
+            )
+        hints.append(
+            "  - reduce the resolution (num_cells) or shard the run across "
+            "more GPUs."
+        )
+    elif is_nan:
+        hints.append(
+            "The time integration produced NaNs, i.e. the solver went unstable. "
+            "Options to stabilize it:"
+        )
+        hints.append(
+            "  - enable positivity protection: set "
+            "config.positivity_config.default_positivity_protection = True."
+        )
+        hints.append(
+            "  - use a positivity-preserving limiter such as VAN_ALBADA_PP "
+            "(config.limiter)."
+        )
+        hints.append(
+            "  - reduce the CFL number (params.C_cfl) for smaller, safer time "
+            "steps."
+        )
+
+    if hints:
+        print("\n".join(["", *hints, ""]))
+
+    raise error
 
 
 # @jaxtyped(typechecker=typechecker)
@@ -198,16 +284,20 @@ def time_integration(
     # Orbax (sharding preserved per device). It reuses the helper data and the
     # promoted params built above.
     if config.snapshot_storage_mode == TO_DISK:
-        return _time_integration_to_disk(
-            primitive_state,
-            config,
-            params,
-            registered_variables,
-            helper_data_pad,
-            snapshot_callable,
-            sharding,
-            restart_state,
-        )
+        try:
+            return _time_integration_to_disk(
+                primitive_state,
+                config,
+                params,
+                registered_variables,
+                helper_data_pad,
+                snapshot_callable,
+                sharding,
+                restart_state,
+            )
+        except Exception as error:
+            # Turn an opaque out-of-memory / NaN failure into an actionable one.
+            _raise_with_time_integration_hint(error, config)
 
     if config.donate_state:
         time_integration_jit = jax.jit(
@@ -239,15 +329,20 @@ def time_integration(
         )
         checked_integration = checkify.checkify(_time_integration, errors)
 
-        err, final_state = checked_integration(
-            primitive_state,
-            config,
-            params,
-            registered_variables,
-            helper_data_pad,
-            snapshot_callable,
-        )
-        err.throw()
+        try:
+            err, final_state = checked_integration(
+                primitive_state,
+                config,
+                params,
+                registered_variables,
+                helper_data_pad,
+                snapshot_callable,
+            )
+            # ``err.throw()`` raises on the first tripped check (NaN, negative
+            # pressure, ...); route it through the hint helper too.
+            err.throw()
+        except Exception as error:
+            _raise_with_time_integration_hint(error, config)
 
     else:
         memory_stats = None
@@ -316,15 +411,23 @@ def time_integration(
             start_time = timer()
             print("🚀 Starting simulation...")
 
-        with mesh_ctx, pallas_mesh_context(pallas_mesh):
-            final_state = time_integration_jit(
-                primitive_state,
-                config,
-                params,
-                registered_variables,
-                helper_data_pad,
-                snapshot_callable,
-            )
+        try:
+            with mesh_ctx, pallas_mesh_context(pallas_mesh):
+                final_state = time_integration_jit(
+                    primitive_state,
+                    config,
+                    params,
+                    registered_variables,
+                    helper_data_pad,
+                    snapshot_callable,
+                )
+            # JAX dispatch is asynchronous, so an out-of-memory failure only
+            # surfaces once the buffers are actually realized. Block here, inside
+            # the guard, so the hint helper can annotate it.
+            final_state = jax.block_until_ready(final_state)
+        except Exception as error:
+            # Turn an opaque out-of-memory / NaN failure into an actionable one.
+            _raise_with_time_integration_hint(error, config)
 
         # For certain backend/size combinations (notably FD JAX at large
         # N with a multi-device mesh) pjit returns some scalar/auxiliary

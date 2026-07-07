@@ -33,10 +33,15 @@ from astronomix.option_classes.simulation_config import (
 from astronomix.option_classes.simulation_config import SimulationConfig
 from astronomix.variable_registry.registered_variables import RegisteredVariables
 
+# astronomix functions
+from astronomix._finite_difference._magnetic_update._constrained_transport import (
+    initialize_interface_fields,
+)
+
 
 # @jaxtyped(typechecker=typechecker)
 @partial(jax.jit, static_argnames=["registered_variables", "config", "sharding"])
-def construct_primitive_state(
+def _assemble_primitive_state(
     config: SimulationConfig,
     registered_variables: RegisteredVariables,
     density: FIELD_TYPE,
@@ -157,6 +162,110 @@ def construct_primitive_state(
         )
         state = state.at[registered_variables.cosmic_ray_n_index].set(
             cosmic_ray_pressure ** (1 / gamma_cr)
+        )
+
+    return state
+
+
+def construct_primitive_state(
+    config: SimulationConfig,
+    registered_variables: RegisteredVariables,
+    density: FIELD_TYPE,
+    velocity_x: Union[FIELD_TYPE, NoneType] = None,
+    velocity_y: Union[FIELD_TYPE, NoneType] = None,
+    velocity_z: Union[FIELD_TYPE, NoneType] = None,
+    magnetic_field_x: Union[FIELD_TYPE, NoneType] = None,
+    magnetic_field_y: Union[FIELD_TYPE, NoneType] = None,
+    magnetic_field_z: Union[FIELD_TYPE, NoneType] = None,
+    interface_magnetic_field_x: Union[FIELD_TYPE, NoneType] = None,
+    interface_magnetic_field_y: Union[FIELD_TYPE, NoneType] = None,
+    interface_magnetic_field_z: Union[FIELD_TYPE, NoneType] = None,
+    gas_pressure: Union[FIELD_TYPE, NoneType] = None,
+    cosmic_ray_pressure: Union[FIELD_TYPE, NoneType] = None,
+    sharding=None,
+) -> STATE_TYPE:
+    """Stack the primitive variables into the state array, checking for NaNs.
+
+    Thin wrapper around the jitted :func:`_assemble_primitive_state` that adds a
+    one-time sanity check: a NaN in the freshly built primitive state almost
+    always means a bad initial condition (a divide-by-zero, an out-of-range log,
+    a mismatched field shape, ...) that would otherwise only surface much later
+    as an opaque solver blow-up. Catching it here points the user straight at
+    their setup. The check reads back a single scalar, so it is cheap; it is
+    skipped when the state is a tracer so differentiating or jitting through the
+    setup still works.
+
+    See :func:`_assemble_primitive_state` for the argument semantics.
+
+    Returns:
+        The state array.
+
+    Raises:
+        ValueError: If the assembled primitive state contains NaNs.
+    """
+    # The finite-difference MHD scheme evolves face-centered (interface)
+    # magnetic fields for constrained transport, but a user setting up an
+    # initial condition typically only has the cell-centered field to hand. If
+    # none of the interface components were supplied, derive them here from the
+    # cell-centered field (4th-order center-to-face interpolation, exactly what
+    # every FD-MHD setup does by hand) so the resulting state is consistent
+    # rather than silently carrying zero interface fields. Any component the
+    # user did supply explicitly is left untouched.
+    interface_fields_missing = (
+        interface_magnetic_field_x is None
+        and interface_magnetic_field_y is None
+        and interface_magnetic_field_z is None
+    )
+    cell_centered_field_given = (
+        magnetic_field_x is not None
+        or magnetic_field_y is not None
+        or magnetic_field_z is not None
+    )
+    if (
+        config.mhd
+        and config.solver_mode == FINITE_DIFFERENCE
+        and interface_fields_missing
+        and cell_centered_field_given
+    ):
+        # The interpolation needs a concrete array per axis; substitute zeros
+        # for any cell-centered component the user left out.
+        zero_field = jnp.zeros_like(density)
+        (
+            interface_magnetic_field_x,
+            interface_magnetic_field_y,
+            interface_magnetic_field_z,
+        ) = initialize_interface_fields(
+            magnetic_field_x if magnetic_field_x is not None else zero_field,
+            magnetic_field_y if magnetic_field_y is not None else zero_field,
+            magnetic_field_z if magnetic_field_z is not None else zero_field,
+            config.dimensionality,
+        )
+
+    state = _assemble_primitive_state(
+        config,
+        registered_variables,
+        density,
+        velocity_x=velocity_x,
+        velocity_y=velocity_y,
+        velocity_z=velocity_z,
+        magnetic_field_x=magnetic_field_x,
+        magnetic_field_y=magnetic_field_y,
+        magnetic_field_z=magnetic_field_z,
+        interface_magnetic_field_x=interface_magnetic_field_x,
+        interface_magnetic_field_y=interface_magnetic_field_y,
+        interface_magnetic_field_z=interface_magnetic_field_z,
+        gas_pressure=gas_pressure,
+        cosmic_ray_pressure=cosmic_ray_pressure,
+        sharding=sharding,
+    )
+
+    if not isinstance(state, jax.core.Tracer) and bool(jnp.isnan(state).any()):
+        raise ValueError(
+            "construct_primitive_state produced NaNs in the primitive state. "
+            "This almost always points to a problem in the initial-condition "
+            "fields you passed (a divide-by-zero, an out-of-range log or sqrt, "
+            "a wrongly shaped field, ...). Check the density, velocity, "
+            "pressure and magnetic-field arrays before starting the simulation."
         )
 
     return state

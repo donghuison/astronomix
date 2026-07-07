@@ -9,6 +9,11 @@ import them directly from ``astronomix``.
 
 # astronomix constants
 from astronomix.option_classes.simulation_config import (
+    NATIVE_JAX,
+    PALLAS,
+    OPTIMAL_BACKEND,
+    FINITE_VOLUME,
+    FINITE_DIFFERENCE,
     FORWARDS,
     BACKWARDS,
     MINMOD,

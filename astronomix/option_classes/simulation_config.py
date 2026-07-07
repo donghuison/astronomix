@@ -11,6 +11,7 @@ derived fields and validates the configuration.
 
 # general
 import math
+import subprocess
 
 # typing
 from types import NoneType
@@ -37,6 +38,11 @@ from astronomix._modules._turbulent_forcing._turbulent_forcing_options import Tu
 # backends (very limited support currently)
 NATIVE_JAX = 0
 PALLAS = 1
+#: OPTIMAL_BACKEND is not a backend of its own: it is a request to pick the
+#: fastest available one at ``finalize_config`` time.  It resolves to PALLAS on
+#: GPUs new enough to run the Triton kernels (compute capability >= 8.0) and
+#: falls back to NATIVE_JAX everywhere else (older GPUs, CPU, no ``nvidia-smi``).
+OPTIMAL_BACKEND = 2
 
 # positivity-enforcement modes (used by ``PositivityConfig.per_stage_mode`` /
 # ``per_step_mode``).  HARD_FLOOR clamps density (and, for ideal
@@ -364,8 +370,9 @@ class SimulationConfig(NamedTuple):
 
     # Static simulation parameters
 
-    #: Backend
-    backend: int = NATIVE_JAX
+    #: Backend. Defaults to OPTIMAL_BACKEND, which ``finalize_config`` resolves
+    #: to PALLAS on compute-capability >= 8.0 GPUs and NATIVE_JAX otherwise.
+    backend: int = OPTIMAL_BACKEND
     pallas_block_shape: Tuple[int, int, int] = (4, 4, 8)
     pallas_use_triton: bool = True
     pallas_interpret: bool = False
@@ -381,9 +388,9 @@ class SimulationConfig(NamedTuple):
     pallas_ct: bool = False
 
     #: Basic solver mode, either finite volume or finite difference.
-    #: FINITE_DIFFERENCE is for now only planned for the HOW_MHD
-    #: scheme (Jeongbhin Seo, Dongsu Ryu, 2023).
-    solver_mode: int = FINITE_VOLUME
+    #: Defaults to the finite-difference HOW-MHD scheme (Jeongbhin Seo,
+    #: Dongsu Ryu, 2023), which is the recommended solver.
+    solver_mode: int = FINITE_DIFFERENCE
 
     #: Precision mode.
     numerical_precision: int = SINGLE_PRECISION
@@ -600,6 +607,38 @@ class SimulationConfig(NamedTuple):
     cnn_mhd_corrector_config: CNNMHDconfig = CNNMHDconfig()
 
 
+def gpu_compute_capability_at_least_80() -> bool:
+    """Return whether every visible NVIDIA GPU has compute capability >= 8.0.
+
+    Compute capability 8.0 (Ampere) is the floor for the Triton kernels the
+    Pallas backend compiles to, so this is the predicate that decides whether
+    OPTIMAL_BACKEND resolves to PALLAS. Any failure to query the GPUs — no
+    ``nvidia-smi`` on the PATH (e.g. a CPU-only host) or the call erroring out —
+    is treated as "not capable" so the safe NATIVE_JAX fallback is chosen.
+
+    Returns:
+        True if all visible NVIDIA GPUs report compute capability >= 8.0,
+        False otherwise (including when no GPU could be queried).
+    """
+    try:
+        output = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+    compute_caps = []
+    for line in output.strip().splitlines():
+        major, minor = map(int, line.strip().split("."))
+        compute_caps.append((major, minor))
+
+    if not compute_caps:
+        return False
+
+    return all(compute_cap >= (8, 0) for compute_cap in compute_caps)
+
+
 def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
     """Fill in derived configuration fields and validate the configuration.
 
@@ -617,6 +656,18 @@ def finalize_config(config: SimulationConfig, state_shape) -> SimulationConfig:
     Returns:
         The finalized simulation configuration.
     """
+
+    # Resolve the OPTIMAL_BACKEND request into a concrete backend before any
+    # downstream code inspects ``config.backend``. PALLAS needs an Ampere-class
+    # (compute capability >= 8.0) GPU for its Triton kernels; anywhere else we
+    # fall back to the portable NATIVE_JAX backend.
+    if config.backend == OPTIMAL_BACKEND:
+        if gpu_compute_capability_at_least_80():
+            print("OPTIMAL_BACKEND: using the PALLAS backend (GPU compute capability >= 8.0).")
+            config = config._replace(backend=PALLAS)
+        else:
+            print("OPTIMAL_BACKEND: using the NATIVE_JAX backend (no compute capability >= 8.0 GPU found).")
+            config = config._replace(backend=NATIVE_JAX)
 
     # ``default_positivity_protection`` is a casual on/off switch for the STATE
     # floors only: the default ``False`` is a clean slate (no per-stage /
