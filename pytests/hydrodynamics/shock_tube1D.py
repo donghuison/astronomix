@@ -23,29 +23,34 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
 # astronomix constants
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
     FINITE_DIFFERENCE,
     FINITE_VOLUME,
     HLL,
     HLLC,
     MINMOD,
-    SUPERBEE,
 )
+from astronomix.option_classes.simulation_config import SUPERBEE
 
 # astronomix containers
-from astronomix.option_classes.simulation_config import SimulationConfig
-from astronomix.option_classes.simulation_params import SimulationParams
+from astronomix import (
+    SimulationConfig,
+    SimulationParams,
+)
 
 # astronomix functions
+from astronomix import (
+    get_helper_data,
+    time_integration,
+    get_registered_variables,
+)
 from astronomix.option_classes.simulation_config import config_to_string
-from astronomix.data_classes.simulation_helper_data import get_helper_data
-from astronomix.time_stepping.time_integration import time_integration
 from astronomix.plotting_helpers.inset_box import add_inset_box
-from astronomix.variable_registry.registered_variables import get_registered_variables
 from astronomix.test_setups.hydrodynamics.shock_tube1D import (
     setup_sod_shock_tube,
     sod_shock_tube_solution,
 )
+
 
 num_cells = 200
 

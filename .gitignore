@@ -9,6 +9,10 @@ package-lock.json
 
 arena/results/*/data
 
+examples/notebooks/stellar_wind/turb_frames
+examples/notebooks/stellar_wind/wind_frames
+
+
 data_mhdgrav
 
 # regenerated methods-paper outputs (see pytests/paper_plots)
@@ -200,3 +204,18 @@ cython_debug/
 
 .venv
 /poetry.toml
+# generated example/test outputs: simulation caches + figures
+# (directories are kept in git via their .gitkeep placeholders)
+examples/scripts/**/data/
+examples/gallery/**/data/
+examples/scripts/**/figures/*
+!examples/scripts/**/figures/.gitkeep
+examples/gallery/**/figures/*
+!examples/gallery/**/figures/.gitkeep
+pytests/**/figures/*
+!pytests/**/figures/.gitkeep
+
+# field_level_inference generated outputs (logo.png is the tracked input target)
+examples/scripts/differentiability/field_level_inference/panel_snaps.npz
+examples/scripts/differentiability/field_level_inference/*.png
+!examples/scripts/differentiability/field_level_inference/logo.png

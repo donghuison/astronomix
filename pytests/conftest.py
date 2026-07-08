@@ -6,6 +6,6 @@ def pytest_addoption(parser):
         "--reproduce-paper",
         action="store_true",
         default=False,
-        help="regenerate every methods-paper figure under pytests/paper_plots "
-             "(slow, requires a GPU).",
+        help="regenerate every methods-paper figure from the examples/ "
+             "generators (see pytests/test_reproduce_paper.py; slow, needs a GPU).",
     )

@@ -23,13 +23,13 @@ from astropy import units as u
 import astropy.constants as c
 
 # astronomix constants
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
     FINITE_DIFFERENCE,
     HLL,
-    DOUBLE_MINMOD,
     BACKWARDS,
     PERIODIC_BOUNDARY,
 )
+from astronomix.option_classes.simulation_config import DOUBLE_MINMOD
 
 # astronomix containers
 from astronomix import (
@@ -37,26 +37,21 @@ from astronomix import (
     WindParams,
     SimulationConfig,
     SimulationParams,
-)
-from astronomix.option_classes import WindConfig
-from astronomix.option_classes.simulation_config import (
     BoundarySettings,
     BoundarySettings1D,
     SnapshotSettings,
 )
+from astronomix.option_classes import WindConfig
 
 # astronomix functions
 from astronomix import (
     get_registered_variables,
     time_integration,
-)
-from astronomix.initial_condition_generation.construct_primitive_state import (
     construct_primitive_state,
-)
-from astronomix._finite_difference._magnetic_update._constrained_transport import (
     initialize_interface_fields,
+    finalize_config,
 )
-from astronomix.option_classes.simulation_config import finalize_config
+
 
 # figures are written to the local figures/ directory
 figures_dir = Path(__file__).resolve().parent / "figures"

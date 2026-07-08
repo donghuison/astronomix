@@ -245,38 +245,58 @@ import matplotlib.colors as mcolors
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 import matplotlib as mpl
 
-# astronomix
+# astronomix constants
 from astronomix import (
-    SimulationConfig,
-    get_helper_data,
-    SimulationParams,
-    time_integration,
-    construct_primitive_state,
-    get_registered_variables,
+    FINITE_VOLUME,
+    MINMOD,
+    OPEN_BOUNDARY,
+    FINITE_DIFFERENCE,
+    PERIODIC_BOUNDARY,
 )
-from astronomix._fluid_equations._equations import conserved_state_from_primitive, primitive_state_from_conserved
-from astronomix._finite_difference._interface_fluxes._weno import _weno_flux_x, _weno_flux_y
-from astronomix._stencil_operations._stencil_operations import _shift
-from astronomix._geometry.boundaries import _boundary_handler
-from astronomix.time_stepping._utils import _pad, _unpad
 from astronomix.option_classes.simulation_config import (
     CONSERVATIVE_GAS_STATE,
     DYNAMIC_VISCOSITY,
-    FINITE_VOLUME,
     KINEMATIC_VISCOSITY,
-    MINMOD,
     MUSCL,
-    OPEN_BOUNDARY,
     SPLIT,
     UNSPLIT,
+)
+
+# astronomix containers
+from astronomix import (
+    SimulationConfig,
+    SimulationParams,
     SnapshotSettings,
-    finalize_config,
-    FINITE_DIFFERENCE,
-    PERIODIC_BOUNDARY,
     BoundarySettings,
     BoundarySettings1D,
 )
-from astronomix.analysis_helpers.jacobians import single_xmode_jacobian2Dt, single_xmode_rhs_jacobian2D
+
+# astronomix functions
+from astronomix import (
+    get_helper_data,
+    time_integration,
+    construct_primitive_state,
+    get_registered_variables,
+    finalize_config,
+)
+from astronomix._fluid_equations._equations import (
+    conserved_state_from_primitive,
+    primitive_state_from_conserved,
+)
+from astronomix._finite_difference._interface_fluxes._weno import (
+    _weno_flux_x,
+    _weno_flux_y,
+)
+from astronomix._stencil_operations._stencil_operations import _shift
+from astronomix._geometry.boundaries import _boundary_handler
+from astronomix.time_stepping._utils import (
+    _pad,
+    _unpad,
+)
+from astronomix.analysis_helpers.jacobians import (
+    single_xmode_jacobian2Dt,
+    single_xmode_rhs_jacobian2D,
+)
 from astronomix.plotting_helpers.inset_box import add_inset_box
 
 # figures are written to the local figures/ directory
@@ -891,8 +911,6 @@ def find_numerical_eigenmode(
 # -------------------------------------------------------------
 # ================ ↑ Eigenmode initialization ↑ ===============
 # -------------------------------------------------------------
-
-
 
 
 # -------------------------------------------------------------

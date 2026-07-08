@@ -1,11 +1,13 @@
 """
-Adjoint sensitivity of the linearized Euler equations vs the exact Fourier gradient.
+Analytical-gradient correctness pytest (fast).
 
-Runs a smooth small-amplitude 1D density wave through the finite-difference solver,
-differentiates a quadratic cost of the final state with respect to the initial
-density and velocity via reverse-mode AD, and compares the result against the
-closed-form Fourier-space gradient of the linearized Euler equations. The two
-gradients are plotted together as a differentiability sanity check.
+Runs a smooth small-amplitude 1D density wave through the finite-difference
+solver, differentiates the quadratic cost J = 0.5 * sum(rho_P^2 + v_P^2) dV of
+the final state with respect to the initial density / velocity via reverse-mode
+AD, and checks it against the closed-form Fourier-space gradient of the
+linearized Euler equations. This is the fast differentiability correctness
+check; the full multi-dimensional study + figures lives in
+``examples/scripts/differentiability/sensitivity.py``.
 """
 
 # ==== GPU selection ====
@@ -14,47 +16,35 @@ autocvd(num_gpus=1)
 # ruff: noqa: E402
 # =======================
 
-# general
-from pathlib import Path
-
 # jax
 import jax
 import jax.numpy as jnp
 
-# plotting
-import matplotlib.pyplot as plt
-
 # astronomix constants
-from astronomix import CARTESIAN
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
+    CARTESIAN,
     BACKWARDS,
     FINITE_DIFFERENCE,
-    PERIODIC_ROLL,
     PERIODIC_BOUNDARY,
 )
+from astronomix.option_classes.simulation_config import PERIODIC_ROLL
 
 # astronomix containers
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
     BoundarySettings1D,
     SimulationConfig,
+    SimulationParams,
 )
-from astronomix.option_classes.simulation_params import SimulationParams
 
 # astronomix functions
 from astronomix import (
     get_helper_data,
     time_integration,
     get_registered_variables,
-)
-from astronomix.initial_condition_generation.construct_primitive_state import (
     construct_primitive_state,
+    finalize_config,
 )
-from astronomix.option_classes.simulation_config import finalize_config
 
-
-# Figures are written to a local figures/ directory next to this script.
-figures_dir = Path(__file__).resolve().parent / "figures"
-figures_dir.mkdir(exist_ok=True)
 
 # The exact analytic gradients require stable 64-bit precision to match the AD
 # solver output; single precision would swamp the comparison with round-off.
@@ -62,8 +52,7 @@ jax.config.update("jax_enable_x64", True)
 
 
 def compute_analytic_gradients_fourier(rho_0, v0, L, c_s, rho_B, t_end):
-    """
-    Exact gradient of the quadratic cost for the 1D linearized Euler equations.
+    """Exact gradient of the quadratic cost for the 1D linearized Euler equations.
 
     The cost is J = 0.5 * sum |U|^2 dV on the final state. Because the linearized
     Euler operator is diagonal in Fourier space, the gradient is obtained in
@@ -115,8 +104,7 @@ def compute_analytic_gradients_fourier(rho_0, v0, L, c_s, rho_B, t_end):
 
 
 def get_config_and_params(num_cells, L, t_end):
-    """
-    Build the 1D periodic finite-difference configuration and parameters.
+    """Build the 1D periodic finite-difference configuration and parameters.
 
     Args:
         num_cells: The number of grid cells along the single spatial dimension.
@@ -153,8 +141,7 @@ def get_config_and_params(num_cells, L, t_end):
 
 
 def run_forward_and_cost(rho_P0, v_P0, config, params, rho_B, c_s, P_B):
-    """
-    Integrate the wave forward and return the quadratic cost of the final state.
+    """Integrate the wave forward and return the quadratic cost of the final state.
 
     The cost is J = 0.5 * sum(rho_P^2 + v_P^2) * dx, where rho_P and v_P are the
     density and velocity perturbations of the evolved state.
@@ -174,8 +161,6 @@ def run_forward_and_cost(rho_P0, v_P0, config, params, rho_B, c_s, P_B):
     registered_variables = get_registered_variables(config)
     dx = config.box_size / config.num_cells
 
-    # A linear-in-perturbation initial condition: density and (isothermal-like)
-    # pressure perturbations sit on top of the uniform background.
     rho = rho_B + rho_P0
     p = P_B + (c_s**2) * rho_P0
     initial_state = construct_primitive_state(
@@ -198,74 +183,47 @@ def run_forward_and_cost(rho_P0, v_P0, config, params, rho_B, c_s, P_B):
     return 0.5 * jnp.sum(final_rho_P**2 + final_v_P**2) * dx
 
 
-# -------------------------------------------------------------
-# ======================= ↓ setup ↓ ===========================
-# -------------------------------------------------------------
+def test_analytical_gradient(N=64, tol=1e-3):
+    """AD gradient of the 1D wave cost must match the exact Fourier gradient.
 
-# Uniform background state and a small perturbation amplitude eps so the
-# dynamics stay in the linear regime the analytic gradient assumes.
-rho_B, c_s, gamma = 1.0, 2.0, 5 / 3
-P_B = (c_s**2) * rho_B / gamma
-eps = 1e-6
-L, t_end, N = 1.0, 0.15, 64
+    Args:
+        N: The number of grid cells.
+        tol: The maximum allowed mean |AD - analytic| / eps for each field.
+    """
+    # Uniform background and a small perturbation amplitude eps so the dynamics
+    # stay in the linear regime the analytic gradient assumes.
+    rho_B, c_s, gamma = 1.0, 2.0, 5 / 3
+    P_B = (c_s**2) * rho_B / gamma
+    eps = 1e-6
+    L, t_end = 1.0, 0.15
 
-config, params = get_config_and_params(N, L, t_end)
-helper_data = get_helper_data(config)
+    config, params = get_config_and_params(N, L, t_end)
+    helper_data = get_helper_data(config)
 
-# Smooth small-amplitude density wave; the velocity starts at rest.
-x = jnp.squeeze(helper_data.geometric_centers)
-k = 2 * jnp.pi * 2 / L
-rho_P0 = eps * jnp.sin(k * x)
-v_P0 = jnp.zeros_like(rho_P0)
+    # Smooth small-amplitude density wave; the velocity starts at rest.
+    x = jnp.squeeze(helper_data.geometric_centers)
+    k = 2 * jnp.pi * 2 / L
+    rho_P0 = eps * jnp.sin(k * x)
+    v_P0 = jnp.zeros_like(rho_P0)
 
-# -------------------------------------------------------------
-# ======================= ↑ setup ↑ ===========================
-# -------------------------------------------------------------
+    # The cost is defined per grid volume, so the raw AD gradient carries a
+    # factor of dx that we divide out to compare against the sensitivity.
+    dx = L / N
+    cost_fn = lambda r, vx: run_forward_and_cost(r, vx, config, params, rho_B, c_s, P_B)
+    grad_rho, grad_v = jax.grad(cost_fn, argnums=(0, 1))(rho_P0, v_P0)
+    ad_grad_rho, ad_grad_v = grad_rho / dx, grad_v / dx
 
-# -------------------------------------------------------------
-# ============ ↓ AD gradient vs exact Fourier ↓ ===============
-# -------------------------------------------------------------
+    ana_grad_rho, ana_grad_v = compute_analytic_gradients_fourier(
+        rho_P0, v_P0, L, c_s, rho_B, t_end
+    )
 
-# The cost is defined per grid volume, so the raw AD gradient carries a factor
-# of dx that we divide out to compare against the density/velocity sensitivity.
-dx = L / N
-cost_fn = lambda r, vx: run_forward_and_cost(r, vx, config, params, rho_B, c_s, P_B)
-grad_rho, grad_v = jax.grad(cost_fn, argnums=(0, 1))(rho_P0, v_P0)
-ad_grad_rho, ad_grad_v = grad_rho / dx, grad_v / dx
+    l1_rho = float(jnp.mean(jnp.abs(ad_grad_rho - ana_grad_rho)) / eps)
+    l1_v = float(jnp.mean(jnp.abs(ad_grad_v - ana_grad_v)) / eps)
+    print(f"L1 error AD vs analytic  rho: {l1_rho:.3e}   v: {l1_v:.3e}")
 
-ana_grad_rho, ana_grad_v = compute_analytic_gradients_fourier(
-    rho_P0, v_P0, L, c_s, rho_B, t_end
-)
+    assert l1_rho < tol, f"density gradient L1 {l1_rho:.3e} exceeds {tol}"
+    assert l1_v < tol, f"velocity gradient L1 {l1_v:.3e} exceeds {tol}"
 
-l1_rho = float(jnp.mean(jnp.abs(ad_grad_rho - ana_grad_rho)) / eps)
-l1_v = float(jnp.mean(jnp.abs(ad_grad_v - ana_grad_v)) / eps)
-print(f"L1 error AD vs analytic  rho: {l1_rho:.3e}   v: {l1_v:.3e}")
 
-# -------------------------------------------------------------
-# ============ ↑ AD gradient vs exact Fourier ↑ ===============
-# -------------------------------------------------------------
-
-# -------------------------------------------------------------
-# ======================== ↓ plot ↓ ===========================
-# -------------------------------------------------------------
-
-fig, axs = plt.subplots(2, 1, figsize=(9, 8), sharex=True)
-axs[0].scatter(x, ad_grad_rho / eps, s=20, color="blue", alpha=0.6, label="JAX AD")
-axs[0].plot(x, ana_grad_rho / eps, "-", color="orange", linewidth=2, label="Exact Fourier")
-axs[0].set_ylabel(r"$\partial J / \partial \rho_0$")
-axs[0].set_title("1D wave sensitivity to initial density")
-axs[0].legend()
-
-axs[1].scatter(x, ad_grad_v / eps, s=20, color="green", alpha=0.6, label="JAX AD")
-axs[1].plot(x, ana_grad_v / eps, "-", color="red", linewidth=2, label="Exact Fourier")
-axs[1].set_xlabel("x")
-axs[1].set_ylabel(r"$\partial J / \partial v_0$")
-axs[1].set_title("1D wave sensitivity to initial velocity")
-axs[1].legend()
-
-fig.tight_layout()
-fig.savefig(figures_dir / "sensitivity_gradient.png", dpi=200)
-
-# -------------------------------------------------------------
-# ======================== ↑ plot ↑ ===========================
-# -------------------------------------------------------------
+if __name__ == "__main__":
+    test_analytical_gradient()

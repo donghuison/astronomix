@@ -25,7 +25,7 @@ jax.config.update("jax_enable_x64", True)
 import matplotlib.pyplot as plt
 
 # astronomix constants
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
     FINITE_DIFFERENCE,
     FORWARDS,
     PERIODIC_BOUNDARY,
@@ -35,8 +35,6 @@ from astronomix.option_classes.simulation_config import (
 from astronomix import (
     SimulationConfig,
     SimulationParams,
-)
-from astronomix.option_classes.simulation_config import (
     BoundarySettings,
     BoundarySettings1D,
     PositivityConfig,
@@ -48,15 +46,12 @@ from astronomix import (
     get_helper_data,
     get_registered_variables,
     time_integration,
-)
-from astronomix.initial_condition_generation.construct_primitive_state import (
     construct_primitive_state,
-)
-from astronomix._finite_difference._magnetic_update._constrained_transport import (
     initialize_interface_fields,
+    finalize_config,
 )
 from astronomix._fluid_equations.total_quantities import calculate_kinetic_energy
-from astronomix.option_classes.simulation_config import finalize_config
+
 
 # figures are written to the local figures/ directory
 from pathlib import Path

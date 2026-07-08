@@ -39,15 +39,15 @@ import jax
 jax.config.update("jax_enable_x64", True)
 
 # astronomix constants
+from astronomix import FINITE_DIFFERENCE
 from astronomix.option_classes.simulation_config import (
-    FINITE_DIFFERENCE,
     FOURTH_ORDER_CONSERVATIVE,
     SECOND_ORDER_CONSERVATIVE,
     SIMPLE_SOURCE,
 )
 
 # astronomix containers
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
     GravityConfig,
     SimulationConfig,
     SnapshotSettings,
@@ -59,14 +59,14 @@ from astronomix.test_setups.self_gravity.jeans_waves import (
     setup_jeans_wave,
 )
 
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _PYTESTS_DIR = os.path.dirname(_HERE)
 if _PYTESTS_DIR not in sys.path:
     sys.path.insert(0, _PYTESTS_DIR)
 from _benchmark_utils import (  # noqa: E402
     BenchmarkSpec,
-    run_convergence_and_runtime,
-    run_strong_scaling,
+    assert_correctness_at_resolution,
 )
 
 DATA_DIR = os.path.join(_HERE, "data", "astronomix")
@@ -141,35 +141,16 @@ def _error_indices(registered_variables):
 
 def test_jeans_wave_convergence():
     """Run the resolution sweep and emit the L1-error and runtime plots."""
-    run_convergence_and_runtime(
+    assert_correctness_at_resolution(
         BENCHMARKS,
-        N_values=[8, 16, 32, 48],
+        N=16,
         setup_fn=setup_jeans_wave,
         analytic_fn=jeans_wave_solution,
         error_var_indices_fn=_error_indices,
         name="jeans_waves3D",
-        title="3D Jeans linear wave",
-        data_dir=DATA_DIR,
-        figure_dir=FIG_DIR,
-    )
-
-
-def test_jeans_wave_strong_scaling():
-    """Run the 1-GPU vs ``NUM_GPUS_SCALING``-GPU strong-scaling sweep."""
-    run_strong_scaling(
-        BENCHMARKS,
-        N_values=[16, 32, 48],
-        setup_fn=setup_jeans_wave,
-        num_gpus=NUM_GPUS_SCALING,
-        name="jeans_waves3D",
-        title="3D Jeans linear wave",
-        data_dir=DATA_DIR,
-        figure_dir=FIG_DIR,
+        tol=0.05,
     )
 
 
 if __name__ == "__main__":
-    if RUN_CONVERGENCE:
-        test_jeans_wave_convergence()
-    if RUN_SCALING:
-        test_jeans_wave_strong_scaling()
+    test_jeans_wave_convergence()

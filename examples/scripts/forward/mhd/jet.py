@@ -38,6 +38,7 @@ from astronomix import (
     setup_magnetic_fields_from_vector_potential,
 )
 
+
 # figures are written to the local figures/ directory
 from pathlib import Path
 figures_dir = Path(__file__).resolve().parent / "figures"

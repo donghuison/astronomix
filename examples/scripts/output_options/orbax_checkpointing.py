@@ -28,8 +28,8 @@ from astronomix import (
     MINMOD,
     PERIODIC_BOUNDARY,
     FORWARDS,
+    TO_DISK,
 )
-from astronomix.option_classes.simulation_config import TO_DISK
 
 # astronomix containers
 from astronomix import (
@@ -47,6 +47,7 @@ from astronomix import (
     finalize_config,
     restart_from_latest_checkpoint,
 )
+
 
 # figures are written to the local figures/ directory
 from pathlib import Path

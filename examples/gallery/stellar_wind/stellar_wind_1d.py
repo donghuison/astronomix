@@ -23,11 +23,11 @@ import astropy.constants as c
 from astropy.constants import m_p
 
 # astronomix constants
-from astronomix._modules._stellar_wind.stellar_wind_options import EI
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
     SPHERICAL,
     FORWARDS,
 )
+from astronomix._modules._stellar_wind.stellar_wind_options import EI
 
 # astronomix containers
 from astronomix import (
@@ -44,11 +44,10 @@ from astronomix import (
     get_helper_data,
     get_registered_variables,
     time_integration,
-)
-from astronomix.initial_condition_generation.construct_primitive_state import (
     construct_primitive_state,
+    finalize_config,
 )
-from astronomix.option_classes.simulation_config import finalize_config
+
 
 # figures are written to the local figures/ directory
 figures_dir = Path(__file__).resolve().parent / "figures"
