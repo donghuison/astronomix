@@ -34,6 +34,7 @@ from astronomix.option_classes.simulation_config import (
 # astronomix containers
 from astronomix.option_classes.simulation_config import SimulationConfig
 from astronomix.option_classes.simulation_params import SimulationParams
+from astronomix.option_classes.simulation_config import BoundarySettings, BoundarySettings1D
 from astronomix._modules._stellar_wind.stellar_wind_options import WindParams
 from astronomix.units import CodeUnits
 
@@ -47,3 +48,4 @@ from astronomix._finite_difference._magnetic_update._constrained_transport impor
 )
 from astronomix.time_stepping.time_integration import time_integration
 from astronomix.setup_helpers import restart_from_latest_checkpoint
+from astronomix.initial_condition_generation.magnetic_field_from_vector_potential import setup_magnetic_fields_from_vector_potential

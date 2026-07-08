@@ -11,28 +11,9 @@ arena/results/*/data
 
 data_mhdgrav
 
-tests/turbulence/data_repro
-tests/field_level_inference/data
-tests/kh_recon/data
-field_level_inference/_archive
-
-tests/finite_difference/turb_frames
-tests/finite_difference/wind_frames
-
-tests/kelvin_helmholtz/data
-
-tests/trml/data
-
-tests/kelvin_helmholtz/figures/collection
-tests/kelvin_helmholtz/figures/sweep
-
-tests/cooling_corrector/data
-tests/mhd_tests/data
-tests/lancaster/data
-tests/finite_difference/data
-tests/field_level_inference/frames
-
-tests/cooling_corrector/models
+# regenerated methods-paper outputs (see pytests/paper_plots)
+pytests/paper_plots/**/figures/
+pytests/paper_plots/**/data/
 
 TODO.md
 

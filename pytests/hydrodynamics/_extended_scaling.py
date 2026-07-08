@@ -1,11 +1,13 @@
 """
-Extended strong-scaling sweep for the 3D sound-wave benchmark:
-FV (JAX) and FD (Pallas) only, up to N=512.
+Extended strong-scaling sweep for the 3D sound-wave benchmark.
 
-Runs on 2 GPUs. Outputs to `data/astronomix/sound_wave3D_strong_scaling_extended.npz`
-and `figures/sound_wave3D_strong_scaling_extended.svg`.
+Covers the FV (JAX), FD (JAX) and FD (Pallas) configurations up to N=512 on
+2 GPUs, writing the runtime / speedup / per-device memory data to
+``data/astronomix/sound_wave3D_strong_scaling_extended.npz`` and the figure to
+``figures/sound_wave3D_strong_scaling_extended.svg``.
 """
 
+# general
 import os
 import sys
 
@@ -14,34 +16,46 @@ from autocvd import autocvd
 autocvd(num_gpus=2)
 # ruff: noqa: E402
 
+# jax
 import jax
 
-# Strong-scaling benchmark runs in x32 — the comparison is wall-clock /
-# memory across backends, not numerical convergence (which is exercised
-# by ``sound_wave3D.py``), and x32 cuts both per-step compute and temp
-# memory roughly in half.
+# The strong-scaling benchmark runs in x32: the comparison is wall-clock time
+# and memory across backends, not numerical convergence (which is exercised by
+# ``sound_wave3D.py``), and x32 cuts both per-step compute and temporary memory
+# roughly in half.
 jax.config.update("jax_enable_x64", False)
 
+# astronomix constants
 from astronomix.option_classes.simulation_config import (
     FINITE_DIFFERENCE,
     FINITE_VOLUME,
     NATIVE_JAX,
     PALLAS,
+)
+
+# astronomix containers
+from astronomix.option_classes.simulation_config import (
     SimulationConfig,
     SnapshotSettings,
     StaticFloatVector,
 )
+
+# astronomix functions
 from astronomix.test_setups.hydrodynamics.sound_wave3D import setup_sound_wave
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _PYTESTS_DIR = os.path.dirname(_HERE)
 if _PYTESTS_DIR not in sys.path:
     sys.path.insert(0, _PYTESTS_DIR)
+
+# shared benchmark harness (containers + drivers) living one directory up
 from _benchmark_utils import BenchmarkSpec, run_strong_scaling  # noqa: E402
 
 DATA_DIR = os.path.join(_HERE, "data", "astronomix")
 FIG_DIR = os.path.join(_HERE, "figures")
 
+# Options shared by every benchmark configuration; only the backend, solver
+# mode and CFL number differ between them.
 _common_kwargs = dict(
     box_size=StaticFloatVector(3.0, 1.5, 1.5),
     mhd=False,

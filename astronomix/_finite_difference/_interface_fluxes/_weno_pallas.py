@@ -477,8 +477,7 @@ def _weno_hydro_flux_from_window_adjoint(
     ``jax.vjp``): the auto-generated VJP of the full WENO window is miscompiled
     and slow to compile on the Triton GPU backend, whereas this explicit form
     is ordinary arithmetic that Pallas/Triton lowers reliably and fast.  It is
-    validated bit-exact (~1e-15) against ``jax.vjp`` of the forward window in
-    ``pytests/pallas/_weno_window_adjoint_check.py``.
+    validated bit-exact (~1e-15) against ``jax.vjp`` of the forward window.
     """
     gm1 = gamma - 1.0
     epsilon = 1e-7
@@ -1267,8 +1266,7 @@ def _weno_flux_hydro_pallas_vjp_local(
     ``flux_bar`` (same shape as the WENO flux), returns the input cotangent
     ``conserved_state_bar`` w.r.t. ``conserved_state``.
 
-    Strategy (see ``pytests/pallas/_vjp_in_kernel_spike.py`` and
-    ``pytests/pallas/_weno_vjp_check.py``): each grid block gathers its 6-cell
+    Strategy: each grid block gathers its 6-cell
     WENO stencil from ``q_ref`` exactly as the forward kernel does, runs
     ``jax.vjp`` of the *shared* per-window flux function
     :func:`_weno_hydro_flux_from_window` against the tile's flux cotangent.
@@ -2023,9 +2021,8 @@ def _weno_mhd_flux_from_window_adjoint(
       is explicit, so the in-kernel vjp scope shrinks from 48 stencil scalars
       through the entire WENO machinery to 8 face scalars through pure algebra.
 
-    Validated bit-exact (~1e-12, x64) against ``jax.vjp`` of the forward window
-    in ``pytests/pallas/_weno_mhd_window_adjoint_check.py``.  ``b_eps`` and
-    ``sqrt_floor`` are typed scalars (x64 + Triton dtype hygiene)."""
+    Validated bit-exact (~1e-12, x64) against ``jax.vjp`` of the forward window.
+    ``b_eps`` and ``sqrt_floor`` are typed scalars (x64 + Triton dtype hygiene)."""
     gm1 = gamma - 1.0
     gam0 = 1.0 - gamma
     gam1 = 0.5 * (gamma - 1.0)
@@ -2342,8 +2339,8 @@ def _weno_mhd_flux_from_window_adjoint(
         ``jax.vjp(_eigen_bb)`` for non-degenerate states; matches it to FP-order
         on the measure-zero zero-tangential-B / no-field degeneracies (the
         ``1/sqrt(bt^2)`` near-singularity, where the native vjp is no more exact
-        — both straddle central FD identically).  Validated in
-        ``pytests/pallas/_weno_mhd_eigenbb_adjoint_isolated.py``."""
+        — both straddle central FD identically).  Validated bit-exact against
+        ``jax.vjp`` of ``_eigen_bb``."""
         (rho_face, vn_face, vt1_face, vt2_face,
          Bn_face, Bt1_face, Bt2_face, h_face) = base_q
         (b_v2, b_csq_out, b_invc, b_cface, b_lf, b_ls,
@@ -2780,8 +2777,7 @@ def _weno_mhd_flux_from_window_adjoint(
         cotangents ``rsbar`` on the outputs ``R[slot]*scale``, return the
         length-16 cotangent over ``proj_keys``.  ``scale`` is the piecewise-const
         sign/branch factor (zero cotangent); only ``R[slot]`` carries scalar
-        dependence.  Bit-exact vs ``jax.vjp(_Rcol_apply)`` (validated in
-        ``pytests/pallas/_weno_mhd_RL_adjoint_isolated.py``)."""
+        dependence.  Bit-exact vs ``jax.vjp(_Rcol_apply)``."""
         vn = fp['vn']; vt1 = fp['vt1']; vt2 = fp['vt2']
         cface = fp['cface']; lf = fp['lf']; ls = fp['ls']
         amf = fp['amf']; ams = fp['ams']

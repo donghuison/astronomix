@@ -14,9 +14,12 @@ Modes:
         memory plots.
 """
 
+# general
 import os
 import sys
 
+# The number of GPUs to allocate for the scaling sweep is decided from the
+# command line before autocvd runs, since autocvd needs the final GPU count.
 NUM_GPUS_SCALING = 2
 
 RUN_SCALING = "--scaling" in sys.argv
@@ -28,20 +31,29 @@ autocvd(num_gpus=NUM_GPUS_SCALING if RUN_SCALING else 1)
 # ruff: noqa: E402
 # =======================
 
+# jax
 import jax
 
-# Double precision for tiny perturbation amplitudes.
+# The tiny perturbation amplitudes of a linear sound wave need double precision
+# to stay above float rounding noise.
 jax.config.update("jax_enable_x64", True)
 
+# astronomix constants
 from astronomix.option_classes.simulation_config import (
     FINITE_DIFFERENCE,
     FINITE_VOLUME,
     NATIVE_JAX,
     PALLAS,
+)
+
+# astronomix containers
+from astronomix.option_classes.simulation_config import (
     SimulationConfig,
     SnapshotSettings,
     StaticFloatVector,
 )
+
+# astronomix functions
 from astronomix.test_setups.hydrodynamics.sound_wave3D import (
     setup_sound_wave,
     sound_wave_solution,
@@ -51,6 +63,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _PYTESTS_DIR = os.path.dirname(_HERE)
 if _PYTESTS_DIR not in sys.path:
     sys.path.insert(0, _PYTESTS_DIR)
+
+# shared benchmark harness (containers + drivers) living one directory up
 from _benchmark_utils import (  # noqa: E402
     BenchmarkSpec,
     run_convergence_and_runtime,
@@ -61,6 +75,8 @@ DATA_DIR = os.path.join(_HERE, "data", "astronomix")
 FIG_DIR = os.path.join(_HERE, "figures")
 
 
+# Options shared by every benchmark configuration; only the backend, solver
+# mode and CFL number differ between them.
 _common_kwargs = dict(
     box_size=StaticFloatVector(3.0, 1.5, 1.5),
     mhd=False,
@@ -106,11 +122,22 @@ BENCHMARKS = [
 ]
 
 
-def _error_indices(rv):
+def _error_indices(registered_variables):
+    """Return the state indices whose L1 error the convergence test tracks.
+
+    Args:
+        registered_variables: The registered variables for the run, mapping
+            each primitive field to its index in the state array.
+
+    Returns:
+        A tuple of density, the three velocity components and pressure indices.
+    """
     return (
-        rv.density_index,
-        rv.velocity_index.x, rv.velocity_index.y, rv.velocity_index.z,
-        rv.pressure_index,
+        registered_variables.density_index,
+        registered_variables.velocity_index.x,
+        registered_variables.velocity_index.y,
+        registered_variables.velocity_index.z,
+        registered_variables.pressure_index,
     )
 
 

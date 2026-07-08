@@ -119,7 +119,7 @@ except Exception:  # pragma: no cover - optional backend
     pltriton = None
 
 # astronomix constants
-from astronomix.option_classes.simulation_config import BACKWARDS, IDEAL_GAS, ISOTHERMAL, PALLAS
+from astronomix.option_classes.simulation_config import IDEAL_GAS, ISOTHERMAL, PALLAS
 
 # astronomix containers
 from astronomix.option_classes.simulation_config import SimulationConfig
@@ -531,14 +531,12 @@ from astronomix._finite_difference._interface_fluxes._weno_pallas import (  # no
     _mhd_pallas_flux_supported,
     _weno_flux_hydro_pallas,
     _weno_flux_hydro_pallas_rhs,
-    _weno_flux_hydro_pallas_vjp_local,
     _weno_flux_mhd_iso_pallas,
     _weno_flux_mhd_pallas,
-    _weno_flux_mhd_pallas_vjp_local,
 )
 
 
-from astronomix._pallas_helpers import diffable_pallas_call, pallas_vjp_call  # noqa: E402
+from astronomix._pallas_helpers import diffable_pallas_call  # noqa: E402
 
 
 def _weno_flux_native_for_axis(axis: int):
@@ -560,35 +558,23 @@ def _weno_flux_axis_dispatch(
     """Pick the Pallas flux for the supported equation set, falling back to
     the native per-axis JAX flux.
 
-    Forward-mode AD wraps the call through ``diffable_pallas_call`` (custom_jvp:
-    Pallas primal, native tangent).  In reverse-mode (``differentiation_mode ==
-    BACKWARDS``) the ideal-gas hydro path instead uses ``pallas_vjp_call`` so the
-    backward stays on the GPU via the hand-derived explicit Pallas adjoint
-    kernel, rather than transposing the native tangent.  The Pallas reverse path
-    differentiates w.r.t. the conserved STATE only (params are physical
-    constants for the flux) and is single-device; correct 3D y/z gradients need
-    jax >= ~0.8 (older jaxlib miscompiles the adjoint kernel on Triton).
+    Every Pallas path is wrapped through ``diffable_pallas_call`` (a
+    ``jax.custom_jvp`` boundary: Pallas primal, native-JAX tangent).  A
+    custom_jvp supports BOTH modes — forward-mode (``jax.jvp`` / ``jacfwd``)
+    fires the tangent rule directly, and reverse-mode (``jax.grad`` /
+    ``differentiation_mode == BACKWARDS``) is derived by JAX transposing that
+    native tangent.  This differentiates w.r.t. the conserved STATE *and*
+    ``params`` (so gradients w.r.t. physical parameters that enter the flux are
+    non-zero), and the backward is standard native-JAX AD, which compiles fast.
 
-    The adjoint kernel is the exact transpose of the forward WENO kernel (whose
-    stencil shifts are periodic ``custom_roll``), so it is correct for both
-    periodic and ghost-cell boundaries — validated bit-exact (~1e-15) vs the
-    native VJP for smooth states under either boundary handling.  At
-    discontinuities (shocks) the WENO gradient is inherently FP-ill-conditioned
-    and may differ from the native VJP by a sub-gradient amount, exactly as the
-    native WENO AD does."""
+    Previously the reverse-mode path used a hand-rolled Pallas adjoint kernel via
+    ``jax.custom_vjp``; that kept the backward on the GPU but (a) raised under
+    forward-mode AD, (b) gave a zero cotangent for ``params``, and (c) hit a
+    pathologically slow Triton lowering.  Routing both modes through the native
+    tangent removes all three problems at the cost of a native-speed (not
+    Pallas-speed) backward pass — a trade the differentiable examples want."""
     if _hydro_pallas_flux_supported(conserved_state, config):
         if axis == 0 or (axis == 1 and int(config.dimensionality) >= 2) or (axis == 2 and int(config.dimensionality) == 3):
-            if config.differentiation_mode == BACKWARDS:
-                return pallas_vjp_call(
-                    conserved_state,
-                    params,
-                    pallas_forward=lambda s, p: _weno_flux_hydro_pallas(
-                        s, p, config, registered_variables, axis=axis
-                    ),
-                    pallas_backward=lambda s, p, ct: _weno_flux_hydro_pallas_vjp_local(
-                        s, ct, p, config, registered_variables, axis=axis
-                    ),
-                )
             pallas = lambda s, p: _weno_flux_hydro_pallas(  # noqa: E731
                 s, p, config, registered_variables, axis=axis
             )
@@ -599,21 +585,6 @@ def _weno_flux_axis_dispatch(
                 conserved_state, params, pallas_branch=pallas, native_branch=native,
             )
     if _mhd_pallas_flux_supported(conserved_state, config):
-        if config.differentiation_mode == BACKWARDS:
-            # Reverse mode: keep the backward on the GPU via the explicit Pallas
-            # adjoint (in-kernel jax.vjp of the shared MHD window), exactly like
-            # the hydro path, instead of transposing the native tangent.  3D,
-            # all axes; state-only; single-device — the inverse-problem regime.
-            return pallas_vjp_call(
-                conserved_state,
-                params,
-                pallas_forward=lambda s, p: _weno_flux_mhd_pallas(
-                    s, p, config, registered_variables, axis=axis
-                ),
-                pallas_backward=lambda s, p, ct: _weno_flux_mhd_pallas_vjp_local(
-                    s, ct, p, config, registered_variables, axis=axis
-                ),
-            )
         pallas = lambda s, p: _weno_flux_mhd_pallas(  # noqa: E731
             s, p, config, registered_variables, axis=axis
         )

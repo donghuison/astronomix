@@ -13,28 +13,43 @@ shared so that every physics-module benchmark in this paper produces the
 same plot suite (see ``project_methods_paper_benchmarks`` memory).
 """
 
+# general
 import os
 import re
+
+# typing
 from typing import Callable, NamedTuple, Optional, Sequence
 
+# jax
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
-import numpy as np
 from jax.sharding import PartitionSpec as P
 
-from astronomix.data_classes.simulation_helper_data import get_helper_data
+# numerics
+import numpy as np
+
+# plotting
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+
+# astronomix constants
 from astronomix.option_classes.simulation_config import (
-    SimulationConfig,
-    SnapshotSettings,
-    StaticIntVector,
     VARAXIS,
     XAXIS,
     YAXIS,
     ZAXIS,
 )
+
+# astronomix containers
+from astronomix.option_classes.simulation_config import (
+    SimulationConfig,
+    SnapshotSettings,
+    StaticIntVector,
+)
 from astronomix.option_classes.simulation_params import SimulationParams
+
+# astronomix functions
+from astronomix.data_classes.simulation_helper_data import get_helper_data
 from astronomix.time_stepping.time_integration import time_integration
 from astronomix.variable_registry.registered_variables import get_registered_variables
 
@@ -62,11 +77,18 @@ def _slug(text: str) -> str:
 
 
 def _ensure_dirs(*paths: str) -> None:
-    for p in paths:
-        os.makedirs(p, exist_ok=True)
+    """Create every given output directory (no error if it already exists)."""
+    for path in paths:
+        os.makedirs(path, exist_ok=True)
 
 
 def _build_sharding(num_gpus: int):
+    """Build the multi-device sharding for a scaling run.
+
+    Returns ``None`` for a single-GPU run (no sharding needed); otherwise a
+    ``NamedSharding`` that splits the domain across ``num_gpus`` devices along
+    the x-axis while leaving the variable, y and z axes replicated.
+    """
     if num_gpus <= 1:
         return None
     mesh = jax.make_mesh((1, num_gpus, 1, 1), (VARAXIS, XAXIS, YAXIS, ZAXIS))
@@ -125,11 +147,20 @@ def _run_simulation(spec: BenchmarkSpec, N: int, setup_fn: Callable, num_gpus: i
 
 
 def _mean_l1_error(final_state, true_state, indices: Sequence[int]) -> float:
-    errs = [jnp.mean(jnp.abs(final_state[i] - true_state[i])) for i in indices]
-    return float(jnp.stack(errs).mean())
+    """Mean over the requested variables of their per-variable mean L1 error."""
+    per_variable_errors = [
+        jnp.mean(jnp.abs(final_state[i] - true_state[i])) for i in indices
+    ]
+    return float(jnp.stack(per_variable_errors).mean())
 
 
 def _format_xaxis(ax, N_values):
+    """Put the resolution axis on a log scale with one labelled tick per N.
+
+    The default log locator would sprinkle unlabelled minor ticks between the
+    sampled resolutions; pinning the major ticks to exactly ``N_values`` keeps
+    the axis readable for the small, hand-picked resolution list.
+    """
     ax.set_xscale("log")
     ax.xaxis.set_major_locator(ticker.FixedLocator(N_values))
     ax.xaxis.set_major_formatter(ticker.FixedFormatter([str(n) for n in N_values]))
@@ -168,12 +199,24 @@ def run_convergence_and_runtime(
     fig_err, ax_err = plt.subplots(1, 1, figsize=(8, 6))
     fig_rt, ax_rt = plt.subplots(3, 1, figsize=(8, 12))
 
+    # -------------------------------------------------------------
+    # ====== ↓ Run the sweep and collect per-benchmark curves ↓ ===
+    # -------------------------------------------------------------
+
+    # For every benchmark and resolution we integrate the wave, measure the L1
+    # error against the analytic solution plus the runtime, plot the curves and
+    # persist the raw arrays to an NPZ so the figures can be regenerated later.
     for spec in benchmarks:
         for N in N_values:
-            result, config, params, rv, helper = _run_simulation(spec, N, setup_fn, num_gpus=1)
+            result, config, params, registered_variables, helper_data = _run_simulation(
+                spec,
+                N,
+                setup_fn,
+                num_gpus=1,
+            )
 
-            indices = error_var_indices_fn(rv)
-            true_state = analytic_fn(config, rv, params, helper)
+            indices = error_var_indices_fn(registered_variables)
+            true_state = analytic_fn(config, registered_variables, params, helper_data)
             err = _mean_l1_error(result.final_state, true_state, indices)
             runtime = float(result.runtime)
             iters = int(result.num_iterations)
@@ -186,16 +229,25 @@ def run_convergence_and_runtime(
             print(f"[{name}] {spec.label} N={N}: L1={err:.3e}, runtime={runtime:.2f}s, iters={iters}")
 
         ax_err.loglog(
-            N_values, results[spec.label]["l1"],
-            marker="o", linewidth=2, label=spec.label,
+            N_values,
+            results[spec.label]["l1"],
+            marker="o",
+            linewidth=2,
+            label=spec.label,
         )
         ax_rt[0].loglog(
-            results[spec.label]["runtime"], results[spec.label]["l1"],
-            marker="o", linewidth=2, label=spec.label,
+            results[spec.label]["runtime"],
+            results[spec.label]["l1"],
+            marker="o",
+            linewidth=2,
+            label=spec.label,
         )
         ax_rt[1].loglog(
-            N_values, results[spec.label]["runtime"],
-            marker="o", linewidth=2, label=spec.label,
+            N_values,
+            results[spec.label]["runtime"],
+            marker="o",
+            linewidth=2,
+            label=spec.label,
         )
         time_per_iter = [
             rt / nit for rt, nit in zip(
@@ -203,8 +255,11 @@ def run_convergence_and_runtime(
             )
         ]
         ax_rt[2].loglog(
-            N_values, time_per_iter,
-            marker="o", linewidth=2, label=spec.label,
+            N_values,
+            time_per_iter,
+            marker="o",
+            linewidth=2,
+            label=spec.label,
         )
 
         np.savez(
@@ -215,24 +270,68 @@ def run_convergence_and_runtime(
             iterations=np.array(results[spec.label]["iterations"]),
         )
 
+    # -------------------------------------------------------------
+    # ====== ↑ Run the sweep and collect per-benchmark curves ↑ ===
+    # -------------------------------------------------------------
+
+    # Overlay the reference AthenaPK curve (when provided) for direct comparison.
     if athenapk_npz is not None and os.path.exists(athenapk_npz):
         athena = np.load(athenapk_npz)
-        ax_err.loglog(athena["N_values"], athena["l1_errors"], marker="s", linewidth=2, label="AthenaPK")
-        ax_rt[0].loglog(athena["runtimes"], athena["l1_errors"], marker="s", linewidth=2, label="AthenaPK")
-        ax_rt[1].loglog(athena["N_values"], athena["runtimes"], marker="s", linewidth=2, label="AthenaPK")
+        ax_err.loglog(
+            athena["N_values"],
+            athena["l1_errors"],
+            marker="s",
+            linewidth=2,
+            label="AthenaPK",
+        )
+        ax_rt[0].loglog(
+            athena["runtimes"],
+            athena["l1_errors"],
+            marker="s",
+            linewidth=2,
+            label="AthenaPK",
+        )
+        ax_rt[1].loglog(
+            athena["N_values"],
+            athena["runtimes"],
+            marker="s",
+            linewidth=2,
+            label="AthenaPK",
+        )
         ax_rt[2].loglog(
             athena["N_values"],
             [t / i for t, i in zip(athena["runtimes"], athena["iterations"])],
-            marker="s", linewidth=2, label="AthenaPK",
+            marker="s",
+            linewidth=2,
+            label="AthenaPK",
         )
 
+    # Reference convergence slopes: the FV scheme is expected to approach
+    # second order and the FD scheme fifth order, so anchor both guide lines
+    # at the coarsest-grid error for visual comparison.
     N_arr = np.array(N_values, dtype=float)
     ref2 = (N_arr / N_arr[0]) ** -2.0
     ref5 = (N_arr / N_arr[0]) ** -5.0
     max_err_start = max(r["l1"][0] for r in results.values() if r["l1"])
     min_err_start = min(r["l1"][0] for r in results.values() if r["l1"])
-    ax_err.loglog(N_arr, max_err_start * ref2, "k--", alpha=0.7, label="$O(N^{-2})$ reference")
-    ax_err.loglog(N_arr, min_err_start * ref5, "k:", alpha=0.7, label="$O(N^{-5})$ reference")
+    ax_err.loglog(
+        N_arr,
+        max_err_start * ref2,
+        "k--",
+        alpha=0.7,
+        label="$O(N^{-2})$ reference",
+    )
+    ax_err.loglog(
+        N_arr,
+        min_err_start * ref5,
+        "k:",
+        alpha=0.7,
+        label="$O(N^{-5})$ reference",
+    )
+
+    # -------------------------------------------------------------
+    # ============= ↓ Style and write the figures ↓ ===============
+    # -------------------------------------------------------------
 
     ax_err.set_xlabel("N (grid size: 2N x N x N)", fontsize=12)
     ax_err.set_ylabel("Average $L_1$ error", fontsize=12)
@@ -259,6 +358,10 @@ def run_convergence_and_runtime(
         ax.grid(True, which="major", ls="-", alpha=0.2)
     fig_rt.tight_layout()
     fig_rt.savefig(os.path.join(figure_dir, f"{name}_runtime.svg"))
+
+    # -------------------------------------------------------------
+    # ============= ↑ Style and write the figures ↑ ===============
+    # -------------------------------------------------------------
 
     return results
 
@@ -290,6 +393,13 @@ def run_strong_scaling(
         )
 
     def _measure(spec, N, num_gpus):
+        """Integrate one config at resolution ``N`` on ``num_gpus`` devices.
+
+        Returns ``(runtime, temporary_bytes, argument_bytes, total_bytes)``. A
+        run that fails (typically out of device memory at the largest N) is
+        reported and turned into a NaN runtime / zero byte counts so the sweep
+        can continue and still plot the resolutions that did fit.
+        """
         try:
             r, *_ = _run_simulation(spec, N, setup_fn, num_gpus=num_gpus)
             return (
@@ -302,6 +412,13 @@ def run_strong_scaling(
             print(f"[{name}] {spec.label} N={N} on {num_gpus} GPU(s) FAILED: {exc!r}")
             return (np.nan, 0, 0, 0)
 
+    # -------------------------------------------------------------
+    # ==== ↓ Measure runtime + memory across the resolution sweep ↓ =
+    # -------------------------------------------------------------
+
+    # For each benchmark and resolution we time a single-GPU run and a
+    # ``num_gpus``-GPU run, keeping both runtimes and the per-device memory
+    # figures so the strong-scaling speedup and memory panels can be plotted.
     out = {}
     for spec in benchmarks:
         rec = dict(
@@ -312,61 +429,129 @@ def run_strong_scaling(
             total_1=[], total_N=[],
         )
         for N in N_values:
-            t1, tmp1, arg1, tot1 = _measure(spec, N, num_gpus=1)
-            tN, tmpN, argN, totN = _measure(spec, N, num_gpus=num_gpus)
-            rec["runtime_1"].append(t1)
-            rec["runtime_N"].append(tN)
-            rec["temp_1"].append(tmp1)
-            rec["temp_N"].append(tmpN)
-            rec["arg_1"].append(arg1)
-            rec["arg_N"].append(argN)
-            rec["total_1"].append(tot1)
-            rec["total_N"].append(totN)
-            if np.isfinite(t1) and np.isfinite(tN) and tN > 0:
-                speedup_str = f"{t1 / tN:.2f}x"
+            runtime_single_gpu, temp_single_gpu, arg_single_gpu, total_single_gpu = _measure(
+                spec, N, num_gpus=1
+            )
+            runtime_multi_gpu, temp_multi_gpu, arg_multi_gpu, total_multi_gpu = _measure(
+                spec, N, num_gpus=num_gpus
+            )
+            rec["runtime_1"].append(runtime_single_gpu)
+            rec["runtime_N"].append(runtime_multi_gpu)
+            rec["temp_1"].append(temp_single_gpu)
+            rec["temp_N"].append(temp_multi_gpu)
+            rec["arg_1"].append(arg_single_gpu)
+            rec["arg_N"].append(arg_multi_gpu)
+            rec["total_1"].append(total_single_gpu)
+            rec["total_N"].append(total_multi_gpu)
+            if (
+                np.isfinite(runtime_single_gpu)
+                and np.isfinite(runtime_multi_gpu)
+                and runtime_multi_gpu > 0
+            ):
+                speedup_str = f"{runtime_single_gpu / runtime_multi_gpu:.2f}x"
             else:
                 speedup_str = "n/a"
             print(
                 f"[{name}] {spec.label} N={N}: "
-                f"1 GPU={t1:.2f}s, "
-                f"{num_gpus} GPUs={tN:.2f}s, "
+                f"1 GPU={runtime_single_gpu:.2f}s, "
+                f"{num_gpus} GPUs={runtime_multi_gpu:.2f}s, "
                 f"speedup={speedup_str}"
             )
         out[spec.label] = rec
+
+    # -------------------------------------------------------------
+    # ==== ↑ Measure runtime + memory across the resolution sweep ↑ =
+    # -------------------------------------------------------------
+
+    # -------------------------------------------------------------
+    # ============= ↓ Build the strong-scaling figure ↓ ===========
+    # -------------------------------------------------------------
 
     MB = 1024 ** 2
     fig, axes = plt.subplots(2, 2, figsize=(14, 11))
     ax_t, ax_s = axes[0]
     ax_temp, ax_arg = axes[1]
 
-    cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", ["C0", "C1", "C2", "C3"])
+    color_cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", ["C0", "C1", "C2", "C3"])
     for idx, (label, rec) in enumerate(out.items()):
-        color = cycle[idx % len(cycle)]
-        r1 = np.array(rec["runtime_1"])
-        rN = np.array(rec["runtime_N"])
-        speedup = r1 / rN
+        color = color_cycle[idx % len(color_cycle)]
+        runtime_single = np.array(rec["runtime_1"])
+        runtime_multi = np.array(rec["runtime_N"])
+        speedup = runtime_single / runtime_multi
 
-        ax_t.loglog(N_values, r1, color=color, marker="o", linestyle="-",
-                    linewidth=2, label=f"{label}, 1 GPU")
-        ax_t.loglog(N_values, rN, color=color, marker="s", linestyle="--",
-                    linewidth=2, label=f"{label}, {num_gpus} GPUs")
+        ax_t.loglog(
+            N_values,
+            runtime_single,
+            color=color,
+            marker="o",
+            linestyle="-",
+            linewidth=2,
+            label=f"{label}, 1 GPU",
+        )
+        ax_t.loglog(
+            N_values,
+            runtime_multi,
+            color=color,
+            marker="s",
+            linestyle="--",
+            linewidth=2,
+            label=f"{label}, {num_gpus} GPUs",
+        )
 
-        ax_s.plot(N_values, speedup, color=color, marker="o", linewidth=2, label=label)
+        ax_s.plot(
+            N_values,
+            speedup,
+            color=color,
+            marker="o",
+            linewidth=2,
+            label=label,
+        )
 
-        ax_temp.loglog(N_values, np.array(rec["temp_1"]) / MB, color=color,
-                       marker="o", linestyle="-", linewidth=2, label=f"{label}, 1 GPU")
-        ax_temp.loglog(N_values, np.array(rec["temp_N"]) / MB, color=color,
-                       marker="s", linestyle="--", linewidth=2,
-                       label=f"{label}, {num_gpus} GPUs (per device)")
+        ax_temp.loglog(
+            N_values,
+            np.array(rec["temp_1"]) / MB,
+            color=color,
+            marker="o",
+            linestyle="-",
+            linewidth=2,
+            label=f"{label}, 1 GPU",
+        )
+        ax_temp.loglog(
+            N_values,
+            np.array(rec["temp_N"]) / MB,
+            color=color,
+            marker="s",
+            linestyle="--",
+            linewidth=2,
+            label=f"{label}, {num_gpus} GPUs (per device)",
+        )
 
-        ax_arg.loglog(N_values, np.array(rec["arg_1"]) / MB, color=color,
-                      marker="o", linestyle="-", linewidth=2, label=f"{label}, 1 GPU")
-        ax_arg.loglog(N_values, np.array(rec["arg_N"]) / MB, color=color,
-                      marker="s", linestyle="--", linewidth=2,
-                      label=f"{label}, {num_gpus} GPUs (per device)")
+        ax_arg.loglog(
+            N_values,
+            np.array(rec["arg_1"]) / MB,
+            color=color,
+            marker="o",
+            linestyle="-",
+            linewidth=2,
+            label=f"{label}, 1 GPU",
+        )
+        ax_arg.loglog(
+            N_values,
+            np.array(rec["arg_N"]) / MB,
+            color=color,
+            marker="s",
+            linestyle="--",
+            linewidth=2,
+            label=f"{label}, {num_gpus} GPUs (per device)",
+        )
 
-    ax_s.axhline(num_gpus, color="k", linestyle="--", alpha=0.7,
-                 label=f"ideal speedup ({num_gpus}x)")
+    ax_s.axhline(
+        num_gpus,
+        color="k",
+        linestyle="--",
+        alpha=0.7,
+        label=f"ideal speedup ({num_gpus}x)",
+    )
 
     ax_t.set_xlabel("N (grid size: 2N x N x N)", fontsize=12)
     ax_t.set_ylabel("Runtime (s)", fontsize=12)
@@ -385,26 +570,33 @@ def run_strong_scaling(
         _format_xaxis(ax, N_values)
         ax.legend(loc="best", fontsize=8)
         ax.grid(True, which="major", ls="-", alpha=0.2)
+    # The speedup panel stays on a linear scale, and its upper limit tracks the
+    # largest speedup actually observed (falling back to the ideal factor) so
+    # the ideal-speedup guide line always stays in view.
     ax_s.set_yscale("linear")
     speedups_seen = []
-    for r in out.values():
-        s = np.array(r["runtime_1"]) / np.array(r["runtime_N"])
-        s = s[np.isfinite(s)]
-        if s.size:
-            speedups_seen.append(float(s.max()))
+    for record in out.values():
+        speedup_curve = np.array(record["runtime_1"]) / np.array(record["runtime_N"])
+        speedup_curve = speedup_curve[np.isfinite(speedup_curve)]
+        if speedup_curve.size:
+            speedups_seen.append(float(speedup_curve.max()))
     max_speedup_seen = max(speedups_seen) if speedups_seen else float(num_gpus)
     ax_s.set_ylim(0, max(num_gpus, max_speedup_seen) * 1.1)
 
     fig.tight_layout()
     fig.savefig(os.path.join(figure_dir, f"{name}_strong_scaling.svg"))
 
+    # -------------------------------------------------------------
+    # ============= ↑ Build the strong-scaling figure ↑ ===========
+    # -------------------------------------------------------------
+
     flat = {"N_values": np.array(N_values), "num_gpus": num_gpus}
     for label, rec in out.items():
         slug = _slug(label)
-        for k, v in rec.items():
-            if k == "N":
+        for field_name, values in rec.items():
+            if field_name == "N":
                 continue
-            flat[f"{slug}__{k}"] = np.array(v)
+            flat[f"{slug}__{field_name}"] = np.array(values)
     np.savez(os.path.join(data_dir, f"{name}_strong_scaling.npz"), **flat)
 
     return out

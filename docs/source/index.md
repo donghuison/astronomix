@@ -114,39 +114,43 @@ the notebooks below and we have also prepared a more advanced use-case
 (stellar wind in driven MHD tubulence) which you can
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1Pg98IPGnoejaGvzmNNZiwmf1JnXwYAJH?usp=sharing).
 
-## Notebooks for Getting Started
+## Examples for Getting Started
 
 ```{toctree}
-:caption: hydrodynamics
+:caption: forward simulations
 :maxdepth: 1
 
-notebooks/hydrodynamics/simple_example.ipynb
-notebooks/hydrodynamics/conservational_properties.ipynb
-notebooks/hydrodynamics/kelvin_helmholtz.ipynb
+examples/notebooks/forward/hydro/shock_tube.ipynb
+examples/notebooks/forward/hydro/khi.ipynb
+examples/notebooks/forward/mhd/jet.ipynb
+examples/notebooks/forward/mhd/turbulence.ipynb
+examples/notebooks/forward/self_gravity/collapse.ipynb
 ```
 
 ```{toctree}
-:caption: magnetohydrodynamics
+:caption: differentiability
 :maxdepth: 1
 
-notebooks/magnetohydrodynamics/orszag_tang_vortex.ipynb
-notebooks/magnetohydrodynamics/fd_mhd_blast.ipynb
+examples/notebooks/differentiability/field_level_inference.ipynb
+examples/notebooks/differentiability/eigen_initialization.ipynb
+examples/notebooks/differentiability/solver_in_the_loop.ipynb
 ```
 
 ```{toctree}
-:caption: self-gravity
+:caption: output options
 :maxdepth: 1
 
-notebooks/self_gravity/evrards_collapse.ipynb
+examples/notebooks/output_options/callback.ipynb
+examples/notebooks/output_options/orbax_checkpointing.ipynb
+examples/notebooks/output_options/return_snapshots.ipynb
 ```
 
 ```{toctree}
-:caption: stellar wind
+:caption: multi-GPU
 :maxdepth: 1
 
-notebooks/stellar_wind/gradients_through_stellar_wind.ipynb
-notebooks/stellar_wind/wind_parameter_optimization.ipynb
-notebooks/stellar_wind/stellar_wind3D.ipynb
+examples/notebooks/multi_gpu/multi_gpu.ipynb
+examples/notebooks/multi_gpu/multi_node.ipynb
 ```
 
 ## Showcase
@@ -159,21 +163,13 @@ notebooks/stellar_wind/stellar_wind3D.ipynb
 |:---------------------------------------------------------------------------------:|
 | Magnetohydrodynamics simulation with driven turbulence and stellar wind at a resolution of 512³ cells in a fifth order CT MHD scheme run on 4 H200 GPUs. |
 
-| ![Orszag-Tang Vortex](notebooks/figures/orszag_tang_animation.gif) | ![3D Collapse](notebooks/figures/3d_collapse.gif) |
-|:------------------------------------------------------------------:|:-------------------------------------------------:|
-| Orszag-Tang Vortex                                                 | 3D Collapse                                       |
+| ![3D MHD jet](figures/mhd_jet.png) |
+|:----------------------------------:|
+| 3D MHD jet propagating into a magnetized medium. |
 
-| ![Gradients Through Stellar Wind](notebooks/figures/gradients_through_stellar_wind.svg) |
-|:---------------------------------------------------------------------------------------:|
-| Gradients Through Stellar Wind                                                          |
-
-| ![Novel (Possibly) Conservative Self Gravity Scheme, Stable at Strong Discontinuities](notebooks/figures/collapse_conservation.svg) |
-|:-----------------------------------------------------------------------------------------------------------------------------------:|
-| Novel (Possibly) Conservative Self Gravity Scheme, Stable at Strong Discontinuities                                                 |
-
-| ![Wind Parameter Optimization](notebooks/figures/wind_parameter_optimization.png) |
-|:---------------------------------------------------------------------------------:|
-| Wind Parameter Optimization                                                       |
+| ![Semi-Discretely Energy Conserving Self Gravity Scheme](figures/collapse_energy_evolution_comparison.svg) |
+|:-----------------------------------------------------------------------------------------------------------:|
+| Novel semi-discretely energy conserving self-gravity scheme. |
 
 ## Citing astronomix
 

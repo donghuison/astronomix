@@ -112,47 +112,52 @@ the notebooks below and we have also prepared a more advanced use-case
 (stellar wind in driven MHD tubulence) which you can
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1Pg98IPGnoejaGvzmNNZiwmf1JnXwYAJH?usp=sharing).
 
-## Notebooks for Getting Started
+## Examples for Getting Started
 
-- hydrodynamics
-  - [1d shock tube](notebooks/hydrodynamics/simple_example.ipynb)
-  - [1d spherical check of conservational properties](notebooks/hydrodynamics/conservational_properties.ipynb)
-  - [2d Kelvin-Helmholtz instability](notebooks/hydrodynamics/kelvin_helmholtz.ipynb)
-- magnetohydrodynamics
-  - [2d Orszag-Tang vortex](notebooks/magnetohydrodynamics/orszag_tang_vortex.ipynb)
-  - [3D MHD blast with the 5th order FD scheme](notebooks/magnetohydrodynamics/fd_mhd_blast.ipynb)
-- self-gravity
-  - [3d simulation of Evrard's collapse](notebooks/self_gravity/evrards_collapse.ipynb)
-- stellar wind
-  - [1d stellar wind with gradient showcase](notebooks/stellar_wind/gradients_through_stellar_wind.ipynb)
-  - [1d stellar wind with parameter optimization](notebooks/stellar_wind/wind_parameter_optimization.ipynb)
-  - [3d stellar wind](notebooks/stellar_wind/stellar_wind3D.ipynb)
+Every example is available both as a runnable script (`examples/scripts/…`) and
+as an equivalent notebook (`examples/notebooks/…`).
+
+- forward simulations
+  - [1D Sod shock tube](examples/notebooks/forward/hydro/shock_tube.ipynb)
+  - [2D Kelvin-Helmholtz instability](examples/notebooks/forward/hydro/khi.ipynb)
+  - [3D MHD jet](examples/notebooks/forward/mhd/jet.ipynb)
+  - [3D driven MHD turbulence](examples/notebooks/forward/mhd/turbulence.ipynb)
+  - [3D self-gravitating collapse](examples/notebooks/forward/self_gravity/collapse.ipynb)
+- differentiability
+  - [Field-level inference](examples/notebooks/differentiability/field_level_inference.ipynb)
+  - [KHI eigenmode initialization](examples/notebooks/differentiability/eigen_initialization.ipynb)
+  - [Solver-in-the-loop correction network](examples/notebooks/differentiability/solver_in_the_loop.ipynb)
+- output options
+  - [On-the-fly movie via callback](examples/notebooks/output_options/callback.ipynb)
+  - [Orbax checkpointing and restart](examples/notebooks/output_options/orbax_checkpointing.ipynb)
+  - [In-memory snapshot diagnostics](examples/notebooks/output_options/return_snapshots.ipynb)
+- multi-GPU
+  - [Sharded multi-GPU run](examples/notebooks/multi_gpu/multi_gpu.ipynb)
+  - [Multi-node run](examples/notebooks/multi_gpu/multi_node.ipynb)
+
+More involved, physics-module showcase scripts — turbulent radiative mixing
+layer, stellar wind, cosmic rays, cooling and more — live in
+[`examples/gallery/`](examples/gallery). The automated validation tests and the
+methods-paper figures live under [`pytests/`](pytests); regenerate every paper
+figure with `pytest pytests/paper_plots --reproduce-paper`.
 
 ## Showcase
 
-| ![wind in driven turbulence](tests/finite_difference/figures/interm_driven_turb_wind4.png) |
+| ![wind in driven turbulence](readme_resources/readme_figures/interm_driven_turb_wind4.png) |
 |:---------------------------------------------------------------------------------:|
 | Magnetohydrodynamics simulation with driven turbulence at a resolution of 512³ cells in a fifth order CT MHD scheme run on 4 H200 GPUs. |
 
-| ![wind in driven turbulence](tests/finite_difference/figures/driven_turb_wind4.png) |
+| ![wind in driven turbulence](readme_resources/readme_figures/driven_turb_wind4.png) |
 |:---------------------------------------------------------------------------------:|
 | Magnetohydrodynamics simulation with driven turbulence and stellar wind at a resolution of 512³ cells in a fifth order CT MHD scheme run on 4 H200 GPUs. |
 
-| ![Orszag-Tang Vortex](notebooks/figures/orszag_tang_animation.gif) | ![3D Collapse](notebooks/figures/3d_collapse.gif) |
-|:------------------------------------------------------------------:|:-------------------------------------------------:|
-| Orszag-Tang Vortex                                                 | 3D Collapse                                       |
+| ![3D MHD jet](readme_resources/readme_figures/mhd_jet.png) |
+|:----------------------------------------------------------:|
+| 3D MHD jet propagating into a magnetized medium. |
 
-| ![Gradients Through Stellar Wind](notebooks/figures/gradients_through_stellar_wind.svg) |
-|:---------------------------------------------------------------------------------------:|
-| Gradients Through Stellar Wind                                                          |
-
-| ![Novel Semi-Discretely Energy Conserving Self Gravity Scheme](notebooks/figures/collapse_conservation.svg) |
+| ![Semi-Discretely Energy Conserving Self Gravity Scheme](readme_resources/readme_figures/collapse_energy_evolution_comparison.svg) |
 |:-----------------------------------------------------------------------------------------------------------:|
-| Novel Semi-Discretely Energy Conserving Self Gravity Scheme                                                 |
-
-| ![Wind Parameter Optimization](notebooks/figures/wind_parameter_optimization.png) |
-|:---------------------------------------------------------------------------------:|
-| Wind Parameter Optimization                                                       |
+| Novel semi-discretely energy conserving self-gravity scheme. |
 
 ## Performance
 
