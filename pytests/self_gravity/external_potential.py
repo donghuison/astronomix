@@ -28,32 +28,35 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 
 # astronomix constants
-from astronomix import CARTESIAN
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
+    CARTESIAN,
     FINITE_DIFFERENCE,
     OPEN_BOUNDARY,
-    SIMPLE_SOURCE,
 )
+from astronomix.option_classes.simulation_config import SIMPLE_SOURCE
 
 # astronomix containers
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
     BoundarySettings,
     BoundarySettings1D,
     GravityConfig,
     SimulationConfig,
+    SimulationParams,
+)
+from astronomix.option_classes.simulation_config import (
     StaticFloatVector,
     StaticIntVector,
 )
-from astronomix.option_classes.simulation_params import SimulationParams
 
 # astronomix functions
-from astronomix.data_classes.simulation_helper_data import get_helper_data
-from astronomix.initial_condition_generation.construct_primitive_state import (
+from astronomix import (
+    get_helper_data,
     construct_primitive_state,
+    finalize_config,
+    get_registered_variables,
+    time_integration,
 )
-from astronomix.option_classes.simulation_config import finalize_config
-from astronomix.variable_registry.registered_variables import get_registered_variables
-from astronomix.time_stepping.time_integration import time_integration
+
 
 # This is an equilibrium test where the residual we measure is tiny, so we run in
 # double precision to keep round-off from masking the physical drift.

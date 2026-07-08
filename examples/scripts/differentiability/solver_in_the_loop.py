@@ -34,8 +34,16 @@ from astronomix import (
 )
 
 # astronomix containers
-from astronomix import SimulationConfig, SimulationParams
-from astronomix.option_classes.simulation_config import SnapshotSettings
+from astronomix import (
+    SimulationConfig,
+    SimulationParams,
+    SnapshotSettings,
+)
+from astronomix._modules._cnn_mhd_corrector._cnn_mhd_corrector import CorrectorCNN
+from astronomix._modules._cnn_mhd_corrector._cnn_mhd_corrector_options import (
+    CNNMHDParams,
+    CNNMHDconfig,
+)
 
 # astronomix functions
 from astronomix import (
@@ -46,12 +54,8 @@ from astronomix import (
     finalize_config,
 )
 
+
 # CNN corrector
-from astronomix._modules._cnn_mhd_corrector._cnn_mhd_corrector import CorrectorCNN
-from astronomix._modules._cnn_mhd_corrector._cnn_mhd_corrector_options import (
-    CNNMHDParams,
-    CNNMHDconfig,
-)
 
 # figures are written to the local figures/ directory
 from pathlib import Path

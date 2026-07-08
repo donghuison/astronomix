@@ -68,6 +68,7 @@ from astronomix import (
     initialize_interface_fields,
 )
 
+
 # figures are written to the local figures/ directory
 from pathlib import Path
 figures_dir = Path(__file__).resolve().parent / "figures"

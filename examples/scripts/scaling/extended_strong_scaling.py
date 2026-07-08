@@ -26,7 +26,7 @@ import jax
 jax.config.update("jax_enable_x64", False)
 
 # astronomix constants
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
     FINITE_DIFFERENCE,
     FINITE_VOLUME,
     NATIVE_JAX,
@@ -34,17 +34,20 @@ from astronomix.option_classes.simulation_config import (
 )
 
 # astronomix containers
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
     SimulationConfig,
     SnapshotSettings,
-    StaticFloatVector,
 )
+from astronomix.option_classes.simulation_config import StaticFloatVector
 
 # astronomix functions
 from astronomix.test_setups.hydrodynamics.sound_wave3D import setup_sound_wave
 
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_PYTESTS_DIR = os.path.dirname(_HERE)
+_PYTESTS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(_HERE))), "pytests"
+)
 if _PYTESTS_DIR not in sys.path:
     sys.path.insert(0, _PYTESTS_DIR)
 

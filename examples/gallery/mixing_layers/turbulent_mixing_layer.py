@@ -45,13 +45,13 @@ from matplotlib.colors import LogNorm
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 
 # astronomix constants
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
     FINITE_DIFFERENCE,
-    FIXED_BOUNDARY_OPEN_MOMENTUM,
     OPEN_BOUNDARY,
     PALLAS,
     PERIODIC_BOUNDARY,
 )
+from astronomix.option_classes.simulation_config import FIXED_BOUNDARY_OPEN_MOMENTUM
 from astronomix._modules._cooling.cooling_options import (
     IMPLICIT_COOLING,
     SIMPLE_MIXING_LAYER_COOLING,
@@ -61,17 +61,17 @@ from astronomix._modules._cooling.cooling_options import (
 from astronomix import (
     SimulationConfig,
     SimulationParams,
+    BoundarySettings,
+    BoundarySettings1D,
+    PositivityConfig,
 )
 from astronomix.option_classes.simulation_params import (
     FixedBoundaryState,
     FixedBoundaryState1D,
 )
 from astronomix.option_classes.simulation_config import (
-    BoundarySettings,
-    BoundarySettings1D,
     StaticFloatVector,
     StaticIntVector,
-    PositivityConfig,
 )
 from astronomix._modules._cooling.cooling_options import (
     CoolingConfig,
@@ -86,8 +86,9 @@ from astronomix import (
     time_integration,
     construct_primitive_state,
     get_registered_variables,
+    finalize_config,
 )
-from astronomix.option_classes.simulation_config import finalize_config
+
 
 # figures are written to the local figures/ directory
 figures_dir = Path(__file__).resolve().parent / "figures"

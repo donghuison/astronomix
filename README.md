@@ -137,9 +137,10 @@ as an equivalent notebook (`examples/notebooks/…`).
 
 More involved, physics-module showcase scripts — turbulent radiative mixing
 layer, stellar wind, cosmic rays, cooling and more — live in
-[`examples/gallery/`](examples/gallery). The automated validation tests and the
-methods-paper figures live under [`pytests/`](pytests); regenerate every paper
-figure with `pytest pytests/paper_plots --reproduce-paper`.
+[`examples/gallery/`](examples/gallery). The faithful methods-paper figure
+generators live under [`examples/scripts/`](examples/scripts); regenerate every
+paper figure with `pytest pytests/test_reproduce_paper.py --reproduce-paper`.
+The fast correctness tests live under [`pytests/`](pytests).
 
 ## Showcase
 

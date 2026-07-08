@@ -30,15 +30,13 @@ from astronomix import (
     FINITE_DIFFERENCE,
     PERIODIC_BOUNDARY,
 )
-from astronomix.option_classes.simulation_config import (
-    GravityConfig,
-    PositivityConfig,
-    SnapshotSettings,
-    SECOND_ORDER_CONSERVATIVE,
-)
+from astronomix.option_classes.simulation_config import SECOND_ORDER_CONSERVATIVE
 
 # astronomix containers
 from astronomix import (
+    GravityConfig,
+    PositivityConfig,
+    SnapshotSettings,
     SimulationConfig,
     SimulationParams,
     BoundarySettings,
@@ -53,6 +51,7 @@ from astronomix import (
     construct_primitive_state,
     finalize_config,
 )
+
 
 # figures are written to the local figures/ directory
 figures_dir = Path(__file__).resolve().parent / "figures"

@@ -25,28 +25,29 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
 # astronomix constants
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
     BACKWARDS,
     FINITE_DIFFERENCE,
-    IDEAL_GAS,
     PERIODIC_BOUNDARY,
 )
+from astronomix.option_classes.simulation_config import IDEAL_GAS
 
 # astronomix containers
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
     BoundarySettings,
     BoundarySettings1D,
     SimulationConfig,
+    SimulationParams,
 )
-from astronomix.option_classes.simulation_params import SimulationParams
 
 # astronomix functions
-from astronomix.initial_condition_generation.construct_primitive_state import (
+from astronomix import (
     construct_primitive_state,
+    finalize_config,
+    time_integration,
+    get_registered_variables,
 )
-from astronomix.option_classes.simulation_config import finalize_config
-from astronomix.time_stepping import time_integration
-from astronomix.variable_registry.registered_variables import get_registered_variables
+
 
 # Figures are written to the local figures/ directory next to this test.
 figures_dir = Path(__file__).resolve().parent / "figures"

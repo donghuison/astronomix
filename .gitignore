@@ -200,3 +200,13 @@ cython_debug/
 
 .venv
 /poetry.toml
+# generated example/test outputs: simulation caches + figures
+# (directories are kept in git via their .gitkeep placeholders)
+examples/scripts/**/data/
+examples/gallery/**/data/
+examples/scripts/**/figures/*
+!examples/scripts/**/figures/.gitkeep
+examples/gallery/**/figures/*
+!examples/gallery/**/figures/.gitkeep
+pytests/**/figures/*
+!pytests/**/figures/.gitkeep

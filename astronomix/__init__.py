@@ -32,9 +32,15 @@ from astronomix.option_classes.simulation_config import (
 )
 
 # astronomix containers
-from astronomix.option_classes.simulation_config import SimulationConfig
+from astronomix.option_classes.simulation_config import (
+    SimulationConfig,
+    BoundarySettings,
+    BoundarySettings1D,
+    SnapshotSettings,
+    PositivityConfig,
+    GravityConfig,
+)
 from astronomix.option_classes.simulation_params import SimulationParams
-from astronomix.option_classes.simulation_config import BoundarySettings, BoundarySettings1D
 from astronomix._modules._stellar_wind.stellar_wind_options import WindParams
 from astronomix.units import CodeUnits
 

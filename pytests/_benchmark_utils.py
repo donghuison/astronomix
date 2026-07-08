@@ -41,17 +41,19 @@ from astronomix.option_classes.simulation_config import (
 )
 
 # astronomix containers
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
     SimulationConfig,
     SnapshotSettings,
-    StaticIntVector,
+    SimulationParams,
 )
-from astronomix.option_classes.simulation_params import SimulationParams
+from astronomix.option_classes.simulation_config import StaticIntVector
 
 # astronomix functions
-from astronomix.data_classes.simulation_helper_data import get_helper_data
-from astronomix.time_stepping.time_integration import time_integration
-from astronomix.variable_registry.registered_variables import get_registered_variables
+from astronomix import (
+    get_helper_data,
+    time_integration,
+    get_registered_variables,
+)
 
 
 class BenchmarkSpec(NamedTuple):
@@ -152,6 +154,37 @@ def _mean_l1_error(final_state, true_state, indices: Sequence[int]) -> float:
         jnp.mean(jnp.abs(final_state[i] - true_state[i])) for i in indices
     ]
     return float(jnp.stack(per_variable_errors).mean())
+
+
+def assert_correctness_at_resolution(
+    benchmarks: Sequence[BenchmarkSpec],
+    N: int,
+    setup_fn: Callable,
+    analytic_fn: Callable,
+    error_var_indices_fn: Callable,
+    *,
+    name: str,
+    tol: float,
+):
+    """Fast single-resolution correctness check against an analytic solution.
+
+    Runs every benchmark once at the (low) resolution ``N``, measures the mean
+    L1 error of the final state against ``analytic_fn``, and asserts it is below
+    ``tol``. This is the quick pytest counterpart to the heavy
+    ``run_convergence_and_runtime`` sweep (which lives in the examples/ paper
+    generators): no figures, no runtime accounting, just correctness.
+    """
+    for spec in benchmarks:
+        result, config, params, registered_variables, helper_data = _run_simulation(
+            spec, N, setup_fn, num_gpus=1,
+        )
+        indices = error_var_indices_fn(registered_variables)
+        true_state = analytic_fn(config, registered_variables, params, helper_data)
+        err = _mean_l1_error(result.final_state, true_state, indices)
+        print(f"[{name}] {spec.label} N={N}: L1={err:.3e} (tol={tol:.3e})")
+        assert err < tol, (
+            f"{name} / {spec.label}: L1 error {err:.3e} exceeds tol {tol:.3e} at N={N}"
+        )
 
 
 def _format_xaxis(ax, N_values):

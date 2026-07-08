@@ -50,102 +50,44 @@ shows this crossover.
 --------------------------------------------------------------------------------
 Usage
 --------------------------------------------------------------------------------
-GPU selection is handled by ``autocvd`` at the top of this file (it grabs one free
-GPU); do NOT set ``CUDA_VISIBLE_DEVICES``. ``astronomix`` is installed as a wheel,
-so no ``PYTHONPATH`` is needed.
+Run one (horizon, init) cell on one GPU (writes data/study_N256_T<hor>_i<init>.npz,
+resumable -- skips a cell already at the target step budget):
 
-Run one (horizon, init) cell (writes data/study_N256_T<hor>_i<init>.npz, resumable --
-skips a cell already at the target step budget):
+    PYTHONPATH=<repo-root> CUDA_VISIBLE_DEVICES=0 \
+        python kh_shooting_study.py run --horizon 60 --init 0
 
-    python kh_recon.py run --horizon 60 --init 0
-
-Fan the whole campaign across GPUs (e.g. inits 0..15), for both horizons -- plain
-shell, no extra script needed; ``autocvd`` assigns each process a free GPU:
+Fan the whole campaign across GPUs (e.g. inits 0..15 over GPUs 0,1,4), for both
+horizons -- plain shell, no extra script needed:
 
     for T in 20 60; do for i in $(seq 0 15); do
-        python kh_recon.py run --horizon $T --init $i &
+        g=$(( i % 3 )); g=$([ $g -eq 2 ] && echo 4 || echo $g)
+        CUDA_VISIBLE_DEVICES=$g PYTHONPATH=<repo-root> \
+            python kh_shooting_study.py run --horizon $T --init $i &
     done; wait; done
 
 Aggregate paired statistics (Wilson 68% CIs) for one horizon:
 
-    python kh_recon.py agg --horizon 60
+    python kh_shooting_study.py agg --horizon 60
 
-Generate the 2x3 figure:
+Generate the 2x3 figure (no GPU needed):
 
-    python kh_recon.py plot --horizons 20 60
+    python kh_shooting_study.py plot --horizons 20 60 --out figures/study_2x3_N256.png
 
-Render the 2x4 reconstruction-example figure (forward-sims truth + recovered IC):
-
-    python kh_recon.py recon --horizons 20 60
+Run against the refactor worktree where the Pallas reverse adjoint lives
+(`PYTHONPATH=.../astronomix-refactor-port`); env = jax 0.6.2 + optax.
 """
 from __future__ import annotations
 
-# ==== GPU selection ====
-from autocvd import autocvd
-autocvd(num_gpus=1)
-# ruff: noqa: E402
-# =======================
-
-# standard library
 import argparse
 import glob
 import math
 import os
-import time
-from pathlib import Path
+from functools import partial
 from typing import NamedTuple
 
-# jax
-import jax
-import jax.numpy as jnp
-
-# numerics and optimization
-import numpy as np
-import optax
-
-# plotting
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-# astronomix constants
-from astronomix import (
-    BACKWARDS,
-    FINITE_DIFFERENCE,
-    OPEN_BOUNDARY,
-    PALLAS,
-    PERIODIC_BOUNDARY,
-)
-from astronomix.option_classes.simulation_config import DYNAMIC_VISCOSITY
-
-# astronomix containers
-from astronomix import (
-    SimulationConfig,
-    SimulationParams,
-    BoundarySettings,
-    BoundarySettings1D,
-)
-
-# astronomix functions
-from astronomix import (
-    time_integration,
-    get_helper_data,
-    get_registered_variables,
-    construct_primitive_state,
-    finalize_config,
-)
-
-# figures and data caches are written to local, script-relative directories
-figures_dir = Path(__file__).resolve().parent / "figures"
-figures_dir.mkdir(exist_ok=True)
-data_dir = Path(__file__).resolve().parent / "data"
-data_dir.mkdir(exist_ok=True)
-
-
-# -------------------------------------------------------------
-# =============== ↓ Defaults ↓ ================================
-# -------------------------------------------------------------
-# the converged campaign settings
+# ----------------------------------------------------------------------------
+# defaults (the converged campaign settings)
+# ----------------------------------------------------------------------------
 N_DEFAULT = 256
 M_DEFAULT = 8
 SNITER_DEFAULT = 1980      # single-shooting Adam steps (matched to MS budget)
@@ -159,20 +101,16 @@ SEED_DEFAULT = 0
 INITSCALE_DEFAULT = 1e-2
 REC_DEFAULT = 10           # record metrics every REC Adam steps
 PALLAS_BLOCK = (4, 4, 4)
-DATA_DIR = str(data_dir)
+DATA_DIR = "data"
 
 
 def cell_path(n, horizon, init, data_dir=DATA_DIR):
     return os.path.join(data_dir, f"study_N{n}_T{horizon:.0f}_i{init}.npz")
-# -------------------------------------------------------------
-# =============== ↑ Defaults ↑ ================================
-# -------------------------------------------------------------
 
 
-# -------------------------------------------------------------
-# =============== ↓ KH problem ↓ ==============================
-# -------------------------------------------------------------
-# forward operator, broadband seed, observation -- self-contained
+# ============================================================================
+#  KH problem (forward operator, broadband seed, observation) -- self-contained
+# ============================================================================
 class KHParams(NamedTuple):
     n: int = N_DEFAULT
     box: float = 1.0
@@ -206,6 +144,13 @@ class KHParams(NamedTuple):
 
 def _build_backend(khp, horizon, pallas):
     """Config + params for the backward (reverse-mode) inviscid KH solver."""
+    import jax.numpy as jnp  # noqa: F401  (kept local so `plot`/`agg` need no jax)
+    from astronomix import SimulationConfig, SimulationParams
+    from astronomix.option_classes.simulation_config import (
+        BACKWARDS, DYNAMIC_VISCOSITY, FINITE_DIFFERENCE, OPEN_BOUNDARY, PALLAS,
+        PERIODIC_BOUNDARY, BoundarySettings, BoundarySettings1D, SnapshotSettings,
+    )
+
     T = horizon * khp.growth_time
     config = SimulationConfig(
         solver_mode=FINITE_DIFFERENCE, dimensionality=2, num_cells=khp.n,
@@ -226,6 +171,13 @@ def _build_backend(khp, horizon, pallas):
 def _make_problem(khp, horizon, pallas):
     """Returns the closures the optimisers need (seed_of, s0_of, Phi, PhiT, H), plus
     the truth seed, the terminal observation y, and an ic_err metric."""
+    import jax
+    import jax.numpy as jnp
+    from astronomix import (get_helper_data, get_registered_variables, time_integration)
+    from astronomix.initial_condition_generation.construct_primitive_state import (
+        construct_primitive_state)
+    from astronomix.option_classes.simulation_config import finalize_config
+
     config, params, T = _build_backend(khp, horizon, pallas)
     M = M_DEFAULT
     h = T / M
@@ -277,18 +229,21 @@ def _make_problem(khp, horizon, pallas):
     return dict(seed_of=seed_of, s0_of=s0_of, base_state=base_state, Phi=Phi, PhiT=PhiT,
                 H=H, y=y, truth=truth, ic_err=ic_err, n_modes=len(ks), M=M,
                 box=khp.box, n=khp.n)
-# -------------------------------------------------------------
-# =============== ↑ KH problem ↑ ==============================
-# -------------------------------------------------------------
 
 
-# -------------------------------------------------------------
-# =============== ↓ Run one (horizon, init) cell ↓ ===========
-# -------------------------------------------------------------
-# best single + best AL-MS
+# ============================================================================
+#  run one (horizon, init) cell: best single + best AL-MS
+# ============================================================================
 def run_cell(horizon, init, *, n=N_DEFAULT, sniter=SNITER_DEFAULT, inner=INNER_DEFAULT,
              outer=OUTER_DEFAULT, lr=LR_DEFAULT, rho0=RHO0_DEFAULT, rhofac=RHOFAC_DEFAULT,
              rec=REC_DEFAULT, pallas=True, out=None):
+    import time
+
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+    import optax
+
     out = out or cell_path(n, horizon, init)
     if os.path.exists(out):
         d = np.load(out)
@@ -385,16 +340,13 @@ def run_cell(horizon, init, *, n=N_DEFAULT, sniter=SNITER_DEFAULT, inner=INNER_D
              c_single=c_single, c_ms=np.asarray(p["c"]))
     print(f"-> {out}", flush=True)
     return out
-# -------------------------------------------------------------
-# =============== ↑ Run one (horizon, init) cell ↑ ===========
-# -------------------------------------------------------------
 
 
-# -------------------------------------------------------------
-# =============== ↓ Aggregate + figure ↓ ======================
-# -------------------------------------------------------------
-# numpy/matplotlib only -- no jax / no GPU
+# ============================================================================
+#  aggregate + figure  (numpy/matplotlib only -- no jax / no GPU)
+# ============================================================================
 def _load_cells(n, horizon, data_dir=DATA_DIR):
+    import numpy as np
     files = sorted(glob.glob(os.path.join(data_dir, f"study_N{n}_T{horizon:.0f}_i*.npz")),
                    key=lambda f: int(f.split("_i")[-1].replace(".npz", "")))
     return files, [np.load(f) for f in files]
@@ -410,6 +362,7 @@ def _wilson(k, num, z=1.0):
 
 
 def aggregate(horizon, *, n=N_DEFAULT, data_dir=DATA_DIR):
+    import numpy as np
     files, runs = _load_cells(n, horizon, data_dir)
     if not runs:
         print(f"no data for N={n} T={horizon:.0f}"); return
@@ -432,6 +385,11 @@ def aggregate(horizon, *, n=N_DEFAULT, data_dir=DATA_DIR):
 
 
 def make_figure(horizons, out, *, n=N_DEFAULT, data_dir=DATA_DIR):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
     C_S, C_M = "#1f77b4", "#d62728"   # single, multiple
     rows = [(T, _load_cells(n, T, data_dir)[1]) for T in horizons]
     for T, runs in rows:
@@ -472,20 +430,18 @@ def make_figure(horizons, out, *, n=N_DEFAULT, data_dir=DATA_DIR):
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     fig.savefig(out, dpi=140, bbox_inches="tight")
     print(f"-> {out}  (" + ", ".join(f"T{T:.0f} n={len(r)}" for T, r in rows) + ")")
-# -------------------------------------------------------------
-# =============== ↑ Aggregate + figure ↑ ======================
-# -------------------------------------------------------------
 
 
-# -------------------------------------------------------------
-# =============== ↓ 2x4 reconstruction-example figure ↓ ======
-# -------------------------------------------------------------
-# cols: true IC | optimized IC (both v_y') ; observed final | reconstructed final (both omega_z)
-# rows: one successful reconstruction per horizon (the winning method at that horizon)
+# ============================================================================
+#  2x4 reconstruction-example figure
+#  cols: true IC | optimized IC (both v_y') ; observed final | reconstructed final (both omega_z)
+#  rows: one successful reconstruction per horizon (the winning method at that horizon)
+# ============================================================================
 def _best_cell(horizon, n, data_dir):
     """Best SUCCESSFUL (ic<0.1) reconstruction at this horizon, across both methods:
     returns (method, init, c_rec, ic_err).  Naturally picks single at short horizon,
     MS at long horizon."""
+    import numpy as np
     files, runs = _load_cells(n, horizon, data_dir)
     best = None
     for f, r in zip(files, runs):
@@ -502,6 +458,7 @@ def _best_cell(horizon, n, data_dir):
 
 def _vorticity(v, dx):
     """omega_z = dvy/dx - dvx/dy, central differences, periodic in x (v: (2,Nx,Ny))."""
+    import numpy as np
     dvydx = (np.roll(v[1], -1, 0) - np.roll(v[1], 1, 0)) / (2 * dx)
     dvxdy = (np.roll(v[0], -1, 1) - np.roll(v[0], 1, 1)) / (2 * dx)
     return dvydx - dvxdy
@@ -509,6 +466,8 @@ def _vorticity(v, dx):
 
 def _recon_fields(horizons, n, data_dir, pallas):
     """Forward-integrate truth and recovered ICs for each horizon (needs a GPU)."""
+    import jax
+    import numpy as np
     rows = []
     for T in horizons:
         method, init, c_rec, ic = _best_cell(T, n, data_dir)
@@ -532,11 +491,19 @@ def _recon_fields(horizons, n, data_dir, pallas):
 
 def make_recon_figure(out, horizons=(20.0, 60.0), *, n=N_DEFAULT, data_dir=DATA_DIR,
                       pallas=True, cache=None):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
     cache = cache or os.path.join(data_dir, "recon_fields.npz")
     if os.path.exists(cache):
         z = np.load(cache, allow_pickle=True)
         rows, box = list(z["rows"]), float(z["box"])
     else:
+        if not os.environ.get("CUDA_VISIBLE_DEVICES"):
+            from autocvd import autocvd
+            autocvd(num_gpus=1)
         rows, box = _recon_fields(horizons, n, data_dir, pallas)
         np.savez(cache, rows=np.array(rows, dtype=object), box=box)
         print(f"  cached -> {cache}")
@@ -586,19 +553,14 @@ def make_recon_figure(out, horizons=(20.0, 60.0), *, n=N_DEFAULT, data_dir=DATA_
     svg = os.path.splitext(out)[0] + ".svg"   # imshow pixels rasterized, text/axes vector
     fig.savefig(svg, dpi=160, bbox_inches="tight")
     print(f"-> {out}\n-> {svg}")
-# -------------------------------------------------------------
-# =============== ↑ 2x4 reconstruction-example figure ↑ ======
-# -------------------------------------------------------------
 
 
-# -------------------------------------------------------------
-# =============== ↓ CLI ↓ =====================================
-# -------------------------------------------------------------
+# ============================================================================
 def main():
     ap = argparse.ArgumentParser(description="Single vs multiple shooting (Adam) for KH IC reconstruction.")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    r = sub.add_parser("run", help="run one (horizon, init) cell on the autocvd-selected GPU")
+    r = sub.add_parser("run", help="run one (horizon, init) cell on the current GPU")
     r.add_argument("--horizon", type=float, required=True, help="final time in KH growth times")
     r.add_argument("--init", type=int, required=True, help="cold-init index")
     r.add_argument("--n", type=int, default=N_DEFAULT)
@@ -612,20 +574,23 @@ def main():
     a.add_argument("--horizon", type=float, required=True)
     a.add_argument("--n", type=int, default=N_DEFAULT)
 
-    p = sub.add_parser("plot", help="render the 2x3 convergence figure")
+    p = sub.add_parser("plot", help="render the 2x3 convergence figure (no GPU)")
     p.add_argument("--horizons", type=float, nargs="+", default=[20.0, 60.0])
     p.add_argument("--n", type=int, default=N_DEFAULT)
-    p.add_argument("--out", default=str(figures_dir / "study_2x3_N256.png"))
+    p.add_argument("--out", default="figures/study_2x3_N256.png")
 
     rc = sub.add_parser("recon", help="render the 2x4 reconstruction-example figure "
                                       "(forward-sims truth + recovered IC; needs a GPU unless cached)")
     rc.add_argument("--horizons", type=float, nargs="+", default=[20.0, 60.0])
     rc.add_argument("--n", type=int, default=N_DEFAULT)
-    rc.add_argument("--out", default=str(figures_dir / "recon_4x3_N256.png"))
+    rc.add_argument("--out", default="figures/recon_4x3_N256.png")
     rc.add_argument("--no-pallas", action="store_true")
 
     args = ap.parse_args()
     if args.cmd == "run":
+        if not os.environ.get("CUDA_VISIBLE_DEVICES"):
+            from autocvd import autocvd
+            autocvd(num_gpus=1)
         run_cell(args.horizon, args.init, n=args.n, sniter=args.sniter,
                  inner=args.inner, outer=args.outer, pallas=not args.no_pallas, out=args.out)
     elif args.cmd == "agg":
@@ -635,9 +600,6 @@ def main():
     elif args.cmd == "recon":
         make_recon_figure(args.out, horizons=tuple(args.horizons), n=args.n,
                           pallas=not args.no_pallas)
-# -------------------------------------------------------------
-# =============== ↑ CLI ↑ =====================================
-# -------------------------------------------------------------
 
 
 if __name__ == "__main__":

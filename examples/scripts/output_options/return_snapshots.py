@@ -26,10 +26,10 @@ from astronomix import (
     MINMOD,
     PERIODIC_BOUNDARY,
 )
-from astronomix.option_classes.simulation_config import SnapshotSettings
 
 # astronomix containers
 from astronomix import (
+    SnapshotSettings,
     SimulationConfig,
     SimulationParams,
     BoundarySettings,
@@ -43,6 +43,7 @@ from astronomix import (
     construct_primitive_state,
     finalize_config,
 )
+
 
 # figures are written to the local figures/ directory
 from pathlib import Path

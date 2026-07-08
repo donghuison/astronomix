@@ -39,7 +39,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 
 # astronomix constants
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
     FINITE_DIFFERENCE,
     FINITE_VOLUME,
     NATIVE_JAX,
@@ -47,17 +47,18 @@ from astronomix.option_classes.simulation_config import (
 )
 
 # astronomix containers
-from astronomix.option_classes.simulation_config import (
+from astronomix import (
     SimulationConfig,
     SnapshotSettings,
-    StaticFloatVector,
 )
+from astronomix.option_classes.simulation_config import StaticFloatVector
 
 # astronomix functions
 from astronomix.test_setups.hydrodynamics.sound_wave3D import (
     setup_sound_wave,
     sound_wave_solution,
 )
+
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _PYTESTS_DIR = os.path.dirname(_HERE)
@@ -67,8 +68,7 @@ if _PYTESTS_DIR not in sys.path:
 # shared benchmark harness (containers + drivers) living one directory up
 from _benchmark_utils import (  # noqa: E402
     BenchmarkSpec,
-    run_convergence_and_runtime,
-    run_strong_scaling,
+    assert_correctness_at_resolution,
 )
 
 DATA_DIR = os.path.join(_HERE, "data", "astronomix")
@@ -142,34 +142,16 @@ def _error_indices(registered_variables):
 
 
 def test_sound_wave_convergence():
-    run_convergence_and_runtime(
+    assert_correctness_at_resolution(
         BENCHMARKS,
-        N_values=[8, 16, 32, 64, 128],
+        N=16,
         setup_fn=setup_sound_wave,
         analytic_fn=sound_wave_solution,
         error_var_indices_fn=_error_indices,
         name="sound_wave3D",
-        title="3D linear sound wave",
-        data_dir=DATA_DIR,
-        figure_dir=FIG_DIR,
-    )
-
-
-def test_sound_wave_strong_scaling():
-    run_strong_scaling(
-        BENCHMARKS,
-        N_values=[16, 32, 64, 128],
-        setup_fn=setup_sound_wave,
-        num_gpus=NUM_GPUS_SCALING,
-        name="sound_wave3D",
-        title="3D linear sound wave",
-        data_dir=DATA_DIR,
-        figure_dir=FIG_DIR,
+        tol=0.005,
     )
 
 
 if __name__ == "__main__":
-    if RUN_CONVERGENCE:
-        test_sound_wave_convergence()
-    if RUN_SCALING:
-        test_sound_wave_strong_scaling()
+    test_sound_wave_convergence()
