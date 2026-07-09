@@ -117,14 +117,33 @@ the notebooks below and we have also prepared a more advanced use-case
 ## Examples for Getting Started
 
 ```{toctree}
-:caption: forward simulations
+:caption: hydrodynamics
 :maxdepth: 1
 
-examples/notebooks/forward/hydro/shock_tube.ipynb
-examples/notebooks/forward/hydro/khi.ipynb
-examples/notebooks/forward/mhd/jet.ipynb
-examples/notebooks/forward/mhd/turbulence.ipynb
-examples/notebooks/forward/self_gravity/collapse.ipynb
+examples/notebooks/hydro/simple_example.ipynb
+examples/notebooks/hydro/kelvin_helmholtz.ipynb
+```
+
+```{toctree}
+:caption: magnetohydrodynamics
+:maxdepth: 1
+
+examples/notebooks/mhd/orsag_tang.ipynb
+examples/notebooks/mhd/jet.ipynb
+```
+
+```{toctree}
+:caption: gravity
+:maxdepth: 1
+
+examples/notebooks/gravity/evrards_collapse.ipynb
+```
+
+```{toctree}
+:caption: stellar wind
+:maxdepth: 1
+
+examples/notebooks/stellar_wind/astronomix_turb_wind.ipynb
 ```
 
 ```{toctree}
@@ -132,26 +151,9 @@ examples/notebooks/forward/self_gravity/collapse.ipynb
 :maxdepth: 1
 
 examples/notebooks/differentiability/field_level_inference.ipynb
-examples/notebooks/differentiability/eigen_initialization.ipynb
-examples/notebooks/differentiability/solver_in_the_loop.ipynb
 ```
 
-```{toctree}
-:caption: output options
-:maxdepth: 1
 
-examples/notebooks/output_options/callback.ipynb
-examples/notebooks/output_options/orbax_checkpointing.ipynb
-examples/notebooks/output_options/return_snapshots.ipynb
-```
-
-```{toctree}
-:caption: multi-GPU
-:maxdepth: 1
-
-examples/notebooks/multi_gpu/multi_gpu.ipynb
-examples/notebooks/multi_gpu/multi_node.ipynb
-```
 
 ## Showcase
 

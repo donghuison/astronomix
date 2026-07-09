@@ -215,6 +215,8 @@ examples/gallery/**/figures/*
 pytests/**/figures/*
 !pytests/**/figures/.gitkeep
 
+examples/notebooks/differentiability/frames
+
 # generated example/test outputs: simulation caches + figures
 # (directories are kept in git via their .gitkeep placeholders)
 examples/scripts/**/data/

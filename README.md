@@ -11,7 +11,7 @@ as surrogate / solver-in-the-loop training.
 
 ## Features
 
-- [x] 1D, 2D and 3D hydrodynamics and magnetohydrodynamics simulations scaling to multiple GPUs
+- [x] 1D, 2D and 3D hydrodynamics and magnetohydrodynamics simulations scaling to multiple GPUs and nodes
 - [x] a 5th order finite difference constrained transport WENO MHD scheme following [HOW-MHD by Seo & Ryu 2023](https://arxiv.org/abs/2304.04360) as well as the provably divergence free and provably positivity preserving
 finite volume approach of [Pang and Wu (2024)](https://arxiv.org/abs/2410.05173) (the WENO scheme is also available standalone for hydrodynamics)
 - [x] isothermal hydrodynamics and magnetohydrodynamics are also supported (currently only in the finite difference scheme)
@@ -24,14 +24,17 @@ finite volume approach of [Pang and Wu (2024)](https://arxiv.org/abs/2410.05173)
 
 ## Contents
 
+- [Features](#features)
 - [Installation](#installation)
 - [Hello World! Your first astronomix simulation](#hello-world-your-first-astronomix-simulation)
-- [Notebooks for Getting Started](#notebooks-for-getting-started)
+- [Examples for Getting Started](#examples-for-getting-started)
 - [Showcase](#showcase)
-- [Scaling tests](#scaling-tests)
+- [Performance](#performance)
+- [Frequently Asked Questions (FAQ)](#frequently-asked-questions-faq)
+  - [How to store intermediate information during the simulation?](#how-to-store-intermediate-information-during-the-simulation)
+  - [How to fit larger simulations into GPU memory?](#how-to-fit-larger-simulations-into-gpu-memory)
+  - [What if my simulation crashes?](#what-if-my-simulation-crashes)
 - [Documentation](#documentation)
-- [Methodology](#methodology)
-- [Limitations](#limitations)
 - [Citing astronomix](#citing-astronomix)
 
 ## Installation
