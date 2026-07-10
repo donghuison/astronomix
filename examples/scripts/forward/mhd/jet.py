@@ -17,7 +17,6 @@ import matplotlib.pyplot as plt
 
 # astronomix constants
 from astronomix import (
-    FINITE_DIFFERENCE,
     OPEN_BOUNDARY,
 )
 
@@ -107,11 +106,8 @@ p = jnp.ones((config.num_cells, config.num_cells, config.num_cells)) * p_0
 
 params = SimulationParams(
     C_cfl = 1.5,
-    dt_max = 0.1,
     t_end = 5.0,
     gamma = gamma,
-    minimum_density = 1e-2 * rho_0,
-    minimum_pressure = 1e-2 * p_0,
 )
 
 initial_state = construct_primitive_state(
