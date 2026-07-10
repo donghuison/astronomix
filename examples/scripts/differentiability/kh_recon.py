@@ -153,7 +153,7 @@ def _build_backend(khp, horizon, pallas):
 
     T = horizon * khp.growth_time
     config = SimulationConfig(
-        solver_mode=FINITE_DIFFERENCE, dimensionality=2, num_cells=khp.n,
+        dimensionality=2, num_cells=khp.n,
         box_size=khp.box, progress_bar=False, diffusion=False,
         viscosity_type=DYNAMIC_VISCOSITY, differentiation_mode=BACKWARDS,
         num_checkpoints=khp.num_checkpoints,

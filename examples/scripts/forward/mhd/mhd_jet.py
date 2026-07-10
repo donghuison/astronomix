@@ -33,11 +33,7 @@ import jax
 import jax.numpy as jnp
 
 # astronomix constants
-from astronomix import (
-    FINITE_DIFFERENCE,
-    OPEN_BOUNDARY,
-    PALLAS,
-)
+from astronomix import OPEN_BOUNDARY
 
 # astronomix containers
 from astronomix import (
@@ -45,7 +41,6 @@ from astronomix import (
     SimulationParams,
     BoundarySettings,
     BoundarySettings1D,
-    GravityConfig,
     PositivityConfig,
 )
 
@@ -112,13 +107,8 @@ def simulate(num_cells):
 
     config = SimulationConfig(
         positivity_config=PositivityConfig(default_positivity_protection=True),
-        solver_mode=FINITE_DIFFERENCE,
         # FD/WENO runs ~10x faster through the Pallas (Triton) backend;
         # bit-compatible with native JAX.
-        backend=PALLAS,
-        pallas_block_shape=(4, 4, 8),
-        pallas_use_triton=True,
-        pallas_interpret=False,
         grid_spacing=grid_spacing,
         mhd=True,
         progress_bar=True,

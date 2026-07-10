@@ -15,11 +15,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
 # astronomix constants
-from astronomix import (
-    HLLC,
-    MINMOD,
-    PERIODIC_BOUNDARY,
-)
+from astronomix import PERIODIC_BOUNDARY
 
 # astronomix containers
 from astronomix import (
@@ -48,8 +44,6 @@ box_size = 1.0
 num_cells = 512
 
 config = SimulationConfig(
-    riemann_solver = HLLC,
-    limiter = MINMOD,
     progress_bar = True,
     dimensionality = 2,
     box_size = box_size,

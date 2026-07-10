@@ -46,9 +46,7 @@ from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 
 # astronomix constants
 from astronomix import (
-    FINITE_DIFFERENCE,
     OPEN_BOUNDARY,
-    PALLAS,
     PERIODIC_BOUNDARY,
 )
 from astronomix.option_classes.simulation_config import FIXED_BOUNDARY_OPEN_MOMENTUM
@@ -145,11 +143,7 @@ config = SimulationConfig(
     # positivity protection replaces the old enforce_positivity flag; keep it on
     # so the strong density contrast plus cooling stays stable
     positivity_config=PositivityConfig(default_positivity_protection=True),
-    solver_mode=FINITE_DIFFERENCE,
-    backend=PALLAS,
     pallas_block_shape=(4, 4, 4),
-    pallas_use_triton=True,
-    pallas_interpret=False,
     progress_bar=True,
     dimensionality=3,
     box_size=StaticFloatVector(L_x, L_y, L_z),

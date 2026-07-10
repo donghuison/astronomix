@@ -24,8 +24,6 @@ import matplotlib.pyplot as plt
 
 # astronomix constants
 from astronomix import (
-    HLLC,
-    MINMOD,
     PERIODIC_BOUNDARY,
     FORWARDS,
     TO_DISK,
@@ -61,8 +59,6 @@ checkpoint_path = "/tmp/khi_checkpoints"
 shutil.rmtree(checkpoint_path, ignore_errors=True)
 
 config = SimulationConfig(
-    riemann_solver = HLLC,
-    limiter = MINMOD,
     progress_bar = True,
     dimensionality = 2,
     box_size = box_size,

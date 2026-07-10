@@ -26,7 +26,6 @@ import matplotlib.pyplot as plt
 from astronomix import (
     FINITE_DIFFERENCE,
     FINITE_VOLUME,
-    HLL,
     HLLC,
     MINMOD,
 )
@@ -70,7 +69,6 @@ config_list = [
         num_cells = num_cells,
     ),
     SimulationConfig(
-        solver_mode = FINITE_DIFFERENCE,
         num_cells = num_cells,
     ),
 ]

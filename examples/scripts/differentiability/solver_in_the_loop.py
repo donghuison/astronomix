@@ -27,11 +27,7 @@ import optax
 import matplotlib.pyplot as plt
 
 # astronomix constants
-from astronomix import (
-    BACKWARDS,
-    HLL,
-    MINMOD,
-)
+from astronomix import BACKWARDS
 
 # astronomix containers
 from astronomix import (
@@ -71,11 +67,9 @@ baseline_config = SimulationConfig(
     progress_bar = False,
     mhd = True,
     dimensionality = 2,
-    limiter = MINMOD,
     box_size = 1.0,
     num_cells = num_cells_high_res,
     differentiation_mode = BACKWARDS,
-    riemann_solver = HLL,
     exact_end_time = True,
     return_snapshots = True,
     use_specific_snapshot_timepoints = True,

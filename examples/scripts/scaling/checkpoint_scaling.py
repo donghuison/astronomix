@@ -173,8 +173,6 @@ def _base_config(problem: _Problem, solver_mode: int, backend: int = NATIVE_JAX)
         ),
         return_snapshots=False,
         backend=backend,
-        pallas_use_triton=True,
-        pallas_interpret=False,
     )
     params = SimulationParams(
         C_cfl=0.4,

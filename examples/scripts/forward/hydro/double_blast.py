@@ -119,8 +119,6 @@ def simulate(solver_mode, riemann_solver, num_cells):
         # FD/WENO uses the Pallas backend (bit-compatible with native JAX).
         backend=PALLAS if is_finite_difference else NATIVE_JAX,
         pallas_block_shape=(4, 1, 1),
-        pallas_use_triton=True,
-        pallas_interpret=False,
     )
 
     helper_data = get_helper_data(config)

@@ -51,7 +51,6 @@ from astronomix import (
 
 # astronomix functions
 from astronomix import (
-    get_helper_data,
     get_registered_variables,
     finalize_config,
     time_integration,
@@ -123,8 +122,6 @@ def simulate(solver_mode, num_cells):
         # The block must divide the grid; (8, 8, 1) divides both 200 and 400.
         backend=PALLAS if is_fd else NATIVE_JAX,
         pallas_block_shape=(8, 8, 1),
-        pallas_use_triton=True,
-        pallas_interpret=False,
     )
     rv = get_registered_variables(config)
 

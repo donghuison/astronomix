@@ -247,20 +247,11 @@ import matplotlib as mpl
 
 # astronomix constants
 from astronomix import (
-    FINITE_VOLUME,
-    MINMOD,
     OPEN_BOUNDARY,
     FINITE_DIFFERENCE,
     PERIODIC_BOUNDARY,
 )
-from astronomix.option_classes.simulation_config import (
-    CONSERVATIVE_GAS_STATE,
-    DYNAMIC_VISCOSITY,
-    KINEMATIC_VISCOSITY,
-    MUSCL,
-    SPLIT,
-    UNSPLIT,
-)
+from astronomix.option_classes.simulation_config import DYNAMIC_VISCOSITY
 
 # astronomix containers
 from astronomix import (
@@ -282,16 +273,6 @@ from astronomix import (
 from astronomix._fluid_equations._equations import (
     conserved_state_from_primitive,
     primitive_state_from_conserved,
-)
-from astronomix._finite_difference._interface_fluxes._weno import (
-    _weno_flux_x,
-    _weno_flux_y,
-)
-from astronomix._stencil_operations._stencil_operations import _shift
-from astronomix._geometry.boundaries import _boundary_handler
-from astronomix.time_stepping._utils import (
-    _pad,
-    _unpad,
 )
 from astronomix.analysis_helpers.jacobians import (
     single_xmode_jacobian2Dt,
@@ -429,7 +410,6 @@ def setup_khi_unperturbed_base(setup: KHISetup, return_snapshots = False):
 	
     # set up the simulation configuration
     config = SimulationConfig(
-        solver_mode = FINITE_DIFFERENCE,
         progress_bar = True,
         dimensionality = 2,
         box_size = box_size,

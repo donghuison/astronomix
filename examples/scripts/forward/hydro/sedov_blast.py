@@ -54,7 +54,6 @@ from astronomix import (
     HLL,
     HLLC,
     MINMOD,
-    PALLAS,
     PERIODIC_BOUNDARY,
 )
 from astronomix.option_classes.simulation_config import (
@@ -68,7 +67,6 @@ from astronomix import (
     SimulationParams,
     BoundarySettings,
     BoundarySettings1D,
-    GravityConfig,
     PositivityConfig,
 )
 
@@ -160,10 +158,6 @@ def make_config(solver_mode, riemann_solver, num_cells):
         # backend; results are bit-compatible with native JAX.
         kwargs.update(
             positivity_config=PositivityConfig(default_positivity_protection=True),
-            backend=PALLAS,
-            pallas_block_shape=(4, 4, 8),
-            pallas_use_triton=True,
-            pallas_interpret=False,
             boundary_settings=BoundarySettings(
                 BoundarySettings1D(PERIODIC_BOUNDARY, PERIODIC_BOUNDARY),
                 BoundarySettings1D(PERIODIC_BOUNDARY, PERIODIC_BOUNDARY),

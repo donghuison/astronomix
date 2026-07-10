@@ -40,11 +40,7 @@ import jax
 import jax.numpy as jnp
 
 # astronomix constants
-from astronomix import (
-    FINITE_DIFFERENCE,
-    PALLAS,
-    PERIODIC_BOUNDARY,
-)
+from astronomix import PERIODIC_BOUNDARY
 from astronomix.option_classes.simulation_config import (
     IDEAL_GAS,
     ISOTHERMAL,
@@ -57,7 +53,6 @@ from astronomix.option_classes.simulation_config import (
 from astronomix import (
     BoundarySettings,
     BoundarySettings1D,
-    GravityConfig,
     PositivityConfig,
     SimulationConfig,
     SnapshotSettings,
@@ -177,12 +172,7 @@ def main():
     vacuum_rest = (args.mturb >= 2.0) if args.vacuum_rest < 0 else bool(args.vacuum_rest)
 
     config = SimulationConfig(
-        solver_mode=FINITE_DIFFERENCE,
         equation_of_state=IDEAL_GAS if adiabatic else ISOTHERMAL,
-        backend=PALLAS,
-        pallas_block_shape=(4, 4, 8),
-        pallas_use_triton=True,
-        pallas_interpret=False,
         memory_analysis=False,
         progress_bar=False,  # our own diagnostics; avoids int(NaN) callback crash on blow-up
         dimensionality=3,

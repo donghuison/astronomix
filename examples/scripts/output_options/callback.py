@@ -22,8 +22,6 @@ from matplotlib.animation import FuncAnimation
 
 # astronomix constants
 from astronomix import (
-    HLLC,
-    MINMOD,
     PERIODIC_BOUNDARY,
 )
 
@@ -54,8 +52,6 @@ box_size = 1.0
 num_cells = 256
 
 config = SimulationConfig(
-    riemann_solver = HLLC,
-    limiter = MINMOD,
     progress_bar = True,
     dimensionality = 2,
     box_size = box_size,

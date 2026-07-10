@@ -24,7 +24,6 @@ import jax.numpy as jnp
 jax.config.update("jax_enable_x64", True)
 
 # astronomix constants
-from astronomix import FINITE_DIFFERENCE
 from astronomix.option_classes.simulation_config import (
     FOURTH_ORDER_CONSERVATIVE,
     SECOND_ORDER_CONSERVATIVE,
@@ -61,7 +60,6 @@ BOX = StaticFloatVector(BOX_LENGTH, BOX_LENGTH, BOX_LENGTH)
 # One base configuration per self-gravity treatment.
 CONFIG_LIST = [
     SimulationConfig(
-        solver_mode=FINITE_DIFFERENCE,
         box_size=BOX,
         mhd=False,
         gravity_config=GravityConfig(

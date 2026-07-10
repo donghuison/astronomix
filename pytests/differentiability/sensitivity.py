@@ -24,7 +24,6 @@ import jax.numpy as jnp
 from astronomix import (
     CARTESIAN,
     BACKWARDS,
-    FINITE_DIFFERENCE,
     PERIODIC_BOUNDARY,
 )
 from astronomix.option_classes.simulation_config import PERIODIC_ROLL
@@ -115,7 +114,6 @@ def get_config_and_params(num_cells, L, t_end):
         A tuple (config, params) of the simulation configuration and parameters.
     """
     config = SimulationConfig(
-        solver_mode=FINITE_DIFFERENCE,
         geometry=CARTESIAN,
         progress_bar=False,
         boundary_handling=PERIODIC_ROLL,

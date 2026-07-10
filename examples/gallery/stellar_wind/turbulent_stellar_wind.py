@@ -41,10 +41,7 @@ from astropy import units as u
 import astropy.constants as c
 
 # astronomix constants
-from astronomix import (
-    FINITE_DIFFERENCE,
-    PERIODIC_BOUNDARY,
-)
+from astronomix import PERIODIC_BOUNDARY
 
 # astronomix containers
 from astronomix import (
@@ -135,7 +132,6 @@ for frames_dir in (spinup_frames_dir, wind_frames_dir):
 
 # baseline config: turbulent driving on, wind off (wind is enabled for phase 2)
 config = SimulationConfig(
-    solver_mode=FINITE_DIFFERENCE,
     mhd=True,
     progress_bar=True,
     donate_state=True,               # save storage

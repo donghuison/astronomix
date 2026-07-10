@@ -24,12 +24,9 @@ import astropy.constants as c
 
 # astronomix constants
 from astronomix import (
-    FINITE_DIFFERENCE,
-    HLL,
     BACKWARDS,
     PERIODIC_BOUNDARY,
 )
-from astronomix.option_classes.simulation_config import DOUBLE_MINMOD
 
 # astronomix containers
 from astronomix import (
@@ -65,11 +62,7 @@ BOX_SIZE = 1.0
 NUM_CELLS = 64
 
 config = SimulationConfig(
-    solver_mode=FINITE_DIFFERENCE,
     mhd=True,
-    riemann_solver=HLL,
-    limiter=DOUBLE_MINMOD,
-    first_order_fallback=False,
     progress_bar=True,
     dimensionality=3,
     num_ghost_cells=2,

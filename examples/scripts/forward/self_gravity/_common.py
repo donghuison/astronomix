@@ -25,10 +25,7 @@ from typing import NamedTuple, Optional
 import numpy as np
 
 # astronomix constants
-from astronomix import (
-    FINITE_DIFFERENCE,
-    PALLAS,
-)
+from astronomix import FINITE_DIFFERENCE
 from astronomix.option_classes.simulation_config import (
     FOURTH_ORDER_CONSERVATIVE,
     SECOND_ORDER_CONSERVATIVE,
@@ -87,34 +84,6 @@ FIT_SCHEME_VERSION = FOURTH_ORDER_CONSERVATIVE
 
 
 # --- Pallas backend --------------------------------------------------------
-# The Pallas/Triton FD backend is ~10x faster than native JAX for these
-# forward runs. The WENO Pallas kernel only engages when every spatial
-# dimension is divisible by the matching ``pallas_block_shape`` entry,
-# otherwise it silently falls back to native JAX. Resolutions used by the
-# convergence scripts are multiples of 16, so a fixed (4, 4, 8) block divides
-# both the jeans (N, N/2, N/2) and the N^3 slab/collapse grids.
-PALLAS_BLOCK_SHAPE = (4, 4, 8)
-
-
-def pallas_config_kwargs(block_shape=PALLAS_BLOCK_SHAPE) -> dict:
-    """Keyword arguments enabling the Pallas/Triton FD backend.
-
-    Args:
-        block_shape: The per-axis Pallas block shape; defaults to the shared
-            ``PALLAS_BLOCK_SHAPE`` that divides every convergence-test grid.
-
-    Returns:
-        A dictionary of ``SimulationConfig`` keyword arguments that select the
-        Pallas backend.
-    """
-    return dict(
-        backend=PALLAS,
-        pallas_block_shape=block_shape,
-        pallas_use_triton=True,
-        pallas_interpret=False,
-    )
-
-
 def block_shape_for(dims, cap=8) -> tuple:
     """Largest power-of-two block (per axis, capped) that divides ``dims``.
 

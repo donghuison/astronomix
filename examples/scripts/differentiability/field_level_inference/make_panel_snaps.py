@@ -57,7 +57,6 @@ from PIL import Image
 
 # astronomix constants
 from astronomix import (
-    FINITE_DIFFERENCE,
     PERIODIC_BOUNDARY,
     PALLAS,
 )
@@ -69,13 +68,9 @@ from astronomix import (
     CodeUnits,
     BoundarySettings,
     BoundarySettings1D,
-    GravityConfig,
     PositivityConfig,
 )
-from astronomix._modules._turbulent_forcing._turbulent_forcing_options import (
-    TurbulentForcingConfig,
-    TurbulentForcingParams,
-)
+from astronomix._modules._turbulent_forcing._turbulent_forcing_options import TurbulentForcingConfig
 
 # astronomix functions
 from astronomix import (
@@ -111,12 +106,11 @@ def main():
 
     backend_kw = {}
     if args.backend == "pallas":
-        backend_kw = dict(backend=PALLAS, pallas_block_shape=(4, 4, 8),
-                          pallas_use_triton=True, pallas_interpret=False)
+        backend_kw = dict(backend=PALLAS)
 
     config = SimulationConfig(
         positivity_config=PositivityConfig(default_positivity_protection=True),
-        solver_mode=FINITE_DIFFERENCE, mhd=True, progress_bar=False,
+        mhd=True, progress_bar=False,
         donate_state=False, dimensionality=3,
         box_size=box_size, num_cells=resolution,
         turbulent_forcing_config=TurbulentForcingConfig(turbulent_forcing=False),

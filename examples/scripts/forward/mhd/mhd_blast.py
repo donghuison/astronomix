@@ -148,7 +148,6 @@ SCHEME_CONFIGS = {
     },
     "fd_mhd": {
         "config": dict(
-            solver_mode=FINITE_DIFFERENCE,
             donate_state=False,
         ),
         "params": dict(C_cfl=1.5, minimum_density=1e-3, minimum_pressure=1e-3),

@@ -41,10 +41,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # astronomix constants
-from astronomix import (
-    FINITE_DIFFERENCE,
-    PERIODIC_BOUNDARY,
-)
+from astronomix import PERIODIC_BOUNDARY
 from astronomix.option_classes.simulation_config import PERIODIC_ROLL
 
 # astronomix containers
@@ -77,7 +74,6 @@ from _common import (
     apply_paper_style,
     fit_power_law,
     integer_log_ticks,
-    pallas_config_kwargs,
 )
 
 RESOLUTIONS = [16, 32, 64, 96, 128, 192, 256]
@@ -138,7 +134,6 @@ def slab_l1_error(num_cells, self_gravity_version):
     box_size = float(2 * jnp.pi * jnp.max(1 / K_VEC))
 
     config = SimulationConfig(
-        solver_mode=FINITE_DIFFERENCE,
         gravity_config=GravityConfig(
             self_gravity=True,
             self_gravity_version=self_gravity_version,
@@ -156,7 +151,6 @@ def slab_l1_error(num_cells, self_gravity_version):
         ),
         progress_bar=False,
         return_snapshots=False,
-        **pallas_config_kwargs(),
     )
 
     helper_data = get_helper_data(config)

@@ -73,8 +73,6 @@ from astronomix import (
 from astronomix import (
     SimulationConfig,
     BoundarySettings1D,
-    GravityConfig,
-    PositivityConfig,
     SimulationParams,
 )
 
@@ -118,8 +116,6 @@ def make_config_and_params(N, L, t_end, num_timesteps, solver_mode, backend=NATI
         differentiation_mode=BACKWARDS,
         backend=backend,
         pallas_block_shape=(4, 1, 1),
-        pallas_use_triton=True,
-        pallas_interpret=False,
         mhd=False,
         dimensionality=1,
         box_size=L,

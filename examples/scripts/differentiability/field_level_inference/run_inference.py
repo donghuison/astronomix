@@ -114,9 +114,7 @@ from PIL import Image
 
 # astronomix constants
 from astronomix import (
-    FINITE_DIFFERENCE,
     PERIODIC_BOUNDARY,
-    PALLAS,
     BACKWARDS,
     FORWARDS,
 )
@@ -128,7 +126,6 @@ from astronomix import (
     CodeUnits,
     BoundarySettings,
     BoundarySettings1D,
-    GravityConfig,
     PositivityConfig,
 )
 from astronomix._modules._turbulent_forcing._turbulent_forcing_options import (
@@ -159,7 +156,7 @@ NF, NC = args.fine_N, args.coarse_N
 def make_cfg(N, forcing, backward):
     return SimulationConfig(
         positivity_config=PositivityConfig(default_positivity_protection=True),
-        solver_mode=FINITE_DIFFERENCE, mhd=True, progress_bar=False,
+        mhd=True, progress_bar=False,
         donate_state=False, dimensionality=3,
         box_size=1.0, num_cells=N,
         differentiation_mode=BACKWARDS if backward else FORWARDS,
@@ -167,7 +164,7 @@ def make_cfg(N, forcing, backward):
         turbulent_forcing_config=TurbulentForcingConfig(turbulent_forcing=forcing),
         boundary_settings=BoundarySettings(
             *[BoundarySettings1D(PERIODIC_BOUNDARY, PERIODIC_BOUNDARY) for _ in range(3)]),
-        backend=PALLAS, pallas_block_shape=(4, 4, 8), pallas_use_triton=True)
+    )
 
 
 def build(cfg, rv, rho, v, p, B):

@@ -27,7 +27,6 @@ import matplotlib.pyplot as plt
 # astronomix constants
 from astronomix import (
     BACKWARDS,
-    FINITE_DIFFERENCE,
     PERIODIC_BOUNDARY,
 )
 from astronomix.option_classes.simulation_config import IDEAL_GAS
@@ -73,7 +72,6 @@ def make_config(conduction, diff_mode=None):
         The simulation configuration.
     """
     config = SimulationConfig(
-        solver_mode=FINITE_DIFFERENCE,
         equation_of_state=IDEAL_GAS,
         dimensionality=2,
         num_cells=N,

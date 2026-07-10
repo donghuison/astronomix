@@ -26,10 +26,7 @@ from matplotlib.colors import LogNorm
 from matplotlib.animation import FuncAnimation, PillowWriter
 
 # astronomix constants
-from astronomix import (
-    FINITE_DIFFERENCE,
-    PERIODIC_BOUNDARY,
-)
+from astronomix import PERIODIC_BOUNDARY
 from astronomix.option_classes.simulation_config import SECOND_ORDER_CONSERVATIVE
 
 # astronomix containers
@@ -65,7 +62,6 @@ box_size = 4.0
 num_cells = 64
 
 config = SimulationConfig(
-    solver_mode = FINITE_DIFFERENCE,
     progress_bar = True,
     dimensionality = 3,
     box_size = box_size,

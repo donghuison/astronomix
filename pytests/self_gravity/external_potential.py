@@ -30,7 +30,6 @@ from matplotlib.colors import LogNorm
 # astronomix constants
 from astronomix import (
     CARTESIAN,
-    FINITE_DIFFERENCE,
     OPEN_BOUNDARY,
 )
 from astronomix.option_classes.simulation_config import SIMPLE_SOURCE
@@ -91,7 +90,6 @@ C_S = (GAMMA * C2) ** 0.5   # uniform sound speed
 # far-field density without reflecting waves back into the core.
 open_boundary = BoundarySettings1D(OPEN_BOUNDARY, OPEN_BOUNDARY)
 config = SimulationConfig(
-    solver_mode=FINITE_DIFFERENCE,
     gravity_config=GravityConfig(
         self_gravity_version=SIMPLE_SOURCE,
         external_potential=True,

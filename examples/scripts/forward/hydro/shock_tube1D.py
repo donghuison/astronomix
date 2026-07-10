@@ -78,7 +78,6 @@ CONFIG_LIST = [
         num_cells=NUM_CELLS,
     ),
     SimulationConfig(
-        solver_mode=FINITE_DIFFERENCE,
         num_cells=NUM_CELLS,
     ),
 ]

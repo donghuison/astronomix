@@ -55,10 +55,8 @@ import jax
 
 # astronomix constants
 from astronomix import (
-    FINITE_DIFFERENCE,
     FINITE_VOLUME,
     NATIVE_JAX,
-    PALLAS,
 )
 
 # astronomix containers
@@ -117,11 +115,6 @@ BENCHMARKS = [
     BenchmarkSpec(
         label="FD (Pallas)",
         base_config=SimulationConfig(
-            backend=PALLAS,
-            pallas_block_shape=(4, 4, 8),
-            pallas_use_triton=True,
-            pallas_interpret=False,
-            solver_mode=FINITE_DIFFERENCE,
             **_common_kwargs,
         ),
         cfl=1.5,

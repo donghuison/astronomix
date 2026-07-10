@@ -21,11 +21,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
 # astronomix constants
-from astronomix import (
-    HLLC,
-    MINMOD,
-    PERIODIC_BOUNDARY,
-)
+from astronomix import PERIODIC_BOUNDARY
 
 # astronomix containers
 from astronomix import (
@@ -34,11 +30,14 @@ from astronomix import (
     SimulationParams,
     BoundarySettings,
     BoundarySettings1D,
+    GravityConfig,
+    PositivityConfig,
 )
 
 # astronomix functions
 from astronomix import (
     time_integration,
+    get_helper_data,
     get_registered_variables,
     construct_primitive_state,
     finalize_config,
@@ -50,44 +49,65 @@ from pathlib import Path
 figures_dir = Path(__file__).resolve().parent / "figures"
 figures_dir.mkdir(exist_ok=True)
 
-# configure the 2D Kelvin-Helmholtz test case with snapshot diagnostics
-box_size = 1.0
-num_cells = 256
+# configure the 3D self-gravitating Evrard collapse with snapshot diagnostics
+gamma = 5 / 3
+box_size = 4.0
+num_cells = 64
 
 config = SimulationConfig(
-    riemann_solver = HLLC,
-    limiter = MINMOD,
     progress_bar = True,
-    dimensionality = 2,
+    dimensionality = 3,
     box_size = box_size,
     num_cells = num_cells,
+    gravity_config = GravityConfig(
+        self_gravity = True,
+        poisson_manual_open_boundaries = True,
+    ),
+    # positivity-preserving flux limiter keeps the low-resolution collapse from
+    # driving density / pressure below their floors
+    positivity_config = PositivityConfig(preserving_flux = True),
     boundary_settings = BoundarySettings(
+        BoundarySettings1D(PERIODIC_BOUNDARY, PERIODIC_BOUNDARY),
         BoundarySettings1D(PERIODIC_BOUNDARY, PERIODIC_BOUNDARY),
         BoundarySettings1D(PERIODIC_BOUNDARY, PERIODIC_BOUNDARY),
     ),
     return_snapshots = True,
     num_snapshots = 100,
     snapshot_settings = SnapshotSettings(
+        # return_states = True, # if one wants the full states
         # cheap integrated diagnostics — no full per-snapshot states
         return_total_energy = True,
         return_kinetic_energy = True,
         return_internal_energy = True,
+        return_gravitational_energy = True,
     ),
 )
 
+helper_data = get_helper_data(config)
 registered_variables = get_registered_variables(config)
 
-params = SimulationParams(t_end = 2.0, C_cfl = 0.4)
+params = SimulationParams(
+    t_end = 1.2,
+    C_cfl = 0.4,
+    gamma = gamma,
+    minimum_density = 1e-5,
+    minimum_pressure = 3e-6,
+)
 
-# two counter-streaming shear layers with a small sinusoidal perturbation
-grid_spacing = box_size / num_cells
-x = jnp.linspace(grid_spacing / 2, box_size - grid_spacing / 2, num_cells)
-X, Y = jnp.meshgrid(x, x, indexing="ij")
+# Evrard initial condition: a cold gas sphere of mass M and radius R with the
+# rho ~ 1/r density profile, at rest in a tenuous background.
+R = 1.0
+M = 1.0
+rho = jnp.where(
+    helper_data.r <= R, M / (2 * jnp.pi * R**2 * helper_data.r), 1e-4
+)
+u_x = jnp.zeros_like(rho)
+u_y = jnp.zeros_like(rho)
+u_z = jnp.zeros_like(rho)
 
-rho = jnp.where((Y > 0.25) & (Y < 0.75), 2.0, 1.0)
-u_x = jnp.where((Y > 0.25) & (Y < 0.75), -0.5, 0.5)
-u_y = 0.01 * jnp.sin(2 * jnp.pi * X)
-p = 2.5 * jnp.ones_like(X)
+# small thermal energy per unit mass so the sphere collapses (cold Evrard test)
+internal_energy = 0.05
+p = jnp.maximum((gamma - 1) * rho * internal_energy, params.minimum_pressure)
 
 initial_state = construct_primitive_state(
     config = config,
@@ -95,6 +115,7 @@ initial_state = construct_primitive_state(
     density = rho,
     velocity_x = u_x,
     velocity_y = u_y,
+    velocity_z = u_z,
     gas_pressure = p,
 )
 
@@ -105,10 +126,11 @@ snapshots = time_integration(initial_state, config, params, registered_variables
 
 # plot the energy budget over time
 fig, ax = plt.subplots(figsize=(8, 5))
-ax.plot(snapshots.time_points, snapshots.total_energy, label="total")
-ax.plot(snapshots.time_points, snapshots.kinetic_energy, label="kinetic")
-ax.plot(snapshots.time_points, snapshots.internal_energy, label="internal")
+ax.plot(snapshots.time_points, snapshots.total_energy, label="total", color="black")
+ax.plot(snapshots.time_points, snapshots.internal_energy, label="internal", color="green")
+ax.plot(snapshots.time_points, snapshots.kinetic_energy, label="kinetic", color="red")
+ax.plot(snapshots.time_points, snapshots.gravitational_energy, label="gravitational", color="blue")
 ax.set_xlabel("time")
 ax.set_ylabel("energy")
 ax.legend()
-fig.savefig(figures_dir / "khi_energy_budget.png", dpi=200, bbox_inches="tight")
+fig.savefig(figures_dir / "evrard_energy_budget.png", dpi=200, bbox_inches="tight")

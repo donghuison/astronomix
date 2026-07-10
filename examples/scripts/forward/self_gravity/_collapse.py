@@ -48,8 +48,6 @@ from astronomix import (
 )
 
 
-# figure helpers
-from _common import pallas_config_kwargs
 
 GAMMA = 5 / 3
 BOX_SIZE = 4.0
@@ -70,7 +68,7 @@ def _backend_kwargs(backend):
         A dictionary of ``SimulationConfig`` backend keyword arguments.
     """
     if backend == PALLAS:
-        return pallas_config_kwargs()
+        return {}
     return dict(backend=NATIVE_JAX)
 
 
@@ -141,7 +139,6 @@ def collapse_config(
         )
 
     return SimulationConfig(
-        solver_mode=FINITE_DIFFERENCE,
         positivity_config=PositivityConfig(default_positivity_protection=False),
         **_backend_kwargs(backend),
         **common,

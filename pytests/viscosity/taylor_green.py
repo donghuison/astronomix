@@ -26,7 +26,6 @@ import matplotlib.pyplot as plt
 
 # astronomix constants
 from astronomix import (
-    FINITE_DIFFERENCE,
     FORWARDS,
     PERIODIC_BOUNDARY,
 )
@@ -82,7 +81,6 @@ nu = mu / rho0            # kinematic viscosity
 # =============== ↓ Configuration ↓ ===========================
 # -------------------------------------------------------------
 config = SimulationConfig(
-    solver_mode=FINITE_DIFFERENCE,
     progress_bar=True,
     positivity_config=PositivityConfig(default_positivity_protection=False),
     mhd=False,

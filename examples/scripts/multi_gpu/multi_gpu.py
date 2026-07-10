@@ -25,10 +25,7 @@ from jax.sharding import (
 import matplotlib.pyplot as plt
 
 # astronomix constants
-from astronomix import (
-    FINITE_DIFFERENCE,
-    PERIODIC_BOUNDARY,
-)
+from astronomix import PERIODIC_BOUNDARY
 from astronomix.option_classes.simulation_config import (
     ISOTHERMAL,
     VARAXIS,
@@ -71,7 +68,6 @@ sound_speed = 0.5
 B_0 = 0.1
 
 config = SimulationConfig(
-    solver_mode = FINITE_DIFFERENCE,
     equation_of_state = ISOTHERMAL,
     mhd = True,
     progress_bar = True,
