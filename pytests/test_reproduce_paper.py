@@ -16,9 +16,21 @@ directory as the working directory (so ``from _common import ...`` and the
 relative ``data/`` / ``figures/`` directories resolve). ``autocvd`` inside each
 generator selects a free GPU.
 
-The kh_recon reconstruction study and the multi-GPU strong-scaling speedup are
-intentionally excluded: the former is a heavy optimisation campaign, the latter
-needs specific H100/H200 multi-GPU hardware (see the module docstrings).
+Hardware-gated cases are intentionally excluded from the automated set because
+they need resources beyond a single node (run them by hand — see each module's
+docstring):
+
+* ``differentiability/kh_recon.py`` — heavy reconstruction optimisation campaign.
+* ``scaling/strong_scaling_speedup.py`` — the combined hydro+MHD speedup figure
+  is measured across separate 4-/8-GPU H100/H200 machines, then assembled with
+  ``--plot``.
+* ``scaling/scaling_campaign.py`` — single-GPU / block-shape / strong-scaling
+  measurement driver (writes NPZ+JSON caches, not a single figure).
+* ``scaling/weak_scaling_hydro.py`` — multi-node weak scaling launched under
+  Slurm (up to 2048^3 on 16 GPUs / 4 nodes).
+
+The single-node ``checkpoint_scaling`` and 2-GPU ``extended_strong_scaling``
+figures ARE included above.
 """
 
 # general
@@ -197,6 +209,12 @@ PAPER_FIGURES = [
         "checkpoint_scaling",
         [Step("scaling/checkpoint_scaling.py")],
         ["figures/checkpoint_scaling.svg"],
+    ),
+    # Single-node 2-GPU strong-scaling sweep (FV/FD-JAX/FD-Pallas up to N=256).
+    PaperFigure(
+        "extended_strong_scaling",
+        [Step("scaling/extended_strong_scaling.py")],
+        ["figures/sound_wave3D_extended_strong_scaling.svg"],
     ),
 ]
 
