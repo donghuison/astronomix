@@ -1,7 +1,7 @@
 # standard gitignore from
 # https://github.com/github/gitignore/blob/main/Python.gitignore
 
-.claude/
+
 node_modules/
 package.json
 package-lock.json
@@ -12,6 +12,7 @@ arena/results/*/data
 examples/notebooks/stellar_wind/turb_frames
 examples/notebooks/stellar_wind/wind_frames
 
+tests
 
 data_mhdgrav
 
